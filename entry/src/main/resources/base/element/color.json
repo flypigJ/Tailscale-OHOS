@@ -1,0 +1,28 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#F7F8FA"
+    },
+    {
+      "name": "status_success",
+      "value": "#067647"
+    },
+    {
+      "name": "status_warning",
+      "value": "#B54708"
+    },
+    {
+      "name": "status_error",
+      "value": "#B42318"
+    },
+    {
+      "name": "status_neutral",
+      "value": "#475467"
+    },
+    {
+      "name": "status_offline",
+      "value": "#8A8A8E"
+    }
+  ]
+}

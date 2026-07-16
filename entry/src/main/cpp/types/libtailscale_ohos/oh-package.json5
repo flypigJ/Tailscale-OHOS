@@ -1,0 +1,7 @@
+{
+  "name": "libtailscale_ohos.so",
+  "types": "./index.d.ts",
+  "version": "0.1.0",
+  "description": "Native bridge for Tailscale OHOS"
+}
+

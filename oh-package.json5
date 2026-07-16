@@ -1,0 +1,11 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "tailscale-ohos",
+  "version": "0.1.0",
+  "description": "Native HarmonyOS NEXT port of Tailscale",
+  "main": "",
+  "author": "TailscaleOHOS contributors",
+  "license": "BSD-3-Clause",
+  "dependencies": {}
+}
+

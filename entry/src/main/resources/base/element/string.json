@@ -1,0 +1,352 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Tailscale for HarmonyOS NEXT"
+    },
+    {
+      "name": "entryability_desc",
+      "value": "Tailscale OHOS main ability"
+    },
+    {
+      "name": "entryability_label",
+      "value": "Tailscale OHOS"
+    },
+    {
+      "name": "app_title",
+      "value": "Tailscale OHOS"
+    },
+    {
+      "name": "app_tagline",
+      "value": "Securely connect your devices"
+    },
+    {
+      "name": "tab_home",
+      "value": "Home"
+    },
+    {
+      "name": "tab_settings",
+      "value": "Settings"
+    },
+    {
+      "name": "glow_title",
+      "value": "Immersive glow"
+    },
+    {
+      "name": "glow_description",
+      "value": "Adjust the light response on buttons and the bottom bar."
+    },
+    {
+      "name": "glow_exquisite",
+      "value": "Exquisite"
+    },
+    {
+      "name": "glow_gentle",
+      "value": "Gentle"
+    },
+    {
+      "name": "glow_smooth",
+      "value": "Smooth"
+    },
+    {
+      "name": "glow_adaptive",
+      "value": "Adaptive"
+    },
+    {
+      "name": "glow_exquisite_description",
+      "value": "Richer light and material detail"
+    },
+    {
+      "name": "glow_gentle_description",
+      "value": "Soft and restrained"
+    },
+    {
+      "name": "glow_smooth_description",
+      "value": "Reduced visual effects"
+    },
+    {
+      "name": "glow_adaptive_description",
+      "value": "Uses the device default"
+    },
+    {
+      "name": "connection_connected",
+      "value": "Connected"
+    },
+    {
+      "name": "connection_connecting",
+      "value": "Connecting"
+    },
+    {
+      "name": "connection_problem",
+      "value": "Connection problem"
+    },
+    {
+      "name": "connection_login_required",
+      "value": "Sign-in required"
+    },
+    {
+      "name": "connection_disconnected",
+      "value": "Disconnected"
+    },
+    {
+      "name": "connection_starting",
+      "value": "Initializing backend"
+    },
+    {
+      "name": "description_connected",
+      "value": "This device is connected to your private Tailscale network"
+    },
+    {
+      "name": "description_connecting",
+      "value": "Setting up the system VPN. Please wait."
+    },
+    {
+      "name": "description_login_required",
+      "value": "Complete Tailscale sign-in in the system browser first"
+    },
+    {
+      "name": "description_problem",
+      "value": "Open engineering diagnostics to see error details"
+    },
+    {
+      "name": "description_tls_problem",
+      "value": "Secure control-plane verification failed. Check the system time and network, then try again."
+    },
+    {
+      "name": "description_network_problem",
+      "value": "Tailscale could not reach the network. Check Wi-Fi or mobile data, then try again."
+    },
+    {
+      "name": "description_vpn_permission_problem",
+      "value": "The system VPN could not start. Allow the VPN request and try connecting again."
+    },
+    {
+      "name": "description_status_problem",
+      "value": "The VPN status is temporarily unavailable. Reopen the app and try again."
+    },
+    {
+      "name": "description_disconnected",
+      "value": "Connect to access other devices through Tailscale"
+    },
+    {
+      "name": "description_starting",
+      "value": "Preparing Tailscale, please wait"
+    },
+    {
+      "name": "action_connect",
+      "value": "Connect Tailscale"
+    },
+    {
+      "name": "action_connecting",
+      "value": "Connecting…"
+    },
+    {
+      "name": "action_starting",
+      "value": "Initializing backend"
+    },
+    {
+      "name": "action_disconnect",
+      "value": "Disconnect"
+    },
+    {
+      "name": "action_login",
+      "value": "Sign in to Tailscale"
+    },
+    {
+      "name": "exit_node_title",
+      "value": "Exit node"
+    },
+    {
+      "name": "exit_node_description",
+      "value": "Route internet traffic through another device"
+    },
+    {
+      "name": "exit_node_empty",
+      "value": "No exit nodes are available in this network"
+    },
+    {
+      "name": "exit_node_none",
+      "value": "Do not use an exit node"
+    },
+    {
+      "name": "exit_node_login_required",
+      "value": "Sign in to view and select exit nodes for this network."
+    },
+    {
+      "name": "exit_node_disconnect_first",
+      "value": "Disconnect before changing the exit node. The current selection remains active."
+    },
+    {
+      "name": "devices_title",
+      "value": "Devices"
+    },
+    {
+      "name": "devices_empty",
+      "value": "No other devices"
+    },
+    {
+      "name": "devices_count",
+      "value": "%d online, %d total"
+    },
+    {
+      "name": "peer_online",
+      "value": "Online"
+    },
+    {
+      "name": "peer_offline",
+      "value": "Offline"
+    },
+    {
+      "name": "peer_exit_node",
+      "value": "Available as an exit node"
+    },
+    {
+      "name": "local_device_badge",
+      "value": "This device"
+    },
+    {
+      "name": "account_title",
+      "value": "Account"
+    },
+    {
+      "name": "account_signed_in",
+      "value": "This device is signed in to Tailscale."
+    },
+    {
+      "name": "account_signed_out",
+      "value": "Sign in to manage this device and connect to your private network."
+    },
+    {
+      "name": "account_profile_unavailable",
+      "value": "Sign in to use Tailscale"
+    },
+    {
+      "name": "account_tailnet",
+      "value": "Tailnet"
+    },
+    {
+      "name": "account_device",
+      "value": "This device"
+    },
+    {
+      "name": "about_title",
+      "value": "About"
+    },
+    {
+      "name": "app_version_label",
+      "value": "App version"
+    },
+    {
+      "name": "tailscale_version_label",
+      "value": "Tailscale core"
+    },
+    {
+      "name": "logout_description",
+      "value": "After signing out, this device must sign in again before connecting."
+    },
+    {
+      "name": "logout_disconnect_first",
+      "value": "Disconnect Tailscale before signing out."
+    },
+    {
+      "name": "logout_action",
+      "value": "Sign out"
+    },
+    {
+      "name": "logout_failed",
+      "value": "Sign-out failed. Try again later."
+    },
+    {
+      "name": "logout_confirm_title",
+      "value": "Sign out of Tailscale?"
+    },
+    {
+      "name": "logout_confirm_message",
+      "value": "This device will leave the current Tailscale network. You will need to sign in again to use it later."
+    },
+    {
+      "name": "cancel_action",
+      "value": "Cancel"
+    },
+    {
+      "name": "diagnostics_expand",
+      "value": "Show engineering diagnostics"
+    },
+    {
+      "name": "diagnostics_collapse",
+      "value": "Hide engineering diagnostics"
+    },
+    {
+      "name": "diagnostics_title",
+      "value": "Engineering diagnostics"
+    },
+    {
+      "name": "diagnostics_description",
+      "value": "Technical status for troubleshooting"
+    },
+    {
+      "name": "settings_subtitle",
+      "value": "Account, network, and appearance"
+    },
+    {
+      "name": "settings_title",
+      "value": "Network settings"
+    },
+    {
+      "name": "network_settings_description",
+      "value": "Choose how this device uses your private network"
+    },
+    {
+      "name": "setting_subnet_routes",
+      "value": "Accept subnet routes"
+    },
+    {
+      "name": "setting_subnet_routes_description",
+      "value": "Reach networks shared by other devices"
+    },
+    {
+      "name": "setting_magicdns",
+      "value": "Tailscale DNS (MagicDNS)"
+    },
+    {
+      "name": "setting_magicdns_description",
+      "value": "Use device names on your Tailscale network"
+    },
+    {
+      "name": "setting_exit_node",
+      "value": "Exit node"
+    },
+    {
+      "name": "setting_exit_node_lan",
+      "value": "Allow LAN access with exit node"
+    },
+    {
+      "name": "setting_exit_node_lan_description",
+      "value": "Keep access to nearby devices while using an exit node"
+    },
+    {
+      "name": "network_settings_disconnect_first",
+      "value": "Disconnect before changing network settings."
+    },
+    {
+      "name": "network_setting_failed",
+      "value": "The setting could not be saved. Try again."
+    },
+    {
+      "name": "setting_enabled",
+      "value": "Enabled"
+    },
+    {
+      "name": "setting_disabled",
+      "value": "Disabled"
+    },
+    {
+      "name": "setting_unavailable",
+      "value": "Unavailable"
+    },
+    {
+      "name": "settings_appearance_title",
+      "value": "Appearance"
+    }
+  ]
+}

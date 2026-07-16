@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "io.github.tailscaleohos",
+    "vendor": "TailscaleOHOS contributors",
+    "versionCode": 2190006,
+    "versionName": "0.2.19-beta.6",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name"
+  }
+}

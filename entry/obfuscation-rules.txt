@@ -1,0 +1,2 @@
+# Obfuscation is disabled during the feasibility phase.
+

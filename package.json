@@ -1,0 +1,13 @@
+{
+  "name": "tailscale-ohos",
+  "version": "0.1.0",
+  "ohos": {
+    "org": "tailscaleohos",
+    "buildTool": "hvigor",
+    "directoryLevel": "project"
+  },
+  "description": "Native HarmonyOS NEXT port of Tailscale",
+  "license": "BSD-3-Clause",
+  "dependencies": {}
+}
+
