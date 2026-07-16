@@ -1,6 +1,6 @@
 {
   "name": "tailscale-ohos",
-  "version": "0.1.0",
+  "version": "0.3.19-release",
   "ohos": {
     "org": "tailscaleohos",
     "buildTool": "hvigor",
@@ -10,4 +10,3 @@
   "license": "BSD-3-Clause",
   "dependencies": {}
 }
-
