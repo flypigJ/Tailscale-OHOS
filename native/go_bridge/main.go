@@ -87,6 +87,11 @@ func TSBackendStatus() *C.char {
 	return C.CString(harmonyBackend.status())
 }
 
+//export TSBackendSnapshot
+func TSBackendSnapshot() *C.char {
+	return C.CString(harmonyBackend.snapshot())
+}
+
 //export TSBackendAuthURL
 func TSBackendAuthURL() *C.char {
 	return C.CString(harmonyBackend.authURL())

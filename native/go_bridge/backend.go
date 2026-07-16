@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/netip"
@@ -36,6 +37,8 @@ type backendController struct {
 	tunDevice    *harmonyTunDevice
 	stateDir     string
 	subnetRoutes int
+	generation   uint64
+	cancelStart  context.CancelFunc
 }
 
 var harmonyBackend backendController
@@ -86,6 +89,14 @@ type networkPreferences struct {
 	ExitNodeAllowLANAccess bool `json:"exitNodeAllowLANAccess"`
 }
 
+type backendSnapshot struct {
+	Status          string             `json:"status"`
+	ExitNodes       []exitNodeChoice   `json:"exitNodes"`
+	Peers           []peerSummary      `json:"peers"`
+	NetworkSettings networkPreferences `json:"networkSettings"`
+	Account         accountSummary     `json:"account"`
+}
+
 func (b *backendController) start(stateDir, deviceModel string) string {
 	return b.startWithDevice(stateDir, deviceModel, nil)
 }
@@ -93,6 +104,8 @@ func (b *backendController) start(stateDir, deviceModel string) string {
 func (b *backendController) stop() string {
 	b.mu.Lock()
 	server := b.server
+	cancelStart := b.cancelStart
+	b.generation++
 	b.server = nil
 	b.client = nil
 	b.starting = false
@@ -101,7 +114,11 @@ func (b *backendController) stop() string {
 	b.externalTun = false
 	b.tunDevice = nil
 	b.subnetRoutes = 0
+	b.cancelStart = nil
 	b.mu.Unlock()
+	if cancelStart != nil {
+		cancelStart()
+	}
 	if server != nil {
 		if err := server.Close(); err != nil {
 			return "FAILED | backend stop"
@@ -159,6 +176,9 @@ func (b *backendController) startWithDevice(stateDir, deviceModel string, device
 		})
 	})
 
+	b.generation++
+	generation := b.generation
+	startContext, cancelStart := context.WithCancel(context.Background())
 	server := &tsnet.Server{
 		Dir:       stateDir,
 		Hostname:  harmonyHostname(trimmedModel),
@@ -180,9 +200,10 @@ func (b *backendController) startWithDevice(stateDir, deviceModel string, device
 	b.externalTun = device != nil
 	b.tunDevice = device
 	b.stateDir = stateDir
+	b.cancelStart = cancelStart
 	b.mu.Unlock()
 
-	go b.startAsync(server, stateDir)
+	go b.startAsync(server, stateDir, generation, startContext)
 	if device != nil {
 		return "OK | VPN backend starting | persistent private state"
 	}
@@ -197,6 +218,8 @@ func (b *backendController) restartWithTun(stateDir, deviceModel string, fd int)
 
 	b.mu.Lock()
 	oldServer := b.server
+	cancelStart := b.cancelStart
+	b.generation++
 	b.server = nil
 	b.client = nil
 	b.starting = false
@@ -204,7 +227,11 @@ func (b *backendController) restartWithTun(stateDir, deviceModel string, fd int)
 	b.phase = "vpn-restart"
 	b.externalTun = false
 	b.tunDevice = nil
+	b.cancelStart = nil
 	b.mu.Unlock()
+	if cancelStart != nil {
+		cancelStart()
+	}
 	if oldServer != nil {
 		if err := oldServer.Close(); err != nil {
 			_ = device.Close()
@@ -372,6 +399,7 @@ func (b *backendController) peers() string {
 			name = "Unnamed device"
 		}
 		peers = append(peers, peerSummary{
+			Key:         peerStableKey(peer.ID),
 			Name:        name,
 			OS:          peer.OS,
 			DeviceModel: peer.DeviceModel,
@@ -387,14 +415,16 @@ func (b *backendController) peers() string {
 		}
 		return peers[i].Name < peers[j].Name
 	})
-	for index := range peers {
-		peers[index].Key = fmt.Sprintf("peer-%d", index)
-	}
 	encoded, err := json.Marshal(peers)
 	if err != nil {
 		return "[]"
 	}
 	return string(encoded)
+}
+
+func peerStableKey(id tailcfg.StableNodeID) string {
+	digest := sha256.Sum256([]byte(id))
+	return fmt.Sprintf("peer-%x", digest[:8])
 }
 
 func classifyPeerDevice(osName, deviceModel string) string {
@@ -472,6 +502,158 @@ func (b *backendController) account() string {
 		return "{}"
 	}
 	return string(encoded)
+}
+
+func (b *backendController) snapshot() string {
+	b.mu.Lock()
+	client := b.client
+	starting := b.starting
+	startErr := b.startErr
+	phase := b.phase
+	serverPresent := b.server != nil
+	stateDir := b.stateDir
+	b.mu.Unlock()
+
+	settings, err := readNetworkPreferences(stateDir)
+	if err != nil {
+		settings = defaultNetworkPreferences()
+	}
+	snapshot := backendSnapshot{
+		ExitNodes:       []exitNodeChoice{},
+		Peers:           []peerSummary{},
+		NetworkSettings: settings,
+		Account:         accountSummary{Addresses: []string{}},
+	}
+	switch {
+	case startErr != "":
+		snapshot.Status = fmt.Sprintf("FAILED | backend start | %s", startErr)
+	case starting:
+		snapshot.Status = fmt.Sprintf("OK | backend starting | phase=%s", phase)
+	case client == nil && serverPresent:
+		snapshot.Status = "OK | backend initialized | LocalClient pending"
+	case client == nil:
+		snapshot.Status = "STOPPED | backend not started"
+	}
+	if snapshot.Status != "" {
+		return marshalBackendSnapshot(snapshot)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	status, statusErr := client.Status(ctx)
+	if statusErr != nil {
+		snapshot.Status = fmt.Sprintf("FAILED | backend status | %v", statusErr)
+		return marshalBackendSnapshot(snapshot)
+	}
+	prefs, prefsErr := client.GetPrefs(ctx)
+	snapshot.Status = b.formatRunningStatus(status, prefs, prefsErr)
+	if status.BackendState != "Running" {
+		return marshalBackendSnapshot(snapshot)
+	}
+
+	snapshot.ExitNodes = buildExitNodeChoices(status, stateDir)
+	snapshot.Peers = buildPeerSummaries(status)
+	snapshot.Account = buildAccountSummary(status)
+	if prefsErr == nil && prefs != nil {
+		snapshot.NetworkSettings = networkPreferences{
+			RouteAll:               prefs.RouteAll,
+			CorpDNS:                prefs.CorpDNS,
+			ExitNodeAllowLANAccess: prefs.ExitNodeAllowLANAccess,
+		}
+	}
+	return marshalBackendSnapshot(snapshot)
+}
+
+func marshalBackendSnapshot(snapshot backendSnapshot) string {
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return `{"status":"FAILED | backend snapshot | encoding"}`
+	}
+	return string(encoded)
+}
+
+func buildExitNodeChoices(status *ipnstate.Status, stateDir string) []exitNodeChoice {
+	persistedID, _ := readExitNodeChoice(stateDir)
+	choices := make([]exitNodeChoice, 0)
+	for _, peer := range status.Peer {
+		if !peer.ExitNodeOption {
+			continue
+		}
+		name := strings.TrimSuffix(peer.DNSName, ".")
+		if name == "" {
+			name = peer.HostName
+		}
+		if name == "" {
+			name = "Unnamed exit node"
+		}
+		if persistedID == "" && peer.ExitNode {
+			if writeExitNodeChoice(stateDir, string(peer.ID)) == nil {
+				persistedID = string(peer.ID)
+			}
+		}
+		choices = append(choices, exitNodeChoice{
+			ID:       string(peer.ID),
+			Name:     name,
+			Online:   peer.Online,
+			Selected: peer.ExitNode || (persistedID != "" && string(peer.ID) == persistedID),
+		})
+	}
+	sort.Slice(choices, func(i, j int) bool { return choices[i].Name < choices[j].Name })
+	return choices
+}
+
+func buildPeerSummaries(status *ipnstate.Status) []peerSummary {
+	peers := make([]peerSummary, 0, len(status.Peer))
+	for _, peer := range status.Peer {
+		name := strings.TrimSuffix(peer.DNSName, ".")
+		if name == "" {
+			name = peer.HostName
+		}
+		if name == "" {
+			name = "Unnamed device"
+		}
+		peers = append(peers, peerSummary{
+			Key:         peerStableKey(peer.ID),
+			Name:        name,
+			OS:          peer.OS,
+			DeviceModel: peer.DeviceModel,
+			DeviceType:  classifyPeerDevice(peer.OS, peer.DeviceModel),
+			Addresses:   displayAddresses(peer.TailscaleIPs),
+			Online:      peer.Online,
+			ExitNode:    peer.ExitNodeOption,
+		})
+	}
+	sort.Slice(peers, func(i, j int) bool {
+		if peers[i].Online != peers[j].Online {
+			return peers[i].Online
+		}
+		return peers[i].Name < peers[j].Name
+	})
+	return peers
+}
+
+func buildAccountSummary(status *ipnstate.Status) accountSummary {
+	account := accountSummary{Addresses: []string{}}
+	if status.Self == nil {
+		return account
+	}
+	if profile, ok := status.User[status.Self.UserID]; ok {
+		account.DisplayName = strings.TrimSpace(profile.DisplayName)
+		account.LoginName = strings.TrimSpace(profile.LoginName)
+		account.ProfilePicURL = strings.TrimSpace(profile.ProfilePicURL)
+	}
+	account.DeviceName = strings.TrimSuffix(status.Self.DNSName, ".")
+	if account.DeviceName == "" {
+		account.DeviceName = strings.TrimSpace(status.Self.HostName)
+	}
+	account.Addresses = displayAddresses(status.TailscaleIPs)
+	if status.CurrentTailnet != nil {
+		account.TailnetName = strings.TrimSpace(status.CurrentTailnet.Name)
+	}
+	if account.DisplayName == "" {
+		account.DisplayName = account.LoginName
+	}
+	return account
 }
 
 // setExitNode validates the requested stable ID against the current netmap,
@@ -678,7 +860,7 @@ func writeExitNodeChoice(stateDir, id string) error {
 // tsnet intentionally supplies a fresh preference set on every Server.Start,
 // which otherwise clears exit-node choice when the UI hands off to the VPN
 // Extension or when a development update restarts the processes.
-func restoreExitNodeChoice(client *local.Client, stateDir string) {
+func restoreExitNodeChoice(ctx context.Context, client *local.Client, stateDir string) {
 	id, err := readExitNodeChoice(stateDir)
 	if err != nil || id == "" {
 		return
@@ -686,8 +868,8 @@ func restoreExitNodeChoice(client *local.Client, stateDir string) {
 	selectedID := tailcfg.StableNodeID(id)
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		status, statusErr := client.Status(ctx)
+		requestContext, cancel := context.WithTimeout(ctx, 2*time.Second)
+		status, statusErr := client.Status(requestContext)
 		cancel()
 		if statusErr == nil && status.BackendState == "Running" {
 			validChoice := false
@@ -698,11 +880,13 @@ func restoreExitNodeChoice(client *local.Client, stateDir string) {
 				}
 			}
 			if !validChoice {
-				time.Sleep(250 * time.Millisecond)
+				if !waitForBackendRetry(ctx) {
+					return
+				}
 				continue
 			}
-			ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
-			_, _ = client.EditPrefs(ctx, &ipn.MaskedPrefs{
+			requestContext, cancel = context.WithTimeout(ctx, 3*time.Second)
+			_, _ = client.EditPrefs(requestContext, &ipn.MaskedPrefs{
 				Prefs: ipn.Prefs{
 					ExitNodeID: selectedID,
 				},
@@ -711,7 +895,9 @@ func restoreExitNodeChoice(client *local.Client, stateDir string) {
 			cancel()
 			return
 		}
-		time.Sleep(250 * time.Millisecond)
+		if !waitForBackendRetry(ctx) {
+			return
+		}
 	}
 }
 
@@ -719,19 +905,19 @@ func restoreExitNodeChoice(client *local.Client, stateDir string) {
 // preserves explicit user choices across the UI-process to VPN-Extension
 // handoff. tsnet supplies fresh platform defaults on each Server.Start, and
 // OpenHarmony does not inherit the Android/iOS RouteAll default.
-func restoreNetworkPreferences(client *local.Client, stateDir string) {
+func restoreNetworkPreferences(ctx context.Context, client *local.Client, stateDir string) {
 	settings, err := readNetworkPreferences(stateDir)
 	if err != nil {
 		settings = defaultNetworkPreferences()
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		status, statusErr := client.Status(ctx)
+		requestContext, cancel := context.WithTimeout(ctx, 2*time.Second)
+		status, statusErr := client.Status(requestContext)
 		cancel()
 		if statusErr == nil && status.BackendState == "Running" {
-			ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-			_, prefsErr := client.EditPrefs(ctx, &ipn.MaskedPrefs{
+			requestContext, cancel = context.WithTimeout(ctx, 2*time.Second)
+			_, prefsErr := client.EditPrefs(requestContext, &ipn.MaskedPrefs{
 				Prefs: ipn.Prefs{
 					RouteAll:               settings.RouteAll,
 					CorpDNS:                settings.CorpDNS,
@@ -747,7 +933,18 @@ func restoreNetworkPreferences(client *local.Client, stateDir string) {
 				return
 			}
 		}
-		time.Sleep(250 * time.Millisecond)
+		if !waitForBackendRetry(ctx) {
+			return
+		}
+	}
+}
+
+func waitForBackendRetry(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(250 * time.Millisecond):
+		return true
 	}
 }
 
@@ -962,46 +1159,58 @@ func (b *backendController) setPhase(phase string) {
 	b.mu.Unlock()
 }
 
-func (b *backendController) startAsync(server *tsnet.Server, stateDir string) {
+func (b *backendController) startAsync(
+	server *tsnet.Server, stateDir string, generation uint64, startContext context.Context,
+) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			b.mu.Lock()
-			b.starting = false
-			b.startErr = fmt.Sprintf("panic: %v\n%s", recovered, debug.Stack())
-			b.mu.Unlock()
+			b.setStartErrorFor(server, generation, fmt.Errorf("panic: %v\n%s", recovered, debug.Stack()))
 		}
 	}()
 
 	if err := server.Start(); err != nil {
-		b.setStartError(err)
+		b.setStartErrorFor(server, generation, err)
 		return
 	}
 	client, err := server.LocalClient()
 	if err != nil {
-		b.setStartError(err)
+		b.setStartErrorFor(server, generation, err)
 		return
 	}
 
 	b.mu.Lock()
+	if b.server != server || b.generation != generation || startContext.Err() != nil {
+		b.mu.Unlock()
+		return
+	}
 	b.client = client
 	b.mu.Unlock()
 
-	restoreNetworkPreferences(client, stateDir)
-	restoreExitNodeChoice(client, stateDir)
+	restoreNetworkPreferences(startContext, client, stateDir)
+	restoreExitNodeChoice(startContext, client, stateDir)
 
 	b.mu.Lock()
+	if b.server != server || b.generation != generation || startContext.Err() != nil {
+		b.mu.Unlock()
+		return
+	}
 	b.starting = false
+	b.cancelStart = nil
 	if b.phase == "netns-disabled" {
 		b.phase = "local-client-ready"
 	}
 	b.mu.Unlock()
 }
 
-func (b *backendController) setStartError(err error) {
+func (b *backendController) setStartErrorFor(server *tsnet.Server, generation uint64, err error) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.server != server || b.generation != generation {
+		return
+	}
 	b.starting = false
 	b.startErr = err.Error()
-	b.mu.Unlock()
+	b.cancelStart = nil
 }
 
 func (b *backendController) status() string {
@@ -1011,9 +1220,6 @@ func (b *backendController) status() string {
 	startErr := b.startErr
 	phase := b.phase
 	serverPresent := b.server != nil
-	externalTun := b.externalTun
-	tunDevice := b.tunDevice
-	subnetRoutes := b.subnetRoutes
 	b.mu.Unlock()
 
 	switch {
@@ -1034,6 +1240,18 @@ func (b *backendController) status() string {
 		return fmt.Sprintf("FAILED | backend status | %v", err)
 	}
 	prefs, prefsErr := client.GetPrefs(ctx)
+	return b.formatRunningStatus(status, prefs, prefsErr)
+}
+
+func (b *backendController) formatRunningStatus(
+	status *ipnstate.Status, prefs *ipn.Prefs, prefsErr error,
+) string {
+	b.mu.Lock()
+	externalTun := b.externalTun
+	tunDevice := b.tunDevice
+	subnetRoutes := b.subnetRoutes
+	phase := b.phase
+	b.mu.Unlock()
 	exitNodeSelected := prefsErr == nil && prefs != nil &&
 		(!prefs.ExitNodeID.IsZero() || prefs.ExitNodeIP.IsValid())
 	subnetRoutesEnabled := prefsErr == nil && prefs != nil && prefs.RouteAll

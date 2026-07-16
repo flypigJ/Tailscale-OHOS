@@ -1,5 +1,5 @@
 import nativeBridge from 'libtailscale_ohos.so';
-import { common, Want } from '@kit.AbilityKit';
+import { bundleManager, common, Want } from '@kit.AbilityKit';
 import { vpnExtension } from '@kit.NetworkKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -50,6 +50,45 @@ interface AccountSummary {
   addresses: string[];
 }
 
+interface BackendSnapshot {
+  status: string;
+  exitNodes: ExitNodeChoice[];
+  peers: PeerSummary[];
+  networkSettings: NetworkSettings;
+  account: AccountSummary;
+}
+
+class PeerDataSource implements IDataSource {
+  private data: PeerSummary[] = [];
+  private listeners: DataChangeListener[] = [];
+
+  totalCount(): number {
+    return this.data.length;
+  }
+
+  getData(index: number): PeerSummary {
+    return this.data[index];
+  }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (!this.listeners.includes(listener)) {
+      this.listeners.push(listener);
+    }
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const index: number = this.listeners.indexOf(listener);
+    if (index >= 0) {
+      this.listeners.splice(index, 1);
+    }
+  }
+
+  replaceAll(peers: PeerSummary[]): void {
+    this.data = [...peers];
+    this.listeners.forEach((listener: DataChangeListener) => listener.onDataReloaded());
+  }
+}
+
 @Component
 export struct BridgeStatus {
   @State nativeStatus: string = 'Go Bridge Pending';
@@ -76,6 +115,7 @@ export struct BridgeStatus {
     addresses: []
   };
   @State avatarLoadFailed: boolean = false;
+  @State appVersion: string = '0.3.19-release';
   @State tailscaleVersion: string = '—';
   @State exitNodeStatus: string = '未使用出口节点';
   @State logoutStatus: string = '';
@@ -99,17 +139,28 @@ export struct BridgeStatus {
   private settingsScroller: Scroller = new Scroller();
   private diagnosticsTapCount: number = 0;
   private diagnosticsLastTapMs: number = 0;
+  private lifecycleTimers: number[] = [];
+  private lifecycleGeneration: number = 0;
+  private refreshInFlight: boolean = false;
+  private peerDataSource: PeerDataSource = new PeerDataSource();
+
+  private applyPeers(peers: PeerSummary[]): void {
+    this.peers = peers;
+    this.peerDataSource.replaceAll(peers);
+  }
 
   aboutToAppear(): void {
+    this.lifecycleGeneration++;
     this.loadGlowLevel();
     this.resetDiagnosticsMode();
     this.backendReady = false;
     this.devicesLoading = true;
     this.verifyNativeBridge();
+    this.loadAppVersion();
     const vpnIsLive: boolean = this.refreshVpnProbeStatus();
     if (!vpnIsLive) {
       this.startBackend();
-      setTimeout(() => this.refreshBackendStatus(), 1500);
+      this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
     } else {
       this.backendReady = true;
       this.devicesLoading = false;
@@ -118,21 +169,49 @@ export struct BridgeStatus {
     // Recheck after the heartbeat freshness window. This covers an extension
     // process that was killed just before the UI appeared (for example during
     // an application update) while its last heartbeat still looked current.
-    setTimeout(() => {
+    this.scheduleLifecycleTask(() => {
       if (!this.refreshVpnProbeStatus()) {
         this.startBackend();
-        setTimeout(() => this.refreshBackendStatus(), 1500);
+        this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
       }
     }, 6000);
     this.startHealthPolling();
   }
 
   aboutToDisappear(): void {
+    this.lifecycleGeneration++;
     this.stopConnectionPolling();
     this.clearConnectionCompletionTimer();
     this.stopHealthPolling();
     this.stopLoginPolling();
+    this.clearLifecycleTimers();
     this.resetDiagnosticsMode();
+  }
+
+  private scheduleLifecycleTask(task: () => void, delayMs: number): number {
+    const generation: number = this.lifecycleGeneration;
+    const timer: number = setTimeout(() => {
+      if (generation === this.lifecycleGeneration) {
+        task();
+      }
+    }, delayMs);
+    this.lifecycleTimers.push(timer);
+    return timer;
+  }
+
+  private clearLifecycleTimers(): void {
+    this.lifecycleTimers.forEach((timer: number) => clearTimeout(timer));
+    this.lifecycleTimers = [];
+  }
+
+  private loadAppVersion(): void {
+    bundleManager.getBundleInfoForSelf(bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION)
+      .then((info: bundleManager.BundleInfo) => {
+        this.appVersion = info.versionName;
+      })
+      .catch(() => {
+        // Keep the packaged fallback when bundle metadata is temporarily unavailable.
+      });
   }
 
   private verifyNativeBridge(): void {
@@ -144,9 +223,9 @@ export struct BridgeStatus {
     }
   }
 
-  private probeUserspaceEngine(): void {
+  private async probeUserspaceEngine(): Promise<void> {
     try {
-      this.engineStatus = nativeBridge.probeEngine();
+      this.engineStatus = await nativeBridge.probeEngineAsync();
     } catch (error) {
       this.engineStatus = `Tailscale Engine Failed: ${JSON.stringify(error)}`;
     }
@@ -173,22 +252,41 @@ export struct BridgeStatus {
     return deviceInfo.productModel.trim();
   }
 
-  private refreshBackendStatus(): void {
+  private async refreshBackendStatus(): Promise<void> {
+    if (this.refreshInFlight) {
+      return;
+    }
+    const generation: number = this.lifecycleGeneration;
+    this.refreshInFlight = true;
     try {
-      this.backendStatus = nativeBridge.backendStatus();
+      const snapshotText: string = await nativeBridge.backendSnapshot();
+      if (generation !== this.lifecycleGeneration) {
+        return;
+      }
+      const snapshot: BackendSnapshot = JSON.parse(snapshotText) as BackendSnapshot;
+      this.backendStatus = snapshot.status;
       if (this.backendStatus.includes('state=Running')) {
         this.backendReady = true;
-        this.devicesLoading = true;
+        this.devicesLoading = false;
         this.hasAuthenticatedSession = true;
-        this.refreshExitNodes();
-        this.refreshPeers();
-        this.refreshNetworkSettings();
-        this.refreshAccount();
+        this.exitNodes = snapshot.exitNodes;
+        this.applyPeers(snapshot.peers);
+        this.networkSettings = snapshot.networkSettings;
+        const account: AccountSummary = snapshot.account;
+        this.accountSummary = {
+          displayName: account.displayName,
+          loginName: account.loginName,
+          profilePicURL: account.profilePicURL,
+          tailnetName: account.tailnetName,
+          deviceName: account.deviceName.length > 0 ? account.deviceName : this.deviceModel(),
+          addresses: account.addresses
+        };
+        this.avatarLoadFailed = false;
       } else if (this.needsLogin()) {
         this.backendReady = true;
         this.devicesLoading = false;
         this.hasAuthenticatedSession = false;
-        this.peers = [];
+        this.applyPeers([]);
         this.exitNodes = [];
         this.accountSummary = {
           displayName: '', loginName: '', profilePicURL: '', tailnetName: '', deviceName: '', addresses: []
@@ -198,9 +296,14 @@ export struct BridgeStatus {
         this.devicesLoading = false;
       }
     } catch (error) {
+      if (generation !== this.lifecycleGeneration) {
+        return;
+      }
       this.backendStatus = `Tailscale Backend Failed: ${JSON.stringify(error)}`;
       this.backendReady = true;
       this.devicesLoading = false;
+    } finally {
+      this.refreshInFlight = false;
     }
   }
 
@@ -217,11 +320,11 @@ export struct BridgeStatus {
     }
   }
 
-  private setExitNode(id: string): void {
+  private async setExitNode(id: string): Promise<void> {
     try {
-      this.exitNodeStatus = nativeBridge.backendSetExitNode(id);
+      this.exitNodeStatus = await nativeBridge.backendSetExitNodeAsync(id);
       if (!this.exitNodeStatus.startsWith('FAILED')) {
-        this.refreshExitNodes();
+        this.refreshBackendStatus();
       }
     } catch (_error) {
       this.exitNodeStatus = 'FAILED | exit node | update unavailable';
@@ -231,9 +334,9 @@ export struct BridgeStatus {
   private refreshPeers(): void {
     try {
       const peersText: string = nativeBridge.backendPeers();
-      this.peers = JSON.parse(peersText) as PeerSummary[];
+      this.applyPeers(JSON.parse(peersText) as PeerSummary[]);
     } catch (_error) {
-      this.peers = [];
+      this.applyPeers([]);
     }
     this.devicesLoading = false;
   }
@@ -268,11 +371,10 @@ export struct BridgeStatus {
     }
   }
 
-  private setNetworkSetting(key: string, enabled: boolean): void {
+  private async setNetworkSetting(key: string, enabled: boolean): Promise<void> {
     try {
-      this.networkSettingStatus = nativeBridge.backendSetNetworkSetting(key, enabled);
+      this.networkSettingStatus = await nativeBridge.backendSetNetworkSettingAsync(key, enabled);
       if (!this.networkSettingStatus.startsWith('FAILED')) {
-        this.refreshNetworkSettings();
         this.refreshBackendStatus();
       }
     } catch (_error) {
@@ -292,9 +394,9 @@ export struct BridgeStatus {
     this.loginPollTimer = setTimeout(() => this.pollSecureLogin(0), 600);
   }
 
-  private pollSecureLogin(attempt: number): void {
+  private async pollSecureLogin(attempt: number): Promise<void> {
     try {
-      const authUrl: string = nativeBridge.backendAuthURL();
+      const authUrl: string = await nativeBridge.backendAuthURLAsync();
       if (authUrl.startsWith('PENDING')) {
         if (attempt >= 24) {
           this.loginHandoffStatus = 'FAILED | login URL | timed out';
@@ -357,18 +459,18 @@ export struct BridgeStatus {
     this.connectionStartedAtMs = Date.now();
     this.setConnectInProgress(true);
     // Let the button render its loading state before the native/VPN calls.
-    setTimeout(() => this.startVpnProbe(), 300);
+    this.scheduleLifecycleTask(() => this.startVpnProbe(), 300);
   }
 
-  private startVpnProbe(): void {
-    const backendConfig: string = nativeBridge.backendVpnConfig();
+  private async startVpnProbe(): Promise<void> {
+    const backendConfig: string = await nativeBridge.backendVpnConfigAsync();
     if (backendConfig.startsWith('FAILED')) {
       this.vpnStatus = 'Sign in to Tailscale before connecting';
       this.clearConnectionCompletionTimer();
       this.setConnectInProgress(false);
       return;
     }
-    const magicDNSProbeUrl: string = nativeBridge.backendMagicDNSProbeURL();
+    const magicDNSProbeUrl: string = await nativeBridge.backendMagicDNSProbeURLAsync();
     if (magicDNSProbeUrl.startsWith('http://')) {
       this.magicDNSProbeUrl = magicDNSProbeUrl;
       this.magicDNSProbeStatus = 'MagicDNS identity-redacted probe ready';
@@ -376,7 +478,7 @@ export struct BridgeStatus {
       this.magicDNSProbeUrl = '';
       this.magicDNSProbeStatus = magicDNSProbeUrl;
     }
-    this.backendStatus = nativeBridge.backendStop();
+    this.backendStatus = await nativeBridge.backendStopAsync();
     this.vpnStatus = 'Requesting HarmonyOS VPN authorization';
     vpnExtension.startVpnExtensionAbility(this.vpnWant())
       .then(() => {
@@ -414,7 +516,7 @@ export struct BridgeStatus {
         this.vpnStatus = 'HarmonyOS VPN Extension stopped';
         this.stopConnectionPolling();
         this.startBackend();
-        setTimeout(() => this.refreshBackendStatus(), 1500);
+        this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
       })
       .catch((error: BusinessError) => {
         this.vpnStatus = `FAILED | VPN stop | code=${error.code}`;
@@ -439,18 +541,18 @@ export struct BridgeStatus {
     });
   }
 
-  private logout(): void {
+  private async logout(): Promise<void> {
     try {
-      this.logoutStatus = nativeBridge.backendLogout();
+      this.logoutStatus = await nativeBridge.backendLogoutAsync();
       if (!this.logoutStatus.startsWith('FAILED')) {
         this.loginInProgress = false;
         this.hasAuthenticatedSession = false;
         this.stopLoginPolling();
-        this.peers = [];
+        this.applyPeers([]);
         this.exitNodes = [];
         this.exitNodeStatus = '未使用出口节点';
         this.loginHandoffStatus = 'Secure Login Pending';
-        setTimeout(() => this.refreshBackendStatus(), 500);
+        this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 500);
       }
     } catch (_error) {
       this.logoutStatus = 'FAILED | logout | unavailable';
@@ -533,17 +635,27 @@ export struct BridgeStatus {
 
   private startHealthPolling(): void {
     this.stopHealthPolling();
-    this.healthPollTimer = setInterval(() => {
-      const vpnIsLive: boolean = this.refreshVpnProbeStatus();
-      if (!vpnIsLive) {
-        this.refreshBackendStatus();
+    this.scheduleHealthPoll(this.lifecycleGeneration);
+  }
+
+  private scheduleHealthPoll(generation: number): void {
+    this.healthPollTimer = setTimeout(() => {
+      if (generation !== this.lifecycleGeneration) {
+        return;
       }
+      const vpnIsLive: boolean = this.refreshVpnProbeStatus();
+      const refresh: Promise<void> = vpnIsLive ? Promise.resolve() : this.refreshBackendStatus();
+      refresh.finally(() => {
+        if (generation === this.lifecycleGeneration) {
+          this.scheduleHealthPoll(generation);
+        }
+      });
     }, 2000);
   }
 
   private stopHealthPolling(): void {
     if (this.healthPollTimer >= 0) {
-      clearInterval(this.healthPollTimer);
+      clearTimeout(this.healthPollTimer);
       this.healthPollTimer = -1;
     }
   }
@@ -1599,7 +1711,7 @@ export struct BridgeStatus {
         ListItem() {
           this.LocalDeviceRow()
         }
-        ForEach(this.peers, (peer: PeerSummary) => {
+        LazyForEach(this.peerDataSource, (peer: PeerSummary) => {
           ListItem() {
             this.PeerDeviceRow(peer)
           }
@@ -1610,6 +1722,7 @@ export struct BridgeStatus {
       .edgeEffect(EdgeEffect.Spring)
       .scrollBar(this.peers.length + 1 > 3 ? BarState.Auto : BarState.Off)
       .scrollBarWidth(3)
+      .cachedCount(5)
     }
     .width('100%')
     .layoutWeight(1)
@@ -1802,7 +1915,7 @@ export struct BridgeStatus {
         Text($r('app.string.app_version_label'))
           .fontSize(13)
           .fontColor($r('sys.color.font_secondary'))
-        Text('0.2.19-beta.6')
+        Text(this.appVersion)
           .id('app-version')
           .fontSize(13)
           .fontColor($r('sys.color.font_primary'))

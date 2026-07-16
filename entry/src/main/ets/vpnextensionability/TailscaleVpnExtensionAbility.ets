@@ -9,10 +9,15 @@ const DOMAIN = 0x0000;
 const TAG = 'TailscaleVpn';
 const BUNDLE_NAME = 'io.github.tailscaleohos';
 
+interface BackendHealthSnapshot {
+  status: string;
+}
+
 export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   private vpnConnection?: vpnExtension.VpnConnection;
   private tunFd: number = -1;
   private statusTimer: number = -1;
+  private statusUpdateInFlight: boolean = false;
 
   onCreate(want: Want): void {
     this.writeStatus('VPN extension lifecycle entered');
@@ -153,8 +158,8 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
         const finalStatus: string = await this.waitForVpnBackend(restartStatus);
         this.writeStatus(finalStatus);
         if (finalStatus.includes('state=Running')) {
-          nativeBridge.backendArmMagicDNSProbe();
-          this.writePeerStatus(nativeBridge.backendPeerProbe());
+          await nativeBridge.backendArmMagicDNSProbeAsync();
+          this.writePeerStatus(await nativeBridge.backendPeerProbeAsync());
           this.startStatusUpdates();
         }
       } else {
@@ -201,7 +206,8 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     }
     let backendStatus: string = initialStatus;
     for (let attempt: number = 0; attempt < 60; attempt++) {
-      backendStatus = nativeBridge.backendStatus();
+      const snapshotText: string = await nativeBridge.backendSnapshot();
+      backendStatus = (JSON.parse(snapshotText) as BackendHealthSnapshot).status;
       if (backendStatus.includes('state=Running') || backendStatus.startsWith('FAILED')) {
         return backendStatus;
       }
@@ -217,31 +223,49 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       clearInterval(this.statusTimer);
     }
     this.statusTimer = setInterval(() => {
-      this.writeStatus(nativeBridge.backendStatus());
+      if (this.statusUpdateInFlight) {
+        return;
+      }
+      this.statusUpdateInFlight = true;
+      nativeBridge.backendSnapshot()
+        .then((snapshotText: string) => {
+          const snapshot: BackendHealthSnapshot = JSON.parse(snapshotText) as BackendHealthSnapshot;
+          this.writeStatus(snapshot.status);
+        })
+        .catch(() => {
+          this.writeStatus('FAILED | VPN backend | status unavailable');
+        })
+        .finally(() => {
+          this.statusUpdateInFlight = false;
+        });
     }, 1000);
   }
 
   private writePeerStatus(status: string): void {
-    try {
-      const path = `${this.context.filesDir}/vpn-peer-probe-status.txt`;
-      const file = fileIo.openSync(path,
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, status);
-      fileIo.closeSync(file);
-    } catch (_error) {
-      // The probe result is diagnostic-only.
-    }
+    this.writeTextFile(`${this.context.filesDir}/vpn-peer-probe-status.txt`, status);
   }
 
   private writeStatus(status: string): void {
+    this.writeTextFile(`${this.context.filesDir}/vpn-probe-status.txt`,
+      `${status} | heartbeatMs=${Date.now()}`);
+  }
+
+  private writeTextFile(path: string, content: string): void {
+    let file: fileIo.File | undefined = undefined;
     try {
-      const path = `${this.context.filesDir}/vpn-probe-status.txt`;
-      const file = fileIo.openSync(path,
+      file = fileIo.openSync(path,
         fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, `${status} | heartbeatMs=${Date.now()}`);
-      fileIo.closeSync(file);
+      fileIo.writeSync(file.fd, content);
     } catch (_error) {
-      // This diagnostic path is best-effort and must never stop VPN startup.
+      // Status persistence is best-effort and must never stop VPN startup.
+    } finally {
+      if (file !== undefined) {
+        try {
+          fileIo.closeSync(file);
+        } catch (_error) {
+          // The descriptor may already be closed after a platform write failure.
+        }
+      }
     }
   }
 

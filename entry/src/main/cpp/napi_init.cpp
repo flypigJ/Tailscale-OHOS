@@ -1,9 +1,253 @@
 #include "napi/native_api.h"
 #include "hilog/log.h"
 #include "libtailscale_go.h"
+#include <string>
 #include <vector>
 
 namespace {
+using AsyncStringFunction = char* (*)();
+
+struct AsyncStringWork {
+    napi_env env;
+    napi_async_work work;
+    napi_deferred deferred;
+    AsyncStringFunction function;
+    std::string result;
+    bool succeeded;
+};
+
+enum class AsyncInputOperation {
+    SetExitNode,
+    SetNetworkSetting
+};
+
+struct AsyncInputWork {
+    napi_async_work work;
+    napi_deferred deferred;
+    AsyncInputOperation operation;
+    std::string input;
+    bool enabled;
+    std::string result;
+    bool succeeded;
+};
+
+void ExecuteAsyncString(napi_env env, void* data)
+{
+    (void)env;
+    auto* work = static_cast<AsyncStringWork*>(data);
+    char* message = work->function();
+    if (message == nullptr) {
+        work->succeeded = false;
+        return;
+    }
+    work->result.assign(message);
+    TSFreeString(message);
+    work->succeeded = true;
+}
+
+void CompleteAsyncString(napi_env env, napi_status status, void* data)
+{
+    auto* work = static_cast<AsyncStringWork*>(data);
+    napi_value value = nullptr;
+    if (status == napi_ok && work->succeeded &&
+        napi_create_string_utf8(env, work->result.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+        napi_resolve_deferred(env, work->deferred, value);
+    } else {
+        napi_value message = nullptr;
+        napi_value error = nullptr;
+        napi_create_string_utf8(env, "Native backend operation failed", NAPI_AUTO_LENGTH, &message);
+        napi_create_error(env, nullptr, message, &error);
+        napi_reject_deferred(env, work->deferred, error);
+    }
+    napi_delete_async_work(env, work->work);
+    delete work;
+}
+
+napi_value CreateAsyncStringPromise(
+    napi_env env, AsyncStringFunction function, const char* resourceName)
+{
+    napi_value promise = nullptr;
+    napi_deferred deferred = nullptr;
+    if (napi_create_promise(env, &deferred, &promise) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to create native backend promise");
+        return nullptr;
+    }
+    auto* work = new AsyncStringWork{env, nullptr, deferred, function, "", false};
+    napi_value resource = nullptr;
+    if (napi_create_string_utf8(env, resourceName, NAPI_AUTO_LENGTH, &resource) != napi_ok ||
+        napi_create_async_work(env, nullptr, resource, ExecuteAsyncString, CompleteAsyncString, work, &work->work) != napi_ok ||
+        napi_queue_async_work(env, work->work) != napi_ok) {
+        if (work->work != nullptr) {
+            napi_delete_async_work(env, work->work);
+        }
+        delete work;
+        napi_throw_error(env, nullptr, "Failed to queue native backend operation");
+        return nullptr;
+    }
+    return promise;
+}
+
+void ExecuteAsyncInput(napi_env env, void* data)
+{
+    (void)env;
+    auto* work = static_cast<AsyncInputWork*>(data);
+    char* message = work->operation == AsyncInputOperation::SetExitNode ?
+        TSBackendSetExitNode(const_cast<char*>(work->input.c_str())) :
+        TSBackendSetNetworkSetting(const_cast<char*>(work->input.c_str()), work->enabled ? 1 : 0);
+    if (message == nullptr) {
+        work->succeeded = false;
+        return;
+    }
+    work->result.assign(message);
+    TSFreeString(message);
+    work->succeeded = true;
+}
+
+void CompleteAsyncInput(napi_env env, napi_status status, void* data)
+{
+    auto* work = static_cast<AsyncInputWork*>(data);
+    napi_value value = nullptr;
+    if (status == napi_ok && work->succeeded &&
+        napi_create_string_utf8(env, work->result.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+        napi_resolve_deferred(env, work->deferred, value);
+    } else {
+        napi_value message = nullptr;
+        napi_value error = nullptr;
+        napi_create_string_utf8(env, "Native backend update failed", NAPI_AUTO_LENGTH, &message);
+        napi_create_error(env, nullptr, message, &error);
+        napi_reject_deferred(env, work->deferred, error);
+    }
+    napi_delete_async_work(env, work->work);
+    delete work;
+}
+
+napi_value CreateAsyncInputPromise(
+    napi_env env, AsyncInputOperation operation, const std::string& input, bool enabled, const char* resourceName)
+{
+    napi_value promise = nullptr;
+    napi_deferred deferred = nullptr;
+    if (napi_create_promise(env, &deferred, &promise) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to create native backend update promise");
+        return nullptr;
+    }
+    auto* work = new AsyncInputWork{nullptr, deferred, operation, input, enabled, "", false};
+    napi_value resource = nullptr;
+    if (napi_create_string_utf8(env, resourceName, NAPI_AUTO_LENGTH, &resource) != napi_ok ||
+        napi_create_async_work(env, nullptr, resource, ExecuteAsyncInput, CompleteAsyncInput, work, &work->work) != napi_ok ||
+        napi_queue_async_work(env, work->work) != napi_ok) {
+        if (work->work != nullptr) {
+            napi_delete_async_work(env, work->work);
+        }
+        delete work;
+        napi_throw_error(env, nullptr, "Failed to queue native backend update");
+        return nullptr;
+    }
+    return promise;
+}
+
+napi_value BackendSetExitNodeAsync(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "backendSetExitNodeAsync requires one selection");
+        return nullptr;
+    }
+    size_t length = 0;
+    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "Exit-node selection must be a string");
+        return nullptr;
+    }
+    std::vector<char> selection(length + 1, '\0');
+    if (napi_get_value_string_utf8(env, args[0], selection.data(), selection.size(), &length) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to read the exit-node selection");
+        return nullptr;
+    }
+    return CreateAsyncInputPromise(
+        env, AsyncInputOperation::SetExitNode, selection.data(), false, "TailscaleBackendSetExitNode");
+}
+
+napi_value BackendSetNetworkSettingAsync(napi_env env, napi_callback_info info)
+{
+    size_t argc = 2;
+    napi_value args[2] = {nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
+        napi_throw_type_error(env, nullptr, "backendSetNetworkSettingAsync requires a key and boolean value");
+        return nullptr;
+    }
+    size_t length = 0;
+    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "Network setting key must be a string");
+        return nullptr;
+    }
+    std::vector<char> key(length + 1, '\0');
+    if (napi_get_value_string_utf8(env, args[0], key.data(), key.size(), &length) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to read the network setting key");
+        return nullptr;
+    }
+    bool enabled = false;
+    if (napi_get_value_bool(env, args[1], &enabled) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "Network setting value must be a boolean");
+        return nullptr;
+    }
+    return CreateAsyncInputPromise(
+        env, AsyncInputOperation::SetNetworkSetting, key.data(), enabled, "TailscaleBackendSetNetworkSetting");
+}
+
+napi_value BackendSnapshotAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendSnapshot, "TailscaleBackendSnapshot");
+}
+
+napi_value BackendStopAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendStop, "TailscaleBackendStop");
+}
+
+napi_value BackendLogoutAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendLogout, "TailscaleBackendLogout");
+}
+
+napi_value BackendAuthURLAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendAuthURL, "TailscaleBackendAuthURL");
+}
+
+napi_value BackendVpnConfigAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendVPNConfig, "TailscaleBackendVpnConfig");
+}
+
+napi_value BackendMagicDNSProbeURLAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendMagicDNSProbeURL, "TailscaleBackendMagicDNSProbeURL");
+}
+
+napi_value ProbeEngineAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSProbeEngine, "TailscaleEngineProbe");
+}
+
+napi_value BackendPeerProbeAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendPeerProbe, "TailscaleBackendPeerProbe");
+}
+
+napi_value BackendArmMagicDNSProbeAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendArmMagicDNSProbe, "TailscaleBackendArmMagicDNSProbe");
+}
+
 napi_value Hello(napi_env env, napi_callback_info info)
 {
     (void)info;
@@ -492,10 +736,16 @@ static napi_value Init(napi_env env, napi_value exports)
     napi_property_descriptor descriptors[] = {
         {"hello", nullptr, Hello, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"probeEngine", nullptr, ProbeEngine, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"probeEngineAsync", nullptr, ProbeEngineAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendStart", nullptr, BackendStart, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendStop", nullptr, BackendStop, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendLogout", nullptr, BackendLogout, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendStatus", nullptr, BackendStatus, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendSnapshot", nullptr, BackendSnapshotAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendStopAsync", nullptr, BackendStopAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendLogoutAsync", nullptr, BackendLogoutAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendAuthURLAsync", nullptr, BackendAuthURLAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendVpnConfigAsync", nullptr, BackendVpnConfigAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendAuthURL", nullptr, BackendAuthURL, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendVpnConfig", nullptr, BackendVpnConfig, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendExitNodes", nullptr, BackendExitNodes, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -504,10 +754,18 @@ static napi_value Init(napi_env env, napi_value exports)
         {"tailscaleVersion", nullptr, TailscaleVersion, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendNetworkSettings", nullptr, BackendNetworkSettings, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendSetNetworkSetting", nullptr, BackendSetNetworkSetting, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendSetNetworkSettingAsync", nullptr, BackendSetNetworkSettingAsync, nullptr, nullptr, nullptr,
+            napi_default, nullptr},
         {"backendSetExitNode", nullptr, BackendSetExitNode, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendSetExitNodeAsync", nullptr, BackendSetExitNodeAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendPeerProbe", nullptr, BackendPeerProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendPeerProbeAsync", nullptr, BackendPeerProbeAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendMagicDNSProbeURL", nullptr, BackendMagicDNSProbeURL, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendMagicDNSProbeURLAsync", nullptr, BackendMagicDNSProbeURLAsync, nullptr, nullptr, nullptr,
+            napi_default, nullptr},
         {"backendArmMagicDNSProbe", nullptr, BackendArmMagicDNSProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendArmMagicDNSProbeAsync", nullptr, BackendArmMagicDNSProbeAsync, nullptr, nullptr, nullptr,
+            napi_default, nullptr},
         {"backendRestartWithTun", nullptr, BackendRestartWithTun, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"controlProbe", nullptr, ControlProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"tunFdProbe", nullptr, TunFdProbe, nullptr, nullptr, nullptr, napi_default, nullptr}
