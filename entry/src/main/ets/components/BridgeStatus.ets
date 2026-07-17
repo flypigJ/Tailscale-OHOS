@@ -26,6 +26,8 @@ const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
 const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
 const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
+const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
+const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
 
 interface ExitNodeChoice {
   id: string;
@@ -94,6 +96,15 @@ interface AccountSummary {
 interface PersistedPeerSnapshot {
   peers: PeerSummary[];
   updatedAtMs: number;
+}
+
+interface VpnStopRequest {
+  requestId: number;
+}
+
+interface VpnStopResponse {
+  requestId: number;
+  status: string;
 }
 
 interface BackendSnapshot {
@@ -185,6 +196,7 @@ export struct BridgeStatus {
   };
   @State loginInProgress: boolean = false;
   @State connectInProgress: boolean = false;
+  @State disconnectInProgress: boolean = false;
   @State backendReady: boolean = false;
   @State backendInitializationVisible: boolean = false;
   @State devicesLoading: boolean = true;
@@ -213,6 +225,8 @@ export struct BridgeStatus {
   private trafficLastUploadBytes: number = 0;
   private peerConnectivityPollTimer: number = -1;
   private peerConnectivityRequestId: number = 0;
+  private vpnStopPollTimer: number = -1;
+  private vpnStopRequestId: number = 0;
   private peerSnapshotSignature: string = '';
   private peerDataSource: PeerDataSource = new PeerDataSource();
 
@@ -260,6 +274,7 @@ export struct BridgeStatus {
     this.stopHealthPolling();
     this.stopLoginPolling();
     this.stopPeerConnectivityPolling();
+    this.stopVpnStopPolling();
     this.peerConnectivityInProgress = false;
     this.clearLifecycleTimers();
     this.resetDiagnosticsMode();
@@ -618,13 +633,77 @@ export struct BridgeStatus {
   }
 
   private stopVpnProbe(): void {
+    if (this.disconnectInProgress) {
+      return;
+    }
     this.clearConnectionCompletionTimer();
     this.setConnectInProgress(false);
+    this.disconnectInProgress = true;
     this.recordDiagnosticEvent('disconnect_requested', 'user');
+    this.stopVpnStopPolling();
+    this.vpnStopRequestId = Date.now();
+    const responsePath: string = this.vpnStopFilePath(VPN_STOP_RESPONSE_FILE_NAME);
+    this.writePrivateTextFile(responsePath, '');
+    const request: VpnStopRequest = { requestId: this.vpnStopRequestId };
+    const requestPath: string = this.vpnStopFilePath(VPN_STOP_REQUEST_FILE_NAME);
+    if (!this.writePrivateTextFile(requestPath, JSON.stringify(request))) {
+      this.finishVpnExtensionStop();
+      return;
+    }
+    this.pollVpnStopResponse(0);
+  }
+
+  private vpnStopFilePath(fileName: string): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${fileName}`;
+  }
+
+  private pollVpnStopResponse(attempt: number): void {
+    if (!this.disconnectInProgress) {
+      return;
+    }
+    if (attempt >= 50) {
+      this.recordDiagnosticEvent('vpn_backend_stop_timeout', 'disconnect');
+      this.finishVpnExtensionStop();
+      return;
+    }
+    const responsePath: string = this.vpnStopFilePath(VPN_STOP_RESPONSE_FILE_NAME);
+    try {
+      if (fileIo.accessSync(responsePath)) {
+        const responseText: string = fileIo.readTextSync(responsePath).trim();
+        if (responseText.length > 0) {
+          const response: VpnStopResponse = JSON.parse(responseText) as VpnStopResponse;
+          if (response.requestId === this.vpnStopRequestId) {
+            this.writePrivateTextFile(responsePath, '');
+            this.backendStatus = response.status;
+            this.finishVpnExtensionStop();
+            return;
+          }
+        }
+      }
+    } catch (_error) {
+      // The Extension may be replacing the response file. Retry briefly before
+      // falling back to the lifecycle stop, whose onDestroy path also closes it.
+    }
+    this.vpnStopPollTimer = setTimeout(() => {
+      this.pollVpnStopResponse(attempt + 1);
+    }, 150);
+  }
+
+  private stopVpnStopPolling(): void {
+    if (this.vpnStopPollTimer >= 0) {
+      clearTimeout(this.vpnStopPollTimer);
+      this.vpnStopPollTimer = -1;
+    }
+  }
+
+  private finishVpnExtensionStop(): void {
+    this.stopVpnStopPolling();
     vpnExtension.stopVpnExtensionAbility(this.vpnWant())
       .then(() => {
         this.recordDiagnosticEvent('disconnect_completed', 'system');
         this.vpnStatus = 'HarmonyOS VPN Extension stopped';
+        this.disconnectInProgress = false;
         this.stopConnectionPolling();
         this.startBackend(false);
         this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
@@ -632,6 +711,7 @@ export struct BridgeStatus {
       .catch((error: BusinessError) => {
         this.recordDiagnosticEvent('disconnect_failed', 'system', error.code);
         this.vpnStatus = `FAILED | VPN stop | code=${error.code}`;
+        this.disconnectInProgress = false;
       });
   }
 
@@ -1887,7 +1967,8 @@ export struct BridgeStatus {
   }
 
   private connectionActionLoading(): boolean {
-    return this.isBackendLoading() || this.isConnecting() || this.loginInProgress;
+    return this.isBackendLoading() || this.isConnecting() || this.loginInProgress ||
+      this.disconnectInProgress;
   }
 
   private connectionActionEnabled(): boolean {

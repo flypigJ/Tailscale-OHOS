@@ -17,6 +17,8 @@ const VPN_REPLACE_APPROVAL_TTL_MS: number = 10000;
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
 const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
 const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
+const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
+const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
 
 interface PeerSummary {
   key: string;
@@ -34,6 +36,15 @@ interface PeerSummary {
 interface PersistedPeerSnapshot {
   peers: PeerSummary[];
   updatedAtMs: number;
+}
+
+interface VpnStopRequest {
+  requestId: number;
+}
+
+interface VpnStopResponse {
+  requestId: number;
+  status: string;
 }
 
 interface BackendHealthSnapshot {
@@ -58,6 +69,8 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   private statusUpdateInFlight: boolean = false;
   private activeVpnId: string = '';
   private peerConnectivityInFlight: boolean = false;
+  private backendStopInFlight: boolean = false;
+  private destroying: boolean = false;
 
   onCreate(want: Want): void {
     this.recordDiagnosticEvent('vpn_extension_created', 'lifecycle');
@@ -319,18 +332,27 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       clearInterval(this.statusTimer);
     }
     this.statusTimer = setInterval(() => {
-      if (this.statusUpdateInFlight) {
+      if (this.statusUpdateInFlight || this.backendStopInFlight) {
+        return;
+      }
+      if (this.processBackendStopRequest()) {
         return;
       }
       this.statusUpdateInFlight = true;
       nativeBridge.backendSnapshot()
         .then((snapshotText: string) => {
+          if (this.destroying) {
+            return;
+          }
           const snapshot: BackendHealthSnapshot = JSON.parse(snapshotText) as BackendHealthSnapshot;
           this.writeStatus(snapshot.status);
           this.writePeerSnapshot(snapshot.peers);
           this.processPeerConnectivityRequest();
         })
         .catch(() => {
+          if (this.destroying) {
+            return;
+          }
           this.writeStatus('FAILED | VPN backend | status unavailable');
         })
         .finally(() => {
@@ -350,6 +372,49 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     };
     this.writeTextFile(`${this.context.filesDir}/${VPN_PEERS_FILE_NAME}`,
       JSON.stringify(persisted));
+  }
+
+  private processBackendStopRequest(): boolean {
+    const requestPath: string = `${this.context.filesDir}/${VPN_STOP_REQUEST_FILE_NAME}`;
+    try {
+      if (!fileIo.accessSync(requestPath)) {
+        return false;
+      }
+      const requestText: string = fileIo.readTextSync(requestPath).trim();
+      if (requestText.length === 0) {
+        return false;
+      }
+      this.writeTextFile(requestPath, '');
+      const request: VpnStopRequest = JSON.parse(requestText) as VpnStopRequest;
+      if (request.requestId <= 0) {
+        return false;
+      }
+      this.backendStopInFlight = true;
+      nativeBridge.backendStopAsync()
+        .then((status: string) => {
+          const response: VpnStopResponse = { requestId: request.requestId, status: status };
+          this.writeTextFile(`${this.context.filesDir}/${VPN_STOP_RESPONSE_FILE_NAME}`,
+            JSON.stringify(response));
+          this.recordDiagnosticEvent(status.startsWith('OK') ?
+            'vpn_backend_stopped' : 'vpn_backend_stop_failed', 'disconnect');
+        })
+        .catch(() => {
+          const response: VpnStopResponse = {
+            requestId: request.requestId,
+            status: 'FAILED | backend stop | extension error'
+          };
+          this.writeTextFile(`${this.context.filesDir}/${VPN_STOP_RESPONSE_FILE_NAME}`,
+            JSON.stringify(response));
+          this.recordDiagnosticEvent('vpn_backend_stop_failed', 'disconnect');
+        })
+        .finally(() => {
+          this.backendStopInFlight = false;
+        });
+      return true;
+    } catch (_error) {
+      this.writeTextFile(requestPath, '');
+      return false;
+    }
   }
 
   private peerConnectivityRequestPath(): string {
@@ -430,6 +495,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   }
 
   onDestroy(): void {
+    this.destroying = true;
     this.recordDiagnosticEvent('vpn_extension_destroyed', 'lifecycle');
     if (this.statusTimer >= 0) {
       clearInterval(this.statusTimer);
@@ -440,6 +506,13 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     this.vpnConnection = undefined;
     this.activeVpnId = '';
     this.tunFd = -1;
+    try {
+      const backendStopStatus: string = nativeBridge.backendStop();
+      this.recordDiagnosticEvent(backendStopStatus.startsWith('OK') ?
+        'vpn_backend_stopped' : 'vpn_backend_stop_failed', 'destroy');
+    } catch (_error) {
+      this.recordDiagnosticEvent('vpn_backend_stop_failed', 'destroy');
+    }
     this.writePeerSnapshot([]);
     this.writeStatus('VPN extension destroyed');
     if (connection !== undefined && vpnId.length > 0) {
