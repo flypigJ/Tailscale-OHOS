@@ -25,6 +25,7 @@ const MIN_CONNECTION_LOADING_MS: number = 1400;
 const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
 const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
+const TAILDROP_TARGETS_FILE_NAME: string = 'taildrop-targets.json';
 const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
 const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
 const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
@@ -93,6 +94,21 @@ interface AccountSummary {
   keyExpiryUnixMs: number;
 }
 
+interface TaildropTargetSummary {
+  key: string;
+  name: string;
+  os: string;
+  deviceModel: string;
+  online: boolean;
+}
+
+interface TaildropSnapshot {
+  state: string;
+  reason: string;
+  targets: TaildropTargetSummary[];
+  updatedAtMs: number;
+}
+
 interface PersistedPeerSnapshot {
   peers: PeerSummary[];
   updatedAtMs: number;
@@ -113,6 +129,7 @@ interface BackendSnapshot {
   peers: PeerSummary[];
   networkSettings: NetworkSettings;
   account: AccountSummary;
+  taildrop: TaildropSnapshot;
 }
 
 class PeerDataSource implements IDataSource {
@@ -194,6 +211,9 @@ export struct BridgeStatus {
     state: '', reason: '', sent: 0, received: 0, lossPercent: 0,
     minLatencyMs: 0, avgLatencyMs: 0, maxLatencyMs: 0
   };
+  @State taildropState: string = 'disconnected';
+  @State taildropReason: string = '';
+  @State taildropTargets: TaildropTargetSummary[] = [];
   @State loginInProgress: boolean = false;
   @State connectInProgress: boolean = false;
   @State disconnectInProgress: boolean = false;
@@ -881,8 +901,10 @@ export struct BridgeStatus {
         if (visibleStatus.includes('state=Running')) {
           this.refreshPeerSnapshot();
         }
+        this.refreshTaildropSnapshot();
       } else {
         this.resetTrafficMetrics();
+        this.resetTaildropSnapshot();
       }
       const shouldPromptVpnConflict: boolean = this.connectInProgress &&
         visibleStatus.includes(`code=2203002`);
@@ -952,6 +974,11 @@ export struct BridgeStatus {
     this.stopConnectionPolling();
   }
 
+  private taildropSnapshotFilePath(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${TAILDROP_TARGETS_FILE_NAME}`;
+  }
+
   private peerSnapshotFilePath(): string {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     return `${context.filesDir}/${VPN_PEERS_FILE_NAME}`;
@@ -981,6 +1008,43 @@ export struct BridgeStatus {
     } catch (_error) {
       // The Extension may be replacing the snapshot file. Retry on the next
       // one-second health poll without discarding the last valid device list.
+    }
+  }
+
+  private resetTaildropSnapshot(): void {
+    this.taildropState = 'disconnected';
+    this.taildropReason = '';
+    this.taildropTargets = [];
+  }
+
+  private refreshTaildropSnapshot(): void {
+    try {
+      const path: string = this.taildropSnapshotFilePath();
+      if (!fileIo.accessSync(path)) {
+        this.taildropState = 'loading';
+        return;
+      }
+      const snapshot: TaildropSnapshot = JSON.parse(fileIo.readTextSync(path)) as TaildropSnapshot;
+      const ageMs: number = Date.now() - snapshot.updatedAtMs;
+      if (snapshot.updatedAtMs <= 0 || ageMs < 0 || ageMs > 5000) {
+        this.taildropState = 'loading';
+        return;
+      }
+      if (snapshot.state !== 'ready' && snapshot.state !== 'disabled' &&
+        snapshot.state !== 'unavailable' && snapshot.state !== 'loading') {
+        this.taildropState = 'unavailable';
+        this.taildropReason = 'invalid_snapshot';
+        this.taildropTargets = [];
+        return;
+      }
+      const validTargets: TaildropTargetSummary[] = snapshot.targets.filter(
+        (target: TaildropTargetSummary) => /^peer-[a-f0-9]{16}$/.test(target.key) && target.name.length > 0);
+      this.taildropState = snapshot.state;
+      this.taildropReason = snapshot.reason;
+      this.taildropTargets = validTargets;
+    } catch (_error) {
+      // The Extension may be replacing the snapshot file. Keep the previous
+      // valid result and retry on the next one-second health poll.
     }
   }
 
@@ -1255,6 +1319,55 @@ export struct BridgeStatus {
 
   private peerDeviceDescription(peer: PeerSummary): string {
     return peer.os.length > 0 ? this.displayOsName(peer.os) : peer.deviceModel;
+  }
+
+  private taildropOnlineTargetCount(): number {
+    return this.taildropTargets.filter((target: TaildropTargetSummary) => target.online).length;
+  }
+
+  private taildropTargetDescription(target: TaildropTargetSummary): string {
+    if (target.os.length > 0) {
+      return this.displayOsName(target.os);
+    }
+    if (target.deviceModel.length > 0) {
+      return target.deviceModel;
+    }
+    return 'Tailscale';
+  }
+
+  private taildropStatusTitle(): ResourceStr {
+    if (!this.isConnected()) {
+      return $r('app.string.transfer_connect_first_title');
+    }
+    if (this.taildropState === 'loading') {
+      return $r('app.string.transfer_detecting_title');
+    }
+    if (this.taildropState === 'disabled') {
+      return $r('app.string.transfer_admin_disabled_title');
+    }
+    if (this.taildropState !== 'ready') {
+      return $r('app.string.transfer_unavailable_title');
+    }
+    return $r('app.string.transfer_targets_ready_title', this.taildropOnlineTargetCount());
+  }
+
+  private taildropStatusDescription(): ResourceStr {
+    if (!this.isConnected()) {
+      return $r('app.string.transfer_connect_first_description');
+    }
+    if (this.taildropState === 'loading') {
+      return $r('app.string.transfer_detecting_description');
+    }
+    if (this.taildropState === 'disabled') {
+      return $r('app.string.transfer_admin_disabled_description');
+    }
+    if (this.taildropState !== 'ready') {
+      return $r('app.string.transfer_unavailable_description');
+    }
+    if (this.taildropTargets.length === 0) {
+      return $r('app.string.transfer_no_targets_description');
+    }
+    return $r('app.string.transfer_targets_ready_description');
   }
 
   private primaryTailscaleAddress(addresses: string[]): string {
@@ -3120,7 +3233,7 @@ export struct BridgeStatus {
         .color($r('sys.color.comp_divider'))
 
       Row({ space: 10 }) {
-        if (this.isConnected()) {
+        if (this.isConnected() && this.taildropState === 'ready') {
           SymbolGlyph($r('sys.symbol.checkmark'))
             .fontSize(18)
             .fontColor([$r('sys.color.icon_emphasize')])
@@ -3130,15 +3243,13 @@ export struct BridgeStatus {
             .fontColor([$r('sys.color.icon_secondary')])
         }
         Column({ space: 2 }) {
-          Text(this.isConnected() ?
-            $r('app.string.transfer_connected_title') : $r('app.string.transfer_connect_first_title'))
+          Text(this.taildropStatusTitle())
+            .id('taildrop-status-title')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_primary'))
             .width('100%')
-          Text(this.isConnected() ?
-            $r('app.string.transfer_connected_description') :
-            $r('app.string.transfer_connect_first_description'))
+          Text(this.taildropStatusDescription())
             .fontSize(12)
             .fontColor($r('sys.color.font_secondary'))
             .lineHeight(18)
@@ -3153,6 +3264,85 @@ export struct BridgeStatus {
     .padding(16)
     .backgroundColor(this.groupBackground())
     .borderRadius(16)
+  }
+
+  @Builder
+  private TaildropTargetRow(target: TaildropTargetSummary) {
+    Row({ space: 12 }) {
+      Stack() {
+        SymbolGlyph($r('sys.symbol.doc'))
+          .fontSize(22)
+          .fontColor([target.online ? $r('sys.color.icon_emphasize') :
+            $r('sys.color.icon_secondary')])
+      }
+      .width(38)
+      .height(38)
+      .borderRadius(12)
+      .backgroundColor(this.secondaryBackground())
+
+      Column({ space: 2 }) {
+        Text(target.name)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        Text(this.taildropTargetDescription(target))
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Text(target.online ? $r('app.string.peer_online') : $r('app.string.peer_offline'))
+        .fontSize(11)
+        .fontColor(target.online ? $r('app.color.status_success') :
+          $r('sys.color.font_secondary'))
+    }
+    .id('taildrop-target-' + target.key)
+    .width('100%')
+    .constraintSize({ minHeight: 54 })
+    .padding({ left: 12, right: 12 })
+  }
+
+  @Builder
+  private TaildropTargetsPanel() {
+    Column({ space: 0 }) {
+      ForEach(this.taildropTargets, (target: TaildropTargetSummary, index: number) => {
+        if (index > 0) {
+          Divider()
+            .color($r('sys.color.comp_divider'))
+            .margin({ left: 62 })
+        }
+        this.TaildropTargetRow(target)
+      // ForEach also retains children with stable keys. A target's stable peer
+      // key alone therefore cannot reflect a live online/offline transition.
+      }, (target: TaildropTargetSummary) => JSON.stringify(target))
+    }
+    .id('taildrop-targets-panel')
+    .width('100%')
+    .padding({ top: 4, bottom: 4 })
+    .backgroundColor(this.groupBackground())
+    .borderRadius(16)
+  }
+
+  @Builder
+  private TaildropTargetsEmptyPanel() {
+    Text(this.taildropState === 'disabled' ?
+      $r('app.string.transfer_admin_disabled_description') :
+      $r('app.string.transfer_no_targets_description'))
+      .fontSize(12)
+      .fontColor($r('sys.color.font_secondary'))
+      .lineHeight(18)
+      .textAlign(TextAlign.Center)
+      .width('100%')
+      .padding({ left: 20, right: 20, top: 20, bottom: 20 })
+      .backgroundColor(this.groupBackground())
+      .borderRadius(16)
   }
 
   @Builder
@@ -3183,6 +3373,23 @@ export struct BridgeStatus {
     Scroll(this.transferScroller) {
       Column({ space: 14 }) {
         this.TransferOverviewPanel()
+        if (this.isConnected() && (this.taildropState === 'ready' || this.taildropState === 'disabled')) {
+          Column({ space: 8 }) {
+            Text($r('app.string.transfer_targets_title'))
+              .id('transfer-page-title')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .padding({ left: 4 })
+            if (this.taildropTargets.length > 0) {
+              this.TaildropTargetsPanel()
+            } else {
+              this.TaildropTargetsEmptyPanel()
+            }
+          }
+          .width('100%')
+        }
         Column({ space: 8 }) {
           Text($r('app.string.transfer_history_title'))
             .fontSize(14)

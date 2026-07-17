@@ -16,6 +16,7 @@ const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
 const VPN_REPLACE_APPROVAL_TTL_MS: number = 10000;
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
 const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
+const TAILDROP_TARGETS_FILE_NAME: string = 'taildrop-targets.json';
 const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
 const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
 const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
@@ -47,9 +48,28 @@ interface VpnStopResponse {
   status: string;
 }
 
+interface TaildropTargetSummary {
+  key: string;
+  name: string;
+  os: string;
+  deviceModel: string;
+  online: boolean;
+}
+
+interface TaildropSnapshot {
+  state: string;
+  reason: string;
+  targets: TaildropTargetSummary[];
+}
+
+interface PersistedTaildropSnapshot extends TaildropSnapshot {
+  updatedAtMs: number;
+}
+
 interface BackendHealthSnapshot {
   status: string;
   peers: PeerSummary[];
+  taildrop: TaildropSnapshot;
 }
 
 interface PeerConnectivityRequest {
@@ -75,6 +95,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   onCreate(want: Want): void {
     this.recordDiagnosticEvent('vpn_extension_created', 'lifecycle');
     this.writePeerSnapshot([]);
+    this.writeTaildropSnapshot({ state: 'loading', reason: '', targets: [] });
     this.writeStatus('VPN extension lifecycle entered');
     hilog.info(DOMAIN, TAG, 'VPN extension created. ability=%{public}s', want.abilityName ?? '');
     try {
@@ -347,6 +368,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
           const snapshot: BackendHealthSnapshot = JSON.parse(snapshotText) as BackendHealthSnapshot;
           this.writeStatus(snapshot.status);
           this.writePeerSnapshot(snapshot.peers);
+          this.writeTaildropSnapshot(snapshot.taildrop);
           this.processPeerConnectivityRequest();
         })
         .catch(() => {
@@ -354,6 +376,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
             return;
           }
           this.writeStatus('FAILED | VPN backend | status unavailable');
+          this.writeTaildropSnapshot({ state: 'unavailable', reason: 'query_failed', targets: [] });
         })
         .finally(() => {
           this.statusUpdateInFlight = false;
@@ -363,6 +386,17 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
 
   private writePeerStatus(status: string): void {
     this.writeTextFile(`${this.context.filesDir}/vpn-peer-probe-status.txt`, status);
+  }
+
+  private writeTaildropSnapshot(snapshot: TaildropSnapshot): void {
+    const persisted: PersistedTaildropSnapshot = {
+      state: snapshot.state,
+      reason: snapshot.reason,
+      targets: snapshot.targets,
+      updatedAtMs: Date.now()
+    };
+    this.writeTextFile(`${this.context.filesDir}/${TAILDROP_TARGETS_FILE_NAME}`,
+      JSON.stringify(persisted));
   }
 
   private writePeerSnapshot(peers: PeerSummary[]): void {
@@ -514,6 +548,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       this.recordDiagnosticEvent('vpn_backend_stop_failed', 'destroy');
     }
     this.writePeerSnapshot([]);
+    this.writeTaildropSnapshot({ state: 'disconnected', reason: '', targets: [] });
     this.writeStatus('VPN extension destroyed');
     if (connection !== undefined && vpnId.length > 0) {
       try {

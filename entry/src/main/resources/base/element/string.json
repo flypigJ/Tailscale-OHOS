@@ -1,6 +1,46 @@
 {
   "string": [
     {
+      "name": "transfer_detecting_title",
+      "value": "Finding transfer devices"
+    },
+    {
+      "name": "transfer_detecting_description",
+      "value": "Reading Taildrop capability and devices from the VPN backend."
+    },
+    {
+      "name": "transfer_admin_disabled_title",
+      "value": "Taildrop is not enabled"
+    },
+    {
+      "name": "transfer_admin_disabled_description",
+      "value": "Enable file sending in the Tailscale admin console."
+    },
+    {
+      "name": "transfer_unavailable_title",
+      "value": "Taildrop is temporarily unavailable"
+    },
+    {
+      "name": "transfer_unavailable_description",
+      "value": "Transfer devices could not be read. Try again shortly."
+    },
+    {
+      "name": "transfer_targets_ready_title",
+      "value": "%d devices online"
+    },
+    {
+      "name": "transfer_targets_ready_description",
+      "value": "Device discovery is ready. File selection and send progress come next."
+    },
+    {
+      "name": "transfer_targets_title",
+      "value": "Send to"
+    },
+    {
+      "name": "transfer_no_targets_description",
+      "value": "No eligible devices found. Make sure another Taildrop device is online."
+    },
+    {
       "name": "module_desc",
       "value": "Tailscale for HarmonyOS NEXT"
     },

@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"tailscale.com/client/local"
+	"tailscale.com/client/tailscale/apitype"
+	_ "tailscale.com/feature/taildrop"
 	"tailscale.com/hostinfo"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
@@ -118,6 +120,21 @@ type backendSnapshot struct {
 	Peers           []peerSummary      `json:"peers"`
 	NetworkSettings networkPreferences `json:"networkSettings"`
 	Account         accountSummary     `json:"account"`
+	Taildrop        taildropSnapshot   `json:"taildrop"`
+}
+
+type taildropTargetSummary struct {
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	OS          string `json:"os"`
+	DeviceModel string `json:"deviceModel"`
+	Online      bool   `json:"online"`
+}
+
+type taildropSnapshot struct {
+	State   string                  `json:"state"`
+	Reason  string                  `json:"reason"`
+	Targets []taildropTargetSummary `json:"targets"`
 }
 
 func (b *backendController) start(stateDir, deviceModel string) string {
@@ -532,6 +549,7 @@ func (b *backendController) snapshot() string {
 		Peers:           []peerSummary{},
 		NetworkSettings: settings,
 		Account:         accountSummary{Addresses: []string{}},
+		Taildrop:        taildropSnapshot{State: "loading", Targets: []taildropTargetSummary{}},
 	}
 	switch {
 	case startErr != "":
@@ -558,11 +576,13 @@ func (b *backendController) snapshot() string {
 	snapshot.Status = b.formatRunningStatus(status, prefs, prefsErr)
 	snapshot.Account = buildAccountSummary(status)
 	if status.BackendState != "Running" {
+		snapshot.Taildrop.State = "disconnected"
 		return marshalBackendSnapshot(snapshot)
 	}
 
 	snapshot.ExitNodes = buildExitNodeChoices(status, stateDir)
 	snapshot.Peers = buildPeerSummaries(status)
+	snapshot.Taildrop = buildTaildropSnapshot(client)
 	if prefsErr == nil && prefs != nil {
 		snapshot.NetworkSettings = networkPreferences{
 			RouteAll:               prefs.RouteAll,
@@ -571,6 +591,56 @@ func (b *backendController) snapshot() string {
 		}
 	}
 	return marshalBackendSnapshot(snapshot)
+}
+
+func buildTaildropSnapshot(client *local.Client) taildropSnapshot {
+	snapshot := taildropSnapshot{State: "ready", Targets: []taildropTargetSummary{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	targets, err := client.FileTargets(ctx)
+	if err != nil {
+		snapshot.State = "unavailable"
+		if strings.Contains(strings.ToLower(err.Error()), "file sharing not enabled") {
+			snapshot.State = "disabled"
+			snapshot.Reason = "admin_disabled"
+		} else {
+			snapshot.Reason = "query_failed"
+		}
+		return snapshot
+	}
+	snapshot.Targets = summarizeTaildropTargets(targets)
+	return snapshot
+}
+
+func summarizeTaildropTargets(targets []apitype.FileTarget) []taildropTargetSummary {
+	summaries := make([]taildropTargetSummary, 0, len(targets))
+	for _, target := range targets {
+		if target.Node == nil || target.Node.StableID.IsZero() {
+			continue
+		}
+		name := strings.TrimSuffix(target.Node.DisplayName(true), ".")
+		if name == "" {
+			name = strings.TrimSuffix(target.Node.Name, ".")
+		}
+		if name == "" {
+			name = "Unnamed device"
+		}
+		online := target.Node.Online != nil && *target.Node.Online
+		summaries = append(summaries, taildropTargetSummary{
+			Key:         peerStableKey(target.Node.StableID),
+			Name:        name,
+			OS:          target.Node.Hostinfo.OS(),
+			DeviceModel: target.Node.Hostinfo.DeviceModel(),
+			Online:      online,
+		})
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].Online != summaries[j].Online {
+			return summaries[i].Online
+		}
+		return summaries[i].Name < summaries[j].Name
+	})
+	return summaries
 }
 
 func marshalBackendSnapshot(snapshot backendSnapshot) string {
