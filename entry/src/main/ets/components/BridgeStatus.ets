@@ -25,6 +25,7 @@ const MIN_CONNECTION_LOADING_MS: number = 1400;
 const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
 const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
+const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
 
 interface ExitNodeChoice {
   id: string;
@@ -88,6 +89,11 @@ interface AccountSummary {
   needsApproval: boolean;
   keyExpired: boolean;
   keyExpiryUnixMs: number;
+}
+
+interface PersistedPeerSnapshot {
+  peers: PeerSummary[];
+  updatedAtMs: number;
 }
 
 interface BackendSnapshot {
@@ -207,6 +213,7 @@ export struct BridgeStatus {
   private trafficLastUploadBytes: number = 0;
   private peerConnectivityPollTimer: number = -1;
   private peerConnectivityRequestId: number = 0;
+  private peerSnapshotSignature: string = '';
   private peerDataSource: PeerDataSource = new PeerDataSource();
 
   private applyPeers(peers: PeerSummary[]): void {
@@ -302,6 +309,7 @@ export struct BridgeStatus {
   }
 
   private startBackend(showInitialization: boolean = true): void {
+    this.peerSnapshotSignature = '';
     this.backendReady = false;
     this.backendInitializationVisible = showInitialization;
     this.devicesLoading = true;
@@ -790,6 +798,9 @@ export struct BridgeStatus {
       const extensionIsLive: boolean = heartbeatIsFresh && !visibleStatus.includes('destroyed');
       if (extensionIsLive) {
         this.updateTrafficMetrics(visibleStatus, heartbeatMs);
+        if (visibleStatus.includes('state=Running')) {
+          this.refreshPeerSnapshot();
+        }
       } else {
         this.resetTrafficMetrics();
       }
@@ -859,6 +870,38 @@ export struct BridgeStatus {
       this.setConnectInProgress(false);
     });
     this.stopConnectionPolling();
+  }
+
+  private peerSnapshotFilePath(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${VPN_PEERS_FILE_NAME}`;
+  }
+
+  private refreshPeerSnapshot(): void {
+    try {
+      const path: string = this.peerSnapshotFilePath();
+      if (!fileIo.accessSync(path)) {
+        return;
+      }
+      const snapshot: PersistedPeerSnapshot = JSON.parse(
+        fileIo.readTextSync(path)) as PersistedPeerSnapshot;
+      const ageMs: number = Date.now() - snapshot.updatedAtMs;
+      if (snapshot.updatedAtMs <= 0 || ageMs < 0 || ageMs > 5000) {
+        return;
+      }
+      const validPeers: PeerSummary[] = snapshot.peers.filter(
+        (peer: PeerSummary) => /^peer-[a-f0-9]{16}$/.test(peer.key) && peer.name.length > 0);
+      const signature: string = JSON.stringify(validPeers);
+      if (signature === this.peerSnapshotSignature) {
+        return;
+      }
+      this.peerSnapshotSignature = signature;
+      this.applyPeers(validPeers);
+      this.devicesLoading = false;
+    } catch (_error) {
+      // The Extension may be replacing the snapshot file. Retry on the next
+      // one-second health poll without discarding the last valid device list.
+    }
   }
 
   private startHealthPolling(): void {
@@ -2582,7 +2625,10 @@ export struct BridgeStatus {
           ListItem() {
             this.PeerDeviceRow(peer)
           }
-        }, (peer: PeerSummary) => peer.key)
+        // onDataReloaded reuses the original child whenever its key is unchanged.
+        // Include the rendered peer snapshot so live online/key/route changes
+        // replace only the affected row instead of leaving its old object cached.
+        }, (peer: PeerSummary) => JSON.stringify(peer))
       }
       .width('100%')
       .layoutWeight(1)
