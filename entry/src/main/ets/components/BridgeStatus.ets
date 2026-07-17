@@ -193,6 +193,7 @@ export struct BridgeStatus {
   private healthPollTimer: number = -1;
   private loginPollTimer: number = -1;
   private magicDNSProbeUrl: string = '';
+  private transferScroller: Scroller = new Scroller();
   private settingsScroller: Scroller = new Scroller();
   private diagnosticsTapCount: number = 0;
   private diagnosticsLastTapMs: number = 0;
@@ -2958,6 +2959,133 @@ export struct BridgeStatus {
   }
 
   @Builder
+  private TransferOverviewPanel() {
+    Column({ space: 12 }) {
+      Row({ space: 12 }) {
+        Stack() {
+          SymbolGlyph($r('sys.symbol.doc'))
+            .fontSize(26)
+            .fontColor([$r('sys.color.icon_emphasize')])
+        }
+        .width(44)
+        .height(44)
+        .borderRadius(14)
+        .backgroundColor($r('sys.color.comp_background_tertiary'))
+
+        Column({ space: 3 }) {
+          Text($r('app.string.transfer_taildrop_title'))
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+          Text($r('app.string.transfer_taildrop_description'))
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .lineHeight(18)
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      Divider()
+        .color($r('sys.color.comp_divider'))
+
+      Row({ space: 10 }) {
+        if (this.isConnected()) {
+          SymbolGlyph($r('sys.symbol.checkmark'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.icon_emphasize')])
+        } else {
+          SymbolGlyph($r('sys.symbol.clock'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.icon_secondary')])
+        }
+        Column({ space: 2 }) {
+          Text(this.isConnected() ?
+            $r('app.string.transfer_connected_title') : $r('app.string.transfer_connect_first_title'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+          Text(this.isConnected() ?
+            $r('app.string.transfer_connected_description') :
+            $r('app.string.transfer_connect_first_description'))
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .lineHeight(18)
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.groupBackground())
+    .borderRadius(16)
+  }
+
+  @Builder
+  private TransferEmptyPanel() {
+    Column({ space: 10 }) {
+      SymbolGlyph($r('sys.symbol.doc'))
+        .fontSize(30)
+        .fontColor([$r('sys.color.icon_secondary')])
+      Text($r('app.string.transfer_empty_title'))
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('sys.color.font_primary'))
+      Text($r('app.string.transfer_empty_description'))
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .textAlign(TextAlign.Center)
+        .lineHeight(18)
+        .constraintSize({ maxWidth: 360 })
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 28, bottom: 28 })
+    .backgroundColor(this.groupBackground())
+    .borderRadius(16)
+  }
+
+  @Builder
+  private TransferContent() {
+    Scroll(this.transferScroller) {
+      Column({ space: 14 }) {
+        this.TransferOverviewPanel()
+        Column({ space: 8 }) {
+          Text($r('app.string.transfer_history_title'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .padding({ left: 4 })
+          this.TransferEmptyPanel()
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: 1200 })
+      .padding({
+        left: this.contentMargin(),
+        right: this.contentMargin(),
+        top: 8,
+        bottom: this.pageBottomInset()
+      })
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_secondary'))
+    .edgeEffect(EdgeEffect.Spring)
+    .scrollBar(BarState.Auto)
+    .scrollBarWidth(4)
+  }
+
+  @Builder
   private SettingsContent() {
     Scroll(this.settingsScroller) {
       Column() {
@@ -3141,6 +3269,69 @@ export struct BridgeStatus {
   }
 
   @Builder
+  private TransferPage() {
+    HdsNavigation() {
+      this.TransferContent()
+    }
+    .titleBar({
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: true,
+      padding: {
+        start: LengthMetrics.vp(this.contentMargin()),
+        end: LengthMetrics.vp(this.contentMargin())
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        thermoCtrl: true,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(20)
+        },
+        originalStyle: {
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('sys.color.font_primary'),
+              subTitleColor: $r('sys.color.font_secondary')
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: {
+            backgroundColor: $r('sys.color.background_secondary'),
+            blurRadius: 24,
+            maskExtraHeight: 40.0
+          },
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('sys.color.font_primary'),
+              subTitleColor: $r('sys.color.font_secondary')
+            }
+          }
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: this.glowMaterialLevel()
+        }
+      },
+      content: {
+        title: {
+          mainTitle: $r('app.string.tab_transfer'),
+          subTitle: $r('app.string.transfer_subtitle')
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.FREE)
+    .bindToScrollable([this.transferScroller])
+    .hideBackButton(true)
+    .mode(NavigationMode.Stack)
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  @Builder
   private MobileTabs() {
     HdsTabs({ barPosition: BarPosition.End, index: this.currentTab }) {
       TabContent() {
@@ -3148,6 +3339,20 @@ export struct BridgeStatus {
       }
       .tabBar(new BottomTabBarStyle($r('app.media.tab_home'), $r('app.string.tab_home'))
         .id('tab-home')
+        .labelStyle({
+          unselectedColor: $r('sys.color.font_secondary'),
+          selectedColor: $r('sys.color.font_emphasize')
+        })
+        .iconStyle({
+          unselectedColor: $r('sys.color.icon_secondary'),
+          selectedColor: $r('sys.color.icon_emphasize')
+        }))
+
+      TabContent() {
+        this.TransferPage()
+      }
+      .tabBar(new BottomTabBarStyle($r('app.media.tab_transfer'), $r('app.string.tab_transfer'))
+        .id('tab-transfer')
         .labelStyle({
           unselectedColor: $r('sys.color.font_secondary'),
           selectedColor: $r('sys.color.font_emphasize')
@@ -3209,6 +3414,20 @@ export struct BridgeStatus {
       }
       .tabBar(new BottomTabBarStyle($r('app.media.tab_home'), $r('app.string.tab_home'))
         .id('tab-home')
+        .labelStyle({
+          unselectedColor: $r('sys.color.font_secondary'),
+          selectedColor: $r('sys.color.font_emphasize')
+        })
+        .iconStyle({
+          unselectedColor: $r('sys.color.icon_secondary'),
+          selectedColor: $r('sys.color.icon_emphasize')
+        }))
+
+      TabContent() {
+        this.TransferPage()
+      }
+      .tabBar(new BottomTabBarStyle($r('app.media.tab_transfer'), $r('app.string.tab_transfer'))
+        .id('tab-transfer')
         .labelStyle({
           unselectedColor: $r('sys.color.font_secondary'),
           selectedColor: $r('sys.color.font_emphasize')

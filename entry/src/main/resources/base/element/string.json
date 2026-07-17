@@ -25,8 +25,52 @@
       "value": "Home"
     },
     {
+      "name": "tab_transfer",
+      "value": "Transfer"
+    },
+    {
       "name": "tab_settings",
       "value": "Settings"
+    },
+    {
+      "name": "transfer_subtitle",
+      "value": "Secure file transfer between your devices"
+    },
+    {
+      "name": "transfer_taildrop_title",
+      "value": "Taildrop"
+    },
+    {
+      "name": "transfer_taildrop_description",
+      "value": "Files travel over your encrypted Tailscale connection using the best available path."
+    },
+    {
+      "name": "transfer_connected_title",
+      "value": "Ready for transfer"
+    },
+    {
+      "name": "transfer_connected_description",
+      "value": "File sending will be connected first, followed by receiving and export."
+    },
+    {
+      "name": "transfer_connect_first_title",
+      "value": "Connect Tailscale first"
+    },
+    {
+      "name": "transfer_connect_first_description",
+      "value": "Taildrop requires an active connection before devices can exchange files."
+    },
+    {
+      "name": "transfer_history_title",
+      "value": "Transfers"
+    },
+    {
+      "name": "transfer_empty_title",
+      "value": "No transfers yet"
+    },
+    {
+      "name": "transfer_empty_description",
+      "value": "Sent and received files will appear here when Taildrop is enabled."
     },
     {
       "name": "glow_title",
