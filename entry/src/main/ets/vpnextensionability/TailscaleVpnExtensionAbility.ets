@@ -16,9 +16,29 @@ const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
 const VPN_REPLACE_APPROVAL_TTL_MS: number = 10000;
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
 const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
+const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
+
+interface PeerSummary {
+  key: string;
+  name: string;
+  os: string;
+  deviceModel: string;
+  deviceType: string;
+  addresses: string[];
+  online: boolean;
+  exitNode: boolean;
+  keyExpired: boolean;
+  keyExpiryUnixMs: number;
+}
+
+interface PersistedPeerSnapshot {
+  peers: PeerSummary[];
+  updatedAtMs: number;
+}
 
 interface BackendHealthSnapshot {
   status: string;
+  peers: PeerSummary[];
 }
 
 interface PeerConnectivityRequest {
@@ -41,6 +61,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
 
   onCreate(want: Want): void {
     this.recordDiagnosticEvent('vpn_extension_created', 'lifecycle');
+    this.writePeerSnapshot([]);
     this.writeStatus('VPN extension lifecycle entered');
     hilog.info(DOMAIN, TAG, 'VPN extension created. ability=%{public}s', want.abilityName ?? '');
     try {
@@ -306,6 +327,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
         .then((snapshotText: string) => {
           const snapshot: BackendHealthSnapshot = JSON.parse(snapshotText) as BackendHealthSnapshot;
           this.writeStatus(snapshot.status);
+          this.writePeerSnapshot(snapshot.peers);
           this.processPeerConnectivityRequest();
         })
         .catch(() => {
@@ -319,6 +341,15 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
 
   private writePeerStatus(status: string): void {
     this.writeTextFile(`${this.context.filesDir}/vpn-peer-probe-status.txt`, status);
+  }
+
+  private writePeerSnapshot(peers: PeerSummary[]): void {
+    const persisted: PersistedPeerSnapshot = {
+      peers: peers,
+      updatedAtMs: Date.now()
+    };
+    this.writeTextFile(`${this.context.filesDir}/${VPN_PEERS_FILE_NAME}`,
+      JSON.stringify(persisted));
   }
 
   private peerConnectivityRequestPath(): string {
@@ -409,6 +440,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     this.vpnConnection = undefined;
     this.activeVpnId = '';
     this.tunFd = -1;
+    this.writePeerSnapshot([]);
     this.writeStatus('VPN extension destroyed');
     if (connection !== undefined && vpnId.length > 0) {
       try {
