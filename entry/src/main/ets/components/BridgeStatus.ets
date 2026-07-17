@@ -854,7 +854,7 @@ export struct BridgeStatus {
     this.clearConnectionCompletionTimer();
     // Keep every completion path in one explicit transaction. The traffic panel
     // also animates height, opacity, and position so the expansion stays visible.
-    this.getUIContext().animateTo({ duration: 700, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 500, curve: Curve.EaseInOut }, () => {
       this.vpnStatus = status;
       this.setConnectInProgress(false);
     });
@@ -1986,7 +1986,7 @@ export struct BridgeStatus {
     .opacity(this.isConnected() ? 1 : 0)
     .translate({ y: this.isConnected() ? 0 : -10 })
     .clip(true)
-    .animation({ duration: 700, curve: Curve.EaseInOut })
+    .animation({ duration: 500, curve: Curve.EaseInOut })
   }
 
   @Builder
@@ -2021,7 +2021,7 @@ export struct BridgeStatus {
     .padding(14)
     .backgroundColor(this.groupBackground())
     .borderRadius(16)
-    .animation({ duration: 700, curve: Curve.EaseInOut })
+    .animation({ duration: 500, curve: Curve.EaseInOut })
   }
 
   @Builder
