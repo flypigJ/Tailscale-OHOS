@@ -34,6 +34,24 @@ if (-not (Test-Path $go)) {
   throw 'The OpenHarmony Go toolchain has not been built yet.'
 }
 
+$goResourcePatch = Join-Path $projectRoot 'patches\ohos-go-interface-resources.patch'
+if (-not (Test-Path $goResourcePatch)) {
+  throw "The OpenHarmony Go resource-safety patch is missing at $goResourcePatch"
+}
+$safeGoRoot = $goRoot.Replace('\', '/')
+& git -c "safe.directory=$safeGoRoot" -C $goRoot apply --reverse --check $goResourcePatch 2>$null
+$patchAlreadyApplied = $LASTEXITCODE -eq 0
+if (-not $patchAlreadyApplied) {
+  & git -c "safe.directory=$safeGoRoot" -C $goRoot apply --check $goResourcePatch
+  if ($LASTEXITCODE -ne 0) {
+    throw 'The OpenHarmony Go resource-safety patch does not apply cleanly.'
+  }
+  & git -c "safe.directory=$safeGoRoot" -C $goRoot apply $goResourcePatch
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Applying the OpenHarmony Go resource-safety patch failed.'
+  }
+}
+
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 New-Item -ItemType Directory -Force -Path $hapLibDir | Out-Null
 

@@ -1,7 +1,7 @@
 {
   "modelVersion": "5.0.0",
   "name": "tailscale-ohos",
-  "version": "0.3.19-release",
+  "version": "0.8.31",
   "description": "Native HarmonyOS NEXT port of Tailscale",
   "main": "",
   "author": "TailscaleOHOS contributors",

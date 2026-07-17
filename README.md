@@ -48,6 +48,14 @@ for the same node name on both this HarmonyOS port and an Android Tailscale
 client. Direct Tailscale-IP traffic remains fully functional, so this
 cross-platform DNS-record result does not block the MVP.
 
+TODO(LiveView): add the opt-in Tailscale traffic LiveView only after the
+application has received the official HarmonyOS LiveView entitlement and an
+approved `event` scenario. The VPN Extension should own the start/update/stop
+lifecycle, serialize updates at no more than 1 Hz, use the standalone Tailscale
+nine-dot mark, and expose only current-session upload/download byte totals.
+Until the entitlement is available, do not show a non-functional LiveView
+switch in Settings.
+
 TODO(MagicDNS): repeat the end-to-end named-peer lookup on a tailnet with a
 known-good MagicDNS record and promote the feature from optional only after a
 positive DNS answer and successful peer traffic are both observed. Until then,

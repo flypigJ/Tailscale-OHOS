@@ -18,7 +18,8 @@ struct AsyncStringWork {
 
 enum class AsyncInputOperation {
     SetExitNode,
-    SetNetworkSetting
+    SetNetworkSetting,
+    PeerConnectivity
 };
 
 struct AsyncInputWork {
@@ -91,9 +92,14 @@ void ExecuteAsyncInput(napi_env env, void* data)
 {
     (void)env;
     auto* work = static_cast<AsyncInputWork*>(data);
-    char* message = work->operation == AsyncInputOperation::SetExitNode ?
-        TSBackendSetExitNode(const_cast<char*>(work->input.c_str())) :
-        TSBackendSetNetworkSetting(const_cast<char*>(work->input.c_str()), work->enabled ? 1 : 0);
+    char* message = nullptr;
+    if (work->operation == AsyncInputOperation::SetExitNode) {
+        message = TSBackendSetExitNode(const_cast<char*>(work->input.c_str()));
+    } else if (work->operation == AsyncInputOperation::SetNetworkSetting) {
+        message = TSBackendSetNetworkSetting(const_cast<char*>(work->input.c_str()), work->enabled ? 1 : 0);
+    } else {
+        message = TSBackendPeerConnectivity(const_cast<char*>(work->input.c_str()));
+    }
     if (message == nullptr) {
         work->succeeded = false;
         return;
@@ -192,6 +198,28 @@ napi_value BackendSetNetworkSettingAsync(napi_env env, napi_callback_info info)
     }
     return CreateAsyncInputPromise(
         env, AsyncInputOperation::SetNetworkSetting, key.data(), enabled, "TailscaleBackendSetNetworkSetting");
+}
+
+napi_value BackendPeerConnectivityAsync(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "backendPeerConnectivityAsync requires one peer key");
+        return nullptr;
+    }
+    size_t length = 0;
+    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "Peer key must be a string");
+        return nullptr;
+    }
+    std::vector<char> key(length + 1, '\0');
+    if (napi_get_value_string_utf8(env, args[0], key.data(), key.size(), &length) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to read the peer key");
+        return nullptr;
+    }
+    return CreateAsyncInputPromise(
+        env, AsyncInputOperation::PeerConnectivity, key.data(), false, "TailscaleBackendPeerConnectivity");
 }
 
 napi_value BackendSnapshotAsync(napi_env env, napi_callback_info info)
@@ -760,6 +788,8 @@ static napi_value Init(napi_env env, napi_value exports)
         {"backendSetExitNodeAsync", nullptr, BackendSetExitNodeAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendPeerProbe", nullptr, BackendPeerProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendPeerProbeAsync", nullptr, BackendPeerProbeAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendPeerConnectivityAsync", nullptr, BackendPeerConnectivityAsync, nullptr, nullptr, nullptr,
+            napi_default, nullptr},
         {"backendMagicDNSProbeURL", nullptr, BackendMagicDNSProbeURL, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendMagicDNSProbeURLAsync", nullptr, BackendMagicDNSProbeURLAsync, nullptr, nullptr, nullptr,
             napi_default, nullptr},

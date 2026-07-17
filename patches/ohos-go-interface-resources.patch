@@ -1,0 +1,49 @@
+diff --git a/src/net/cgo_unix_cgo.go b/src/net/cgo_unix_cgo.go
+index 3c46fc5..0fb1897 100644
+--- a/src/net/cgo_unix_cgo.go
++++ b/src/net/cgo_unix_cgo.go
+@@ -92,6 +92,10 @@ func _C_getifaddrs(res **_C_struct_ifaddrs) (int, error) {
+ 	return int(x), err
+ }
+ 
++func _C_freeifaddrs(ifa *_C_struct_ifaddrs) {
++	C.freeifaddrs(ifa)
++}
++
+ func _C_ifa_next(ifa *_C_struct_ifaddrs) **_C_struct_ifaddrs  { return &ifa.ifa_next }
+ func _C_ifa_addr(ifa *_C_struct_ifaddrs) **_C_struct_sockaddr { return &ifa.ifa_addr }
+ func _C_ifa_mask(ifa *_C_struct_ifaddrs) **_C_struct_sockaddr { return &ifa.ifa_netmask }
+diff --git a/src/net/interface_table_openharmony.go b/src/net/interface_table_openharmony.go
+index 161688f..3da99ff 100644
+--- a/src/net/interface_table_openharmony.go
++++ b/src/net/interface_table_openharmony.go
+@@ -25,12 +25,14 @@ func interfaceTable(ifindex int) ([]Interface, error) {
+ 	if gerrno != 0 || err != nil {
+ 		return nil, os.NewSyscallError("_C_getifaddrs", errors.Join(err, errors.New(_C_gai_strerror(_C_int(gerrno)))))
+ 	}
++	defer _C_freeifaddrs(res)
+ 
+ 	// create a socket for ioctl syscall
+ 	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+ 	if err != nil {
+ 		return nil, os.NewSyscallError("Socket", err)
+ 	}
++	defer syscall.Close(s)
+ 
+ 	var ifts []Interface
+ 	processed := make(map[int]int)
+@@ -92,12 +94,14 @@ func interfaceAddrTable(ifi *Interface) ([]Addr, error) {
+ 	if gerrno != 0 || err != nil {
+ 		return nil, os.NewSyscallError("_C_getifaddrs", errors.Join(err, errors.New(_C_gai_strerror(_C_int(gerrno)))))
+ 	}
++	defer _C_freeifaddrs(res)
+ 
+ 	// create a socket for ioctl syscall
+ 	s, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+ 	if err != nil {
+ 		return nil, os.NewSyscallError("Socket", err)
+ 	}
++	defer syscall.Close(s)
+ 
+ 	var addrs []Addr
+ 	for r := res; r != nil; r = *_C_ifa_next(r) {

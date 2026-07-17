@@ -1,9 +1,15 @@
 import nativeBridge from 'libtailscale_ohos.so';
 import { bundleManager, common, Want } from '@kit.AbilityKit';
 import { vpnExtension } from '@kit.NetworkKit';
-import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
+import { BusinessError, deviceInfo, pasteboard } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { LengthMetrics } from '@kit.ArkUI';
+import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
+import {
+  DiagnosticReportInput,
+  DiagnosticReportResult,
+  DiagnosticReportService
+} from '../services/DiagnosticReportService';
 import {
   BlurStrategy,
   DividerMode,
@@ -16,6 +22,9 @@ import {
 } from '@kit.UIDesignKit';
 
 const MIN_CONNECTION_LOADING_MS: number = 1400;
+const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
+const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
+const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
 
 interface ExitNodeChoice {
   id: string;
@@ -33,12 +42,40 @@ interface PeerSummary {
   addresses: string[];
   online: boolean;
   exitNode: boolean;
+  keyExpired: boolean;
+  keyExpiryUnixMs: number;
 }
 
 interface NetworkSettings {
   routeAll: boolean;
   corpDNS: boolean;
   exitNodeAllowLANAccess: boolean;
+}
+
+interface TrafficSample {
+  downloadBytesPerSecond: number;
+  uploadBytesPerSecond: number;
+}
+
+interface PeerConnectivityRequest {
+  requestId: number;
+  peerKey: string;
+}
+
+interface PeerConnectivityResponse {
+  requestId: number;
+  result: string;
+}
+
+interface PeerConnectivityResult {
+  state: string;
+  reason: string;
+  sent: number;
+  received: number;
+  lossPercent: number;
+  minLatencyMs: number;
+  avgLatencyMs: number;
+  maxLatencyMs: number;
 }
 
 interface AccountSummary {
@@ -48,6 +85,9 @@ interface AccountSummary {
   tailnetName: string;
   deviceName: string;
   addresses: string[];
+  needsApproval: boolean;
+  keyExpired: boolean;
+  keyExpiryUnixMs: number;
 }
 
 interface BackendSnapshot {
@@ -112,18 +152,35 @@ export struct BridgeStatus {
     profilePicURL: '',
     tailnetName: '',
     deviceName: '',
-    addresses: []
+    addresses: [],
+    needsApproval: false,
+    keyExpired: false,
+    keyExpiryUnixMs: 0
   };
   @State avatarLoadFailed: boolean = false;
-  @State appVersion: string = '0.3.19-release';
+  @State appVersion: string = '0.8.31';
   @State tailscaleVersion: string = '—';
   @State exitNodeStatus: string = '未使用出口节点';
   @State logoutStatus: string = '';
   @State diagnosticsUnlocked: boolean = false;
   @State diagnosticsExpanded: boolean = false;
+  @State diagnosticReportStatus: string = '';
+  @State diagnosticReportInProgress: boolean = false;
+  @State trafficDownloadBytes: number = 0;
+  @State trafficUploadBytes: number = 0;
+  @State trafficDownloadRate: number = 0;
+  @State trafficUploadRate: number = 0;
+  @State trafficSamples: TrafficSample[] = [];
+  @State peerConnectivityKey: string = '';
+  @State peerConnectivityInProgress: boolean = false;
+  @State peerConnectivityResult: PeerConnectivityResult = {
+    state: '', reason: '', sent: 0, received: 0, lossPercent: 0,
+    minLatencyMs: 0, avgLatencyMs: 0, maxLatencyMs: 0
+  };
   @State loginInProgress: boolean = false;
   @State connectInProgress: boolean = false;
   @State backendReady: boolean = false;
+  @State backendInitializationVisible: boolean = false;
   @State devicesLoading: boolean = true;
   @State hasAuthenticatedSession: boolean = false;
   @State currentTab: number = 0;
@@ -142,6 +199,13 @@ export struct BridgeStatus {
   private lifecycleTimers: number[] = [];
   private lifecycleGeneration: number = 0;
   private refreshInFlight: boolean = false;
+  private vpnConflictDialogVisible: boolean = false;
+  private trafficSession: number = 0;
+  private trafficLastHeartbeatMs: number = 0;
+  private trafficLastDownloadBytes: number = 0;
+  private trafficLastUploadBytes: number = 0;
+  private peerConnectivityPollTimer: number = -1;
+  private peerConnectivityRequestId: number = 0;
   private peerDataSource: PeerDataSource = new PeerDataSource();
 
   private applyPeers(peers: PeerSummary[]): void {
@@ -157,12 +221,14 @@ export struct BridgeStatus {
     this.devicesLoading = true;
     this.verifyNativeBridge();
     this.loadAppVersion();
+    this.recordDiagnosticEvent('ui_opened', 'lifecycle');
     const vpnIsLive: boolean = this.refreshVpnProbeStatus();
     if (!vpnIsLive) {
       this.startBackend();
       this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
     } else {
       this.backendReady = true;
+      this.backendInitializationVisible = false;
       this.devicesLoading = false;
       this.hasAuthenticatedSession = true;
     }
@@ -180,10 +246,13 @@ export struct BridgeStatus {
 
   aboutToDisappear(): void {
     this.lifecycleGeneration++;
+    this.vpnConflictDialogVisible = false;
     this.stopConnectionPolling();
     this.clearConnectionCompletionTimer();
     this.stopHealthPolling();
     this.stopLoginPolling();
+    this.stopPeerConnectivityPolling();
+    this.peerConnectivityInProgress = false;
     this.clearLifecycleTimers();
     this.resetDiagnosticsMode();
   }
@@ -231,15 +300,19 @@ export struct BridgeStatus {
     }
   }
 
-  private startBackend(): void {
+  private startBackend(showInitialization: boolean = true): void {
     this.backendReady = false;
+    this.backendInitializationVisible = showInitialization;
     this.devicesLoading = true;
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      this.recordDiagnosticEvent('backend_start_requested', showInitialization ? 'visible' : 'silent');
       this.backendStatus = nativeBridge.backendStart(`${context.filesDir}/tailscale`, this.deviceModel());
     } catch (error) {
+      this.recordDiagnosticEvent('backend_start_failed', 'start');
       this.backendStatus = `Tailscale Backend Failed: ${JSON.stringify(error)}`;
       this.backendReady = true;
+      this.backendInitializationVisible = false;
       this.devicesLoading = false;
     }
   }
@@ -267,32 +340,32 @@ export struct BridgeStatus {
       this.backendStatus = snapshot.status;
       if (this.backendStatus.includes('state=Running')) {
         this.backendReady = true;
+        this.backendInitializationVisible = false;
         this.devicesLoading = false;
         this.hasAuthenticatedSession = true;
         this.exitNodes = snapshot.exitNodes;
         this.applyPeers(snapshot.peers);
         this.networkSettings = snapshot.networkSettings;
-        const account: AccountSummary = snapshot.account;
-        this.accountSummary = {
-          displayName: account.displayName,
-          loginName: account.loginName,
-          profilePicURL: account.profilePicURL,
-          tailnetName: account.tailnetName,
-          deviceName: account.deviceName.length > 0 ? account.deviceName : this.deviceModel(),
-          addresses: account.addresses
-        };
-        this.avatarLoadFailed = false;
+        this.applyAccountSummary(snapshot.account);
+      } else if (snapshot.account.needsApproval || this.backendStatus.includes('NeedsMachineAuth')) {
+        this.backendReady = true;
+        this.backendInitializationVisible = false;
+        this.devicesLoading = false;
+        this.hasAuthenticatedSession = true;
+        this.exitNodes = [];
+        this.applyPeers([]);
+        this.applyAccountSummary(snapshot.account);
       } else if (this.needsLogin()) {
         this.backendReady = true;
+        this.backendInitializationVisible = false;
         this.devicesLoading = false;
         this.hasAuthenticatedSession = false;
         this.applyPeers([]);
         this.exitNodes = [];
-        this.accountSummary = {
-          displayName: '', loginName: '', profilePicURL: '', tailnetName: '', deviceName: '', addresses: []
-        };
+        this.applyAccountSummary(snapshot.account);
       } else if (this.backendStatus.startsWith('FAILED')) {
         this.backendReady = true;
+        this.backendInitializationVisible = false;
         this.devicesLoading = false;
       }
     } catch (error) {
@@ -301,6 +374,7 @@ export struct BridgeStatus {
       }
       this.backendStatus = `Tailscale Backend Failed: ${JSON.stringify(error)}`;
       this.backendReady = true;
+      this.backendInitializationVisible = false;
       this.devicesLoading = false;
     } finally {
       this.refreshInFlight = false;
@@ -351,12 +425,16 @@ export struct BridgeStatus {
         profilePicURL: backendAccount.profilePicURL,
         tailnetName: backendAccount.tailnetName,
         deviceName: backendAccount.deviceName.length > 0 ? backendAccount.deviceName : this.deviceModel(),
-        addresses: backendAccount.addresses
+        addresses: backendAccount.addresses,
+        needsApproval: backendAccount.needsApproval,
+        keyExpired: backendAccount.keyExpired,
+        keyExpiryUnixMs: backendAccount.keyExpiryUnixMs
       };
       this.avatarLoadFailed = false;
     } catch (_error) {
       this.accountSummary = {
-        displayName: '', loginName: '', profilePicURL: '', tailnetName: '', deviceName: '', addresses: []
+        displayName: '', loginName: '', profilePicURL: '', tailnetName: '', deviceName: '', addresses: [],
+        needsApproval: false, keyExpired: false, keyExpiryUnixMs: 0
       };
       this.avatarLoadFailed = false;
     }
@@ -457,6 +535,7 @@ export struct BridgeStatus {
     }
     this.clearConnectionCompletionTimer();
     this.connectionStartedAtMs = Date.now();
+    this.recordDiagnosticEvent('connect_requested', 'preflight');
     this.setConnectInProgress(true);
     // Let the button render its loading state before the native/VPN calls.
     this.scheduleLifecycleTask(() => this.startVpnProbe(), 300);
@@ -479,13 +558,34 @@ export struct BridgeStatus {
       this.magicDNSProbeStatus = magicDNSProbeUrl;
     }
     this.backendStatus = await nativeBridge.backendStopAsync();
+    this.requestVpnExtensionStart();
+  }
+
+  private applyAccountSummary(account: AccountSummary): void {
+    this.accountSummary = {
+      displayName: account.displayName,
+      loginName: account.loginName,
+      profilePicURL: account.profilePicURL,
+      tailnetName: account.tailnetName,
+      deviceName: account.deviceName.length > 0 ? account.deviceName : this.deviceModel(),
+      addresses: account.addresses,
+      needsApproval: account.needsApproval,
+      keyExpired: account.keyExpired,
+      keyExpiryUnixMs: account.keyExpiryUnixMs
+    };
+    this.avatarLoadFailed = false;
+  }
+
+  private requestVpnExtensionStart(): void {
     this.vpnStatus = 'Requesting HarmonyOS VPN authorization';
     vpnExtension.startVpnExtensionAbility(this.vpnWant())
       .then(() => {
+        this.recordDiagnosticEvent('vpn_start_requested', 'system');
         this.vpnStatus = 'HarmonyOS VPN Extension start requested';
         this.startConnectionPolling();
       })
       .catch((error: BusinessError) => {
+        this.recordDiagnosticEvent('vpn_start_failed', 'system', error.code);
         this.vpnStatus = `FAILED | VPN start | code=${error.code}`;
         this.clearConnectionCompletionTimer();
         this.setConnectInProgress(false);
@@ -511,14 +611,17 @@ export struct BridgeStatus {
   private stopVpnProbe(): void {
     this.clearConnectionCompletionTimer();
     this.setConnectInProgress(false);
+    this.recordDiagnosticEvent('disconnect_requested', 'user');
     vpnExtension.stopVpnExtensionAbility(this.vpnWant())
       .then(() => {
+        this.recordDiagnosticEvent('disconnect_completed', 'system');
         this.vpnStatus = 'HarmonyOS VPN Extension stopped';
         this.stopConnectionPolling();
-        this.startBackend();
+        this.startBackend(false);
         this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
       })
       .catch((error: BusinessError) => {
+        this.recordDiagnosticEvent('disconnect_failed', 'system', error.code);
         this.vpnStatus = `FAILED | VPN stop | code=${error.code}`;
       });
   }
@@ -559,6 +662,116 @@ export struct BridgeStatus {
     }
   }
 
+  private statusNumber(status: string, key: string): number {
+    const match: RegExpMatchArray | null = status.match(new RegExp(`(?:^|\\|\\s*)${key}=(\\d+)`));
+    return match === null ? 0 : Number(match[1]);
+  }
+
+  private resetTrafficMetrics(): void {
+    this.trafficSession = 0;
+    this.trafficLastHeartbeatMs = 0;
+    this.trafficLastDownloadBytes = 0;
+    this.trafficLastUploadBytes = 0;
+    this.trafficDownloadBytes = 0;
+    this.trafficUploadBytes = 0;
+    this.trafficDownloadRate = 0;
+    this.trafficUploadRate = 0;
+    this.trafficSamples = [];
+  }
+
+  private updateTrafficMetrics(status: string, heartbeatMs: number): void {
+    if (!status.includes('state=Running')) {
+      return;
+    }
+    const session: number = this.statusNumber(status, 'trafficSession');
+    const uploadBytes: number = this.statusNumber(status, 'txBytes');
+    const downloadBytes: number = this.statusNumber(status, 'rxBytes');
+    if (session <= 0 || heartbeatMs <= 0) {
+      return;
+    }
+    if (session !== this.trafficSession || heartbeatMs <= this.trafficLastHeartbeatMs) {
+      if (session !== this.trafficSession) {
+        this.trafficSession = session;
+        this.trafficLastHeartbeatMs = heartbeatMs;
+        this.trafficLastDownloadBytes = downloadBytes;
+        this.trafficLastUploadBytes = uploadBytes;
+        this.trafficDownloadBytes = downloadBytes;
+        this.trafficUploadBytes = uploadBytes;
+        this.trafficDownloadRate = 0;
+        this.trafficUploadRate = 0;
+        this.trafficSamples = [{ downloadBytesPerSecond: 0, uploadBytesPerSecond: 0 }];
+      }
+      return;
+    }
+    const elapsedMs: number = heartbeatMs - this.trafficLastHeartbeatMs;
+    if (elapsedMs <= 0) {
+      return;
+    }
+    const downloadDelta: number = downloadBytes >= this.trafficLastDownloadBytes ?
+      downloadBytes - this.trafficLastDownloadBytes : 0;
+    const uploadDelta: number = uploadBytes >= this.trafficLastUploadBytes ?
+      uploadBytes - this.trafficLastUploadBytes : 0;
+    this.trafficDownloadRate = Math.round(downloadDelta * 1000 / elapsedMs);
+    this.trafficUploadRate = Math.round(uploadDelta * 1000 / elapsedMs);
+    this.trafficDownloadBytes = downloadBytes;
+    this.trafficUploadBytes = uploadBytes;
+    this.trafficLastHeartbeatMs = heartbeatMs;
+    this.trafficLastDownloadBytes = downloadBytes;
+    this.trafficLastUploadBytes = uploadBytes;
+    const nextSamples: TrafficSample[] = this.trafficSamples.concat({
+      downloadBytesPerSecond: this.trafficDownloadRate,
+      uploadBytesPerSecond: this.trafficUploadRate
+    });
+    this.trafficSamples = nextSamples.length > 60 ? nextSamples.slice(nextSamples.length - 60) : nextSamples;
+  }
+
+  private formatTrafficBytes(value: number, perSecond: boolean = false): string {
+    const suffix: string = perSecond ? '/s' : '';
+    if (value < 1024) {
+      return `${Math.max(0, Math.round(value))} B${suffix}`;
+    }
+    if (value < 1024 * 1024) {
+      return `${(value / 1024).toFixed(value >= 10240 ? 1 : 2)} KB${suffix}`;
+    }
+    if (value < 1024 * 1024 * 1024) {
+      return `${(value / (1024 * 1024)).toFixed(value >= 10 * 1024 * 1024 ? 1 : 2)} MB${suffix}`;
+    }
+    return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB${suffix}`;
+  }
+
+  private trafficChartWidth(): number {
+    return Math.max(220, Math.min(760, this.layoutWidth - this.contentMargin() * 2 - 32));
+  }
+
+  private maximumTrafficRate(): number {
+    let maximum: number = 1024;
+    this.trafficSamples.forEach((sample: TrafficSample) => {
+      maximum = Math.max(maximum, sample.downloadBytesPerSecond, sample.uploadBytesPerSecond);
+    });
+    return maximum;
+  }
+
+  private trafficChartPoints(download: boolean): Array<Array<number>> {
+    const width: number = this.trafficChartWidth();
+    const height: number = 68;
+    if (this.trafficSamples.length === 0) {
+      return [[0, height - 4], [width, height - 4]];
+    }
+    const maximum: number = this.maximumTrafficRate();
+    const step: number = width / 59;
+    const startX: number = width - step * (this.trafficSamples.length - 1);
+    const points: Array<Array<number>> = [];
+    this.trafficSamples.forEach((sample: TrafficSample, index: number) => {
+      const rate: number = download ? sample.downloadBytesPerSecond : sample.uploadBytesPerSecond;
+      const y: number = height - 4 - Math.min(1, rate / maximum) * (height - 8);
+      points.push([startX + index * step, y]);
+    });
+    if (points.length === 1) {
+      points.unshift([Math.max(0, startX - step), points[0][1]]);
+    }
+    return points;
+  }
+
   private refreshVpnProbeStatus(): boolean {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -574,6 +787,13 @@ export struct BridgeStatus {
       const heartbeatIsFresh: boolean = heartbeatMs > 0 && heartbeatAgeMs >= 0 && heartbeatAgeMs <= 5000;
       const visibleStatus: string = persistedStatus.replace(/\s*\|\s*heartbeatMs=\d+/, '');
       const extensionIsLive: boolean = heartbeatIsFresh && !visibleStatus.includes('destroyed');
+      if (extensionIsLive) {
+        this.updateTrafficMetrics(visibleStatus, heartbeatMs);
+      } else {
+        this.resetTrafficMetrics();
+      }
+      const shouldPromptVpnConflict: boolean = this.connectInProgress &&
+        visibleStatus.includes(`code=2203002`);
       if (visibleStatus.includes('state=Running') && this.connectInProgress) {
         const remainingMs: number = MIN_CONNECTION_LOADING_MS -
           (Date.now() - this.connectionStartedAtMs);
@@ -585,12 +805,17 @@ export struct BridgeStatus {
           }
           return extensionIsLive;
         }
+        this.commitConnectedStatus(visibleStatus);
+        return extensionIsLive;
       }
       this.vpnStatus = !extensionIsLive && visibleStatus.includes('tun=true') ?
         'HarmonyOS VPN Extension Stopped (previous session ended)' : visibleStatus;
       if (visibleStatus.includes('state=Running') || visibleStatus.startsWith('FAILED')) {
         this.clearConnectionCompletionTimer();
         this.setConnectInProgress(false);
+      }
+      if (shouldPromptVpnConflict) {
+        this.showVpnConflictDialog();
       }
       return extensionIsLive;
     } catch (error) {
@@ -626,10 +851,12 @@ export struct BridgeStatus {
 
   private commitConnectedStatus(status: string): void {
     this.clearConnectionCompletionTimer();
-    // Commit both states in the same render transaction so the progress
-    // indicator disappears on the frame where the connected panel appears.
-    this.vpnStatus = status;
-    this.setConnectInProgress(false);
+    // Keep every completion path in one explicit transaction. The traffic panel
+    // also animates height, opacity, and position so the expansion stays visible.
+    this.getUIContext().animateTo({ duration: 700, curve: Curve.EaseInOut }, () => {
+      this.vpnStatus = status;
+      this.setConnectInProgress(false);
+    });
     this.stopConnectionPolling();
   }
 
@@ -650,7 +877,7 @@ export struct BridgeStatus {
           this.scheduleHealthPoll(generation);
         }
       });
-    }, 2000);
+    }, 1000);
   }
 
   private stopHealthPolling(): void {
@@ -685,7 +912,153 @@ export struct BridgeStatus {
   }
 
   private isBackendLoading(): boolean {
-    return !this.backendReady && !this.hasConnectionProblem();
+    return this.backendInitializationVisible && !this.backendReady && !this.hasConnectionProblem();
+  }
+
+  private vpnReplaceApprovalFilePath(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${VPN_REPLACE_APPROVAL_FILE_NAME}`;
+  }
+
+  private writeVpnReplaceApproval(): boolean {
+    let file: fileIo.File | undefined = undefined;
+    try {
+      file = fileIo.openSync(this.vpnReplaceApprovalFilePath(),
+        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, Date.now().toString());
+      return true;
+    } catch (_error) {
+      return false;
+    } finally {
+      if (file !== undefined) {
+        try {
+          fileIo.closeSync(file);
+        } catch (_error) {
+          // The descriptor may already be closed after a platform write failure.
+        }
+      }
+    }
+  }
+
+  private recordDiagnosticEvent(event: string, phase: string, code: number = 0): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      DiagnosticEventStore.record(context.filesDir, 'ui', event, phase, code);
+    } catch (_error) {
+      // Diagnostic events are best-effort and must not alter app behavior.
+    }
+  }
+
+  private async generateDiagnosticReport(): Promise<void> {
+    if (this.diagnosticReportInProgress) {
+      return;
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.diagnosticReportInProgress = true;
+    this.diagnosticReportStatus = context.resourceManager.getStringSync(
+      $r('app.string.diagnostic_report_generating').id);
+    this.recordDiagnosticEvent('diagnostic_report_requested', 'generate');
+    const input: DiagnosticReportInput = {
+      appVersion: this.appVersion,
+      tailscaleVersion: this.tailscaleVersion,
+      nativeStatus: this.nativeStatus,
+      engineStatus: this.engineStatus,
+      backendStatus: this.backendStatus,
+      vpnStatus: this.vpnStatus,
+      magicDNSStatus: this.magicDNSProbeStatus,
+      peerCount: this.peers.length,
+      onlinePeerCount: this.onlinePeerCount(),
+      exitNodeCount: this.exitNodes.length,
+      exitNodeSelected: this.exitNodes.some((choice: ExitNodeChoice) => choice.selected),
+      addressCount: this.accountSummary.addresses.length,
+      signedIn: this.isAuthenticated(),
+      routeAll: this.networkSettings.routeAll,
+      corpDNS: this.networkSettings.corpDNS,
+      exitNodeAllowLANAccess: this.networkSettings.exitNodeAllowLANAccess
+    };
+    try {
+      const result: DiagnosticReportResult = await DiagnosticReportService.generate(context, input);
+      const sizeKb: number = Math.max(1, Math.ceil(result.size / 1024));
+      this.diagnosticReportStatus = `${result.fileName} (${sizeKb} KB)`;
+      this.recordDiagnosticEvent('diagnostic_report_generated', 'share');
+      await DiagnosticReportService.share(context, result);
+      this.recordDiagnosticEvent('diagnostic_share_opened', 'system');
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.recordDiagnosticEvent('diagnostic_report_failed', 'generate', businessError.code ?? -1);
+      this.diagnosticReportStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_report_failed').id);
+    } finally {
+      this.diagnosticReportInProgress = false;
+    }
+  }
+
+  private showVpnConflictDialog(): void {
+    if (this.vpnConflictDialogVisible) {
+      return;
+    }
+    this.vpnConflictDialogVisible = true;
+    this.recordDiagnosticEvent('vpn_conflict_detected', 'connect', 2203002);
+    this.clearConnectionCompletionTimer();
+    this.stopConnectionPolling();
+    this.setConnectInProgress(false);
+    try {
+      this.getUIContext().showAlertDialog({
+        title: $r('app.string.vpn_conflict_title'),
+        message: $r('app.string.vpn_conflict_message'),
+        autoCancel: false,
+        primaryButton: {
+          value: $r('app.string.cancel_action'),
+          action: () => this.cancelVpnReplacement()
+        },
+        secondaryButton: {
+          value: $r('app.string.continue_action'),
+          action: () => this.confirmVpnReplacement()
+        }
+      });
+    } catch (_error) {
+      this.vpnConflictDialogVisible = false;
+      this.cancelVpnReplacement();
+    }
+  }
+
+  private cancelVpnReplacement(): void {
+    this.vpnConflictDialogVisible = false;
+    this.vpnStatus = 'HarmonyOS VPN Extension stopped';
+    this.recordDiagnosticEvent('vpn_replacement_cancelled', 'dialog');
+    this.stopConnectionPolling();
+    vpnExtension.stopVpnExtensionAbility(this.vpnWant())
+      .then(() => {
+        this.startBackend(false);
+        this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
+      })
+      .catch(() => {
+        this.startBackend(false);
+        this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
+      });
+  }
+
+  private confirmVpnReplacement(): void {
+    this.vpnConflictDialogVisible = false;
+    this.recordDiagnosticEvent('vpn_replacement_confirmed', 'dialog');
+    if (!this.writeVpnReplaceApproval()) {
+      this.vpnStatus = 'FAILED | VPN replacement approval | status unavailable';
+      this.startBackend(false);
+      this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
+      return;
+    }
+    this.clearConnectionCompletionTimer();
+    this.connectionStartedAtMs = Date.now();
+    this.recordDiagnosticEvent('vpn_replacement_restart_requested', 'system');
+    this.setConnectInProgress(true);
+    this.vpnStatus = 'Disconnecting existing VPN connection';
+    vpnExtension.stopVpnExtensionAbility(this.vpnWant())
+      .then(() => {
+        this.scheduleLifecycleTask(() => this.requestVpnExtensionStart(), 300);
+      })
+      .catch(() => {
+        this.scheduleLifecycleTask(() => this.requestVpnExtensionStart(), 300);
+      });
   }
 
   private setConnectInProgress(inProgress: boolean): void {
@@ -769,6 +1142,26 @@ export struct BridgeStatus {
     return addresses.length > 0 ? addresses[0] : '';
   }
 
+  private deviceNeedsApproval(): boolean {
+    return this.accountSummary.needsApproval || this.backendStatus.includes('NeedsMachineAuth');
+  }
+
+  private keyExpiresSoon(expiryUnixMs: number): boolean {
+    const remainingMs: number = expiryUnixMs - Date.now();
+    return remainingMs > 0 && remainingMs <= 7 * 24 * 60 * 60 * 1000;
+  }
+
+  private keyExpiryDays(expiryUnixMs: number): number {
+    return Math.max(1, Math.ceil((expiryUnixMs - Date.now()) / (24 * 60 * 60 * 1000)));
+  }
+
+  private keyExpiryLabel(keyExpired: boolean, expiryUnixMs: number): ResourceStr {
+    if (keyExpired) {
+      return $r('app.string.device_key_expired');
+    }
+    return $r('app.string.device_key_expiring', this.keyExpiryDays(expiryUnixMs));
+  }
+
   private settingsStatusText(): string {
     return this.isConnected() ? this.vpnStatus : this.backendStatus;
   }
@@ -816,6 +1209,12 @@ export struct BridgeStatus {
     if (this.isConnected()) {
       return $r('app.string.connection_connected');
     }
+    if (this.deviceNeedsApproval()) {
+      return $r('app.string.connection_approval_required');
+    }
+    if (this.accountSummary.keyExpired) {
+      return $r('app.string.connection_key_expired');
+    }
     if (this.isConnecting()) {
       return $r('app.string.connection_connecting');
     }
@@ -835,6 +1234,12 @@ export struct BridgeStatus {
     if (this.isConnected()) {
       return $r('app.string.description_connected');
     }
+    if (this.deviceNeedsApproval()) {
+      return $r('app.string.description_approval_required');
+    }
+    if (this.accountSummary.keyExpired) {
+      return $r('app.string.description_key_expired');
+    }
     if (this.isConnecting()) {
       return $r('app.string.description_connecting');
     }
@@ -842,6 +1247,9 @@ export struct BridgeStatus {
       return $r('app.string.description_login_required');
     }
     if (this.hasConnectionProblem()) {
+      if (this.vpnStatus.includes('code=2203002')) {
+        return $r('app.string.description_vpn_conflict_problem');
+      }
       if (this.backendStatus.includes('tls-error') || this.backendStatus.includes('x509')) {
         return $r('app.string.description_tls_problem');
       }
@@ -890,7 +1298,7 @@ export struct BridgeStatus {
     this.diagnosticsExpanded = false;
   }
 
-  private showToast(message: string): void {
+  private showToast(message: ResourceStr): void {
     try {
       this.getUIContext().getPromptAction().showToast({ message });
     } catch (_error) {
@@ -1054,6 +1462,154 @@ export struct BridgeStatus {
     this.expandedPeerKeys = this.expandedPeerKeys.concat(peerKey);
   }
 
+  private copyDeviceValue(value: string, successMessage: ResourceStr): void {
+    if (value.length === 0) {
+      this.showToast($r('app.string.device_copy_unavailable'));
+      return;
+    }
+    const data: pasteboard.PasteData = pasteboard.createData(
+      pasteboard.MIMETYPE_TEXT_PLAIN, value);
+    pasteboard.getSystemPasteboard().setData(data)
+      .then(() => this.showToast(successMessage))
+      .catch(() => this.showToast($r('app.string.device_copy_failed')));
+  }
+
+  private peerConnectivityFilePath(fileName: string): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${fileName}`;
+  }
+
+  private writePrivateTextFile(path: string, content: string): boolean {
+    let file: fileIo.File | undefined = undefined;
+    try {
+      file = fileIo.openSync(path,
+        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
+      fileIo.writeSync(file.fd, content);
+      return true;
+    } catch (_error) {
+      return false;
+    } finally {
+      if (file !== undefined) {
+        try {
+          fileIo.closeSync(file);
+        } catch (_error) {
+          // The descriptor may already be closed after a platform write failure.
+        }
+      }
+    }
+  }
+
+  private emptyPeerConnectivityResult(reason: string = ''): PeerConnectivityResult {
+    return {
+      state: reason.length > 0 ? 'failed' : '', reason: reason,
+      sent: 0, received: 0, lossPercent: 0,
+      minLatencyMs: 0, avgLatencyMs: 0, maxLatencyMs: 0
+    };
+  }
+
+  private parsePeerConnectivityResult(resultText: string): PeerConnectivityResult {
+    try {
+      const result: PeerConnectivityResult = JSON.parse(resultText) as PeerConnectivityResult;
+      if (result.state === 'reachable' || result.state === 'degraded' ||
+        result.state === 'failed' || result.state === 'skipped') {
+        return result;
+      }
+    } catch (_error) {
+      // Fall through to the sanitized invalid-result state.
+    }
+    return this.emptyPeerConnectivityResult('invalid_result');
+  }
+
+  private finishPeerConnectivity(result: PeerConnectivityResult): void {
+    this.peerConnectivityResult = result;
+    this.peerConnectivityInProgress = false;
+    this.stopPeerConnectivityPolling();
+    this.recordDiagnosticEvent('peer_connectivity_completed', result.state);
+  }
+
+  private startPeerConnectivity(peer: PeerSummary): void {
+    if (this.peerConnectivityInProgress || !peer.online) {
+      return;
+    }
+    this.stopPeerConnectivityPolling();
+    this.peerConnectivityKey = peer.key;
+    this.peerConnectivityResult = this.emptyPeerConnectivityResult();
+    this.peerConnectivityInProgress = true;
+    this.peerConnectivityRequestId = Date.now();
+    this.recordDiagnosticEvent('peer_connectivity_requested', this.isConnected() ? 'vpn' : 'ui');
+    if (!this.isConnected()) {
+      nativeBridge.backendPeerConnectivityAsync(peer.key)
+        .then((resultText: string) => {
+          this.finishPeerConnectivity(this.parsePeerConnectivityResult(resultText));
+        })
+        .catch(() => {
+          this.finishPeerConnectivity(this.emptyPeerConnectivityResult('backend_unavailable'));
+        });
+      return;
+    }
+    const responsePath: string = this.peerConnectivityFilePath(PEER_CONNECTIVITY_RESPONSE_FILE_NAME);
+    this.writePrivateTextFile(responsePath, '');
+    const request: PeerConnectivityRequest = {
+      requestId: this.peerConnectivityRequestId,
+      peerKey: peer.key
+    };
+    const requestPath: string = this.peerConnectivityFilePath(PEER_CONNECTIVITY_REQUEST_FILE_NAME);
+    if (!this.writePrivateTextFile(requestPath, JSON.stringify(request))) {
+      this.finishPeerConnectivity(this.emptyPeerConnectivityResult('extension_error'));
+      return;
+    }
+    this.pollPeerConnectivityResponse(0);
+  }
+
+  private pollPeerConnectivityResponse(attempt: number): void {
+    if (!this.peerConnectivityInProgress) {
+      return;
+    }
+    if (attempt >= 50) {
+      this.finishPeerConnectivity(this.emptyPeerConnectivityResult('timeout'));
+      return;
+    }
+    const responsePath: string = this.peerConnectivityFilePath(PEER_CONNECTIVITY_RESPONSE_FILE_NAME);
+    try {
+      if (fileIo.accessSync(responsePath)) {
+        const responseText: string = fileIo.readTextSync(responsePath).trim();
+        if (responseText.length > 0) {
+          const response: PeerConnectivityResponse = JSON.parse(responseText) as PeerConnectivityResponse;
+          if (response.requestId === this.peerConnectivityRequestId) {
+            this.writePrivateTextFile(responsePath, '');
+            this.finishPeerConnectivity(this.parsePeerConnectivityResult(response.result));
+            return;
+          }
+        }
+      }
+    } catch (_error) {
+      // The extension may be replacing the response file; retry within the timeout.
+    }
+    this.peerConnectivityPollTimer = setTimeout(() => {
+      this.pollPeerConnectivityResponse(attempt + 1);
+    }, 300);
+  }
+
+  private stopPeerConnectivityPolling(): void {
+    if (this.peerConnectivityPollTimer >= 0) {
+      clearTimeout(this.peerConnectivityPollTimer);
+      this.peerConnectivityPollTimer = -1;
+    }
+  }
+
+  private peerConnectivityReason(reason: string): ResourceStr {
+    if (reason === 'peer_offline') {
+      return $r('app.string.peer_connectivity_offline');
+    }
+    if (reason === 'no_address') {
+      return $r('app.string.peer_connectivity_no_address');
+    }
+    if (reason === 'no_response' || reason === 'timeout') {
+      return $r('app.string.peer_connectivity_no_response');
+    }
+    return $r('app.string.peer_connectivity_unavailable');
+  }
+
   private secondaryBackground(): ResourceColor {
     return $r('sys.color.comp_background_tertiary');
   }
@@ -1087,11 +1643,11 @@ export struct BridgeStatus {
   @Builder
   private SettingsGroupHeader(title: ResourceStr) {
     Text(title)
-      .fontSize(16)
+      .fontSize(15)
       .fontWeight(FontWeight.Medium)
       .fontColor($r('sys.color.font_primary'))
       .width('100%')
-      .padding({ top: 12, bottom: 4 })
+      .padding({ top: 8, bottom: 2 })
   }
 
   @Builder
@@ -1267,62 +1823,204 @@ export struct BridgeStatus {
     }
       .id(nodeId)
       .width('100%')
-      .height(52)
+      .height(48)
       .opacity(enabled ? 1 : 0.4)
       .enabled(enabled)
       .onClick(action)
   }
 
-  @Builder
-  private ConnectionPanel() {
-    Column({ space: 16 }) {
-      Row({ space: 12 }) {
-        Stack() {
-          Image($r('app.media.connection_filled'))
-            .width(28)
-            .height(28)
-            .fillColor(this.connectionColor())
-        }
-        .width(48)
-        .height(48)
-        .borderRadius(16)
-        .backgroundColor(this.secondaryBackground())
+  private connectionActionNodeId(): string {
+    if (this.isConnected()) {
+      return 'vpn-stop';
+    }
+    if (this.isBackendLoading()) {
+      return 'backend-starting';
+    }
+    if (this.needsLogin()) {
+      return 'account-login';
+    }
+    return 'vpn-connect';
+  }
 
+  private connectionActionLoading(): boolean {
+    return this.isBackendLoading() || this.isConnecting() || this.loginInProgress;
+  }
+
+  private connectionActionEnabled(): boolean {
+    return !this.connectionActionLoading() && !this.deviceNeedsApproval();
+  }
+
+  private connectionActionBackground(): ResourceColor {
+    return this.isConnected() ? $r('sys.color.comp_background_emphasize') : this.secondaryBackground();
+  }
+
+  private connectionActionForeground(): ResourceColor {
+    if (this.isConnected()) {
+      return $r('sys.color.font_on_primary');
+    }
+    if (this.connectionActionLoading()) {
+      return $r('app.color.status_warning');
+    }
+    return $r('app.color.status_neutral');
+  }
+
+  private runConnectionAction(): void {
+    if (this.isConnected()) {
+      this.stopVpnProbe();
+    } else if (this.needsLogin()) {
+      this.openSecureLogin();
+    } else {
+      this.beginVpnConnection();
+    }
+  }
+
+  @Builder
+  private ConnectionCircleButton() {
+    Button({
+      type: ButtonType.Circle,
+      stateEffect: true,
+      buttonStyle: ButtonStyleMode.NORMAL,
+      controlSize: ControlSize.NORMAL
+    }) {
+      if (this.connectionActionLoading()) {
+        LoadingProgress()
+          .width(22)
+          .height(22)
+          .color(this.connectionActionForeground())
+      } else {
+        Image($r('app.media.connection_filled'))
+          .width(22)
+          .height(22)
+          .fillColor(this.connectionActionForeground())
+      }
+    }
+    .id(this.connectionActionNodeId())
+    .width(48)
+    .height(48)
+    .backgroundColor(this.connectionActionBackground())
+    .enabled(this.connectionActionEnabled())
+    .opacity(this.connectionActionEnabled() ? 1 : 0.65)
+    .accessibilityText(this.isConnected() ?
+      $r('app.string.action_disconnect') : $r('app.string.action_connect'))
+    .onClick(() => this.runConnectionAction())
+  }
+
+  @Builder
+  private TrafficChart() {
+    Stack({ alignContent: Alignment.Center }) {
+      Divider()
+        .width('100%')
+        .color($r('sys.color.comp_divider'))
+      Polyline({ width: this.trafficChartWidth(), height: 68 })
+        .points(this.trafficChartPoints(true))
+        .fill(Color.Transparent)
+        .stroke($r('sys.color.icon_emphasize'))
+        .strokeWidth(2)
+        .strokeLineCap(LineCapStyle.Round)
+        .strokeLineJoin(LineJoinStyle.Round)
+      Polyline({ width: this.trafficChartWidth(), height: 68 })
+        .points(this.trafficChartPoints(false))
+        .fill(Color.Transparent)
+        .stroke('#8B5CF6')
+        .strokeWidth(2)
+        .strokeLineCap(LineCapStyle.Round)
+        .strokeLineJoin(LineJoinStyle.Round)
+    }
+    .id('traffic-chart')
+    .width('100%')
+    .height(68)
+    .clip(true)
+    .backgroundColor(this.secondaryBackground())
+    .borderRadius(12)
+  }
+
+  @Builder
+  private TrafficSummary() {
+    Column({ space: 8 }) {
+      Row({ space: 12 }) {
         Column({ space: 2 }) {
-          Text(this.connectionTitle())
-            .id('smoke-title')
-            .fontSize(18)
+          Text($r('app.string.traffic_download'))
+            .fontSize(11)
+            .fontColor($r('sys.color.font_secondary'))
+          Text(`↓ ${this.formatTrafficBytes(this.trafficDownloadBytes)}`)
+            .id('traffic-download-total')
+            .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_primary'))
-            .width('100%')
-          Text(this.connectionDescription())
-            .fontSize(13)
+          Text(this.formatTrafficBytes(this.trafficDownloadRate, true))
+            .fontSize(11)
+            .fontColor($r('sys.color.icon_emphasize'))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        Column({ space: 2 }) {
+          Text($r('app.string.traffic_upload'))
+            .fontSize(11)
             .fontColor($r('sys.color.font_secondary'))
-            .lineHeight(18)
-            .width('100%')
+          Text(`↑ ${this.formatTrafficBytes(this.trafficUploadBytes)}`)
+            .id('traffic-upload-total')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+          Text(this.formatTrafficBytes(this.trafficUploadRate, true))
+            .fontSize(11)
+            .fontColor('#8B5CF6')
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
-
-      if (this.isConnected()) {
-        this.StandardActionButton($r('app.string.action_disconnect'), 'vpn-stop', false, true,
-          () => this.stopVpnProbe())
-      } else if (this.isBackendLoading()) {
-        this.StandardActionButton($r('app.string.action_starting'), 'backend-starting', true,
-          false, () => {}, true)
-      } else if (this.needsLogin()) {
-        this.LoginButton()
-      } else {
-        this.ConnectButton()
-      }
+      this.TrafficChart()
     }
     .width('100%')
-    .padding(16)
+  }
+
+  @Builder
+  private AnimatedTrafficSummary() {
+    Column() {
+      this.TrafficSummary()
+    }
+    .width('100%')
+    .height(this.isConnected() ? 132 : 0)
+    .opacity(this.isConnected() ? 1 : 0)
+    .translate({ y: this.isConnected() ? 0 : -10 })
+    .clip(true)
+    .animation({ duration: 700, curve: Curve.EaseInOut })
+  }
+
+  @Builder
+  private ConnectionPanel() {
+    Column({ space: 12 }) {
+      Row({ space: 12 }) {
+        Column({ space: 2 }) {
+          Text(this.connectionTitle())
+            .id('smoke-title')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+          Text(this.connectionDescription())
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .lineHeight(17)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        this.ConnectionCircleButton()
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      this.AnimatedTrafficSummary()
+    }
+    .width('100%')
+    .padding(14)
     .backgroundColor(this.groupBackground())
     .borderRadius(16)
-    .animation({ duration: 260, curve: Curve.EaseInOut })
+    .animation({ duration: 700, curve: Curve.EaseInOut })
   }
 
   @Builder
@@ -1346,8 +2044,8 @@ export struct BridgeStatus {
           .onChange((enabled: boolean) => this.setNetworkSetting('routeAll', enabled))
       }
       .width('100%')
-      .constraintSize({ minHeight: 64 })
-      .padding({ top: 8, bottom: 8 })
+      .constraintSize({ minHeight: 56 })
+      .padding({ top: 6, bottom: 6 })
 
       Divider().color($r('sys.color.comp_divider'))
 
@@ -1369,8 +2067,8 @@ export struct BridgeStatus {
           .onChange((enabled: boolean) => this.setNetworkSetting('corpDNS', enabled))
       }
       .width('100%')
-      .constraintSize({ minHeight: 64 })
-      .padding({ top: 8, bottom: 8 })
+      .constraintSize({ minHeight: 56 })
+      .padding({ top: 6, bottom: 6 })
 
       Divider().color($r('sys.color.comp_divider'))
 
@@ -1394,8 +2092,8 @@ export struct BridgeStatus {
             this.setNetworkSetting('exitNodeAllowLANAccess', enabled))
       }
       .width('100%')
-      .constraintSize({ minHeight: 72 })
-      .padding({ top: 8, bottom: 8 })
+      .constraintSize({ minHeight: 62 })
+      .padding({ top: 6, bottom: 6 })
 
       if (this.networkSettingStatus.startsWith('FAILED')) {
         Text($r('app.string.network_setting_failed'))
@@ -1408,7 +2106,7 @@ export struct BridgeStatus {
     }
     .id('network-settings-panel')
     .width('100%')
-    .padding(16)
+    .padding(14)
     .backgroundColor(this.groupBackground())
     .borderRadius(16)
     .animation({ duration: 260, curve: Curve.EaseInOut })
@@ -1457,60 +2155,85 @@ export struct BridgeStatus {
     .onClick(action)
   }
 
+  private selectableExitNodes(): ExitNodeChoice[] {
+    return this.exitNodes.filter((choice: ExitNodeChoice) => choice.online || choice.selected);
+  }
+
+  private exitNodeSelectOptions(): SelectOption[] {
+    const options: SelectOption[] = [{ value: $r('app.string.exit_node_none') }];
+    this.selectableExitNodes().forEach((choice: ExitNodeChoice) => {
+      options.push({ value: choice.name });
+    });
+    return options;
+  }
+
+  private selectedExitNodeIndex(): number {
+    const choices: ExitNodeChoice[] = this.selectableExitNodes();
+    const selectedIndex: number = choices.findIndex((choice: ExitNodeChoice) => choice.selected);
+    return selectedIndex < 0 ? 0 : selectedIndex + 1;
+  }
+
+  private selectedExitNodeLabel(): ResourceStr {
+    if (!this.isAuthenticated()) {
+      return $r('app.string.setting_unavailable');
+    }
+    if (this.exitNodes.length === 0) {
+      return $r('app.string.exit_node_empty');
+    }
+    const selected: ExitNodeChoice | undefined = this.exitNodes.find(
+      (choice: ExitNodeChoice) => choice.selected);
+    return selected === undefined ? $r('app.string.exit_node_none') : selected.name;
+  }
+
+  private onExitNodeSelect(index: number): void {
+    if (index === 0) {
+      this.setExitNode('');
+      return;
+    }
+    const choices: ExitNodeChoice[] = this.selectableExitNodes();
+    if (index - 1 < choices.length) {
+      this.setExitNode(choices[index - 1].id);
+    }
+  }
+
   @Builder
   private ExitNodePanel() {
-    Column({ space: 12 }) {
-      Row() {
-        Column({ space: 2 }) {
-          Text($r('app.string.exit_node_title'))
-            .fontSize(18)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'))
-          Text($r('app.string.exit_node_description'))
-            .fontSize(13)
-            .fontColor($r('sys.color.font_secondary'))
-            .lineHeight(18)
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        Text(this.exitNodeStatus)
-          .id('exit-node-status')
-          .fontSize(13)
-          .fontColor(this.exitNodeStatus.startsWith('FAILED') ?
-            $r('app.color.status_error') : $r('sys.color.font_secondary'))
-          .maxLines(1)
+    Row({ space: 12 }) {
+      Column({ space: 2 }) {
+        Text($r('app.string.exit_node_title'))
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+        Text(this.isConnected() ? $r('app.string.exit_node_disconnect_first') :
+          $r('app.string.exit_node_description'))
+          .fontSize(11)
+          .fontColor($r('sys.color.font_secondary'))
+          .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
 
-      if (!this.isAuthenticated()) {
-        Text($r('app.string.exit_node_login_required'))
-          .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
-          .lineHeight(18)
-          .width('100%')
-      } else if (this.exitNodes.length === 0) {
-        Text($r('app.string.exit_node_empty'))
-          .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-      } else {
-        this.ExitNodeChoiceButton($r('app.string.exit_node_none'), 'exit-node-none',
-          !this.exitNodes.some((choice: ExitNodeChoice) => choice.selected),
-          !this.isConnected() && !this.isConnecting() && !this.connectInProgress,
-          () => this.setExitNode(''))
-        ForEach(this.exitNodes, (choice: ExitNodeChoice) => {
-          this.ExitNodeChoiceButton(choice.name, 'exit-node-' + choice.id, choice.selected,
-            choice.online && !this.isConnected() && !this.isConnecting() && !this.connectInProgress,
-            () => this.setExitNode(choice.id))
-        }, (choice: ExitNodeChoice) => choice.id)
-      }
+      Select(this.exitNodeSelectOptions())
+        .id('exit-node-status')
+        .selected(this.selectedExitNodeIndex())
+        .value(this.selectedExitNodeLabel())
+        .controlSize(ControlSize.NORMAL)
+        .font({ size: 12 })
+        .optionFont({ size: 12 })
+        .selectedOptionFont({ size: 12 })
+        .constraintSize({ minWidth: 104, maxWidth: this.layoutWidth >= 600 ? 240 : 144 })
+        .enabled(this.isAuthenticated() && this.exitNodes.length > 0 &&
+          !this.isConnected() && !this.isConnecting() && !this.connectInProgress)
+        .opacity(this.isAuthenticated() && this.exitNodes.length > 0 &&
+          !this.isConnected() && !this.isConnecting() && !this.connectInProgress ? 1 : 0.55)
+        .onSelect((index: number) => this.onExitNodeSelect(index))
     }
     .width('100%')
-    .padding(16)
+    .constraintSize({ minHeight: 68 })
+    .padding({ left: 14, right: 14, top: 10, bottom: 10 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(14)
     .animation({ duration: 260, curve: Curve.EaseInOut })
   }
 
@@ -1561,6 +2284,19 @@ export struct BridgeStatus {
     .padding(16)
     .backgroundColor(this.groupBackground())
     .borderRadius(16)
+  }
+
+  @Builder
+  private DeviceStatusNotice(label: ResourceStr, error: boolean) {
+    Text(label)
+      .fontSize(10)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(error ? $r('app.color.status_error') : $r('app.color.status_warning'))
+      .maxLines(1)
+      .textOverflow({ overflow: TextOverflow.Ellipsis })
+      .padding({ left: 7, right: 7, top: 2, bottom: 2 })
+      .borderRadius(9)
+      .backgroundColor(error ? '#14B42318' : '#14B54708')
   }
 
   @Builder
@@ -1620,6 +2356,21 @@ export struct BridgeStatus {
             .maxLines(1)
             .width('100%')
         }
+        if (this.deviceNeedsApproval() || this.accountSummary.keyExpired ||
+          this.keyExpiresSoon(this.accountSummary.keyExpiryUnixMs)) {
+          Row({ space: 5 }) {
+            if (this.deviceNeedsApproval()) {
+              this.DeviceStatusNotice($r('app.string.device_approval_required'), false)
+            }
+            if (this.accountSummary.keyExpired ||
+              this.keyExpiresSoon(this.accountSummary.keyExpiryUnixMs)) {
+              this.DeviceStatusNotice(this.keyExpiryLabel(this.accountSummary.keyExpired,
+                this.accountSummary.keyExpiryUnixMs), this.accountSummary.keyExpired)
+            }
+          }
+          .width('100%')
+          .margin({ top: 3 })
+        }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -1627,6 +2378,43 @@ export struct BridgeStatus {
     .width('100%')
     .constraintSize({ minHeight: 52 })
     .padding({ top: 6, right: 12, bottom: 6 })
+  }
+
+  @Builder
+  private PeerActionSegment(label: ResourceStr, nodeId: string, enabled: boolean,
+    loading: boolean, action: () => void) {
+    Button({
+      type: ButtonType.Normal,
+      stateEffect: true,
+      buttonStyle: ButtonStyleMode.TEXTUAL,
+      controlSize: ControlSize.SMALL
+    }) {
+      Row({ space: 4 }) {
+        if (loading) {
+          LoadingProgress()
+            .width(14)
+            .height(14)
+            .color($r('app.color.status_warning'))
+        }
+        Text(label)
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .justifyContent(FlexAlign.Center)
+      .width('100%')
+    }
+    .id(nodeId)
+    .layoutWeight(1)
+    .height(36)
+    .padding({ left: 6, right: 6 })
+    .borderRadius(0)
+    .backgroundColor(Color.Transparent)
+    .enabled(enabled)
+    .opacity(enabled ? 1 : 0.42)
+    .onClick(action)
   }
 
   @Builder
@@ -1685,13 +2473,91 @@ export struct BridgeStatus {
               .maxLines(1)
               .width('100%')
           }
+          if (peer.keyExpired || this.keyExpiresSoon(peer.keyExpiryUnixMs)) {
+            Row() {
+              this.DeviceStatusNotice(this.keyExpiryLabel(peer.keyExpired,
+                peer.keyExpiryUnixMs), peer.keyExpired)
+            }
+            .width('100%')
+            .margin({ top: 3 })
+          }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
+        SymbolGlyph($r('sys.symbol.chevron_down'))
+          .fontSize(18)
+          .fontColor([$r('sys.color.icon_secondary')])
+          .rotate({ angle: this.isPeerNameExpanded(peer.key) ? 180 : 0 })
+          .onClick(() => this.togglePeerName(peer.key))
       }
       .width('100%')
       .constraintSize({ minHeight: 52 })
       .padding({ top: 6, right: 12, bottom: 6 })
+      if (this.isPeerNameExpanded(peer.key)) {
+        Column({ space: 8 }) {
+          Row({ space: 0 }) {
+            this.PeerActionSegment(
+              this.peerConnectivityInProgress && this.peerConnectivityKey === peer.key ?
+                $r('app.string.peer_connectivity_testing') :
+                $r('app.string.peer_connectivity_action'),
+              'peer-connectivity-' + peer.key,
+              peer.online && !this.peerConnectivityInProgress,
+              this.peerConnectivityInProgress && this.peerConnectivityKey === peer.key,
+              () => this.startPeerConnectivity(peer))
+            Divider()
+              .vertical(true)
+              .height(18)
+              .color($r('sys.color.comp_divider'))
+            this.PeerActionSegment($r('app.string.peer_copy_dns'), 'peer-copy-dns-' + peer.key,
+              peer.name.length > 0, false,
+              () => this.copyDeviceValue(peer.name, $r('app.string.peer_dns_copied')))
+            Divider()
+              .vertical(true)
+              .height(18)
+              .color($r('sys.color.comp_divider'))
+            this.PeerActionSegment($r('app.string.peer_copy_ip'), 'peer-copy-ip-' + peer.key,
+              peer.addresses.length > 0, false,
+              () => this.copyDeviceValue(this.primaryTailscaleAddress(peer.addresses),
+                $r('app.string.peer_ip_copied')))
+          }
+          .width('100%')
+          .height(36)
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor(this.secondaryBackground())
+          .borderRadius(18)
+          .clip(true)
+
+          if (this.peerConnectivityKey === peer.key && !this.peerConnectivityInProgress &&
+            this.peerConnectivityResult.state.length > 0) {
+            if (this.peerConnectivityResult.state === 'reachable' ||
+              this.peerConnectivityResult.state === 'degraded') {
+              Text($r('app.string.peer_connectivity_summary',
+                this.peerConnectivityResult.received, this.peerConnectivityResult.sent,
+                this.peerConnectivityResult.avgLatencyMs, this.peerConnectivityResult.lossPercent))
+                .id('peer-connectivity-result-success')
+                .fontSize(12)
+                .fontColor(this.peerConnectivityResult.state === 'reachable' ?
+                  $r('app.color.status_success') : $r('sys.color.font_secondary'))
+                .width('100%')
+              Text($r('app.string.peer_connectivity_latency_range',
+                this.peerConnectivityResult.minLatencyMs, this.peerConnectivityResult.maxLatencyMs))
+                .fontSize(11)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+            } else {
+              Text(this.peerConnectivityReason(this.peerConnectivityResult.reason))
+                .id('peer-connectivity-result-error')
+                .fontSize(12)
+                .fontColor(this.peerConnectivityResult.state === 'failed' ?
+                  $r('app.color.status_error') : $r('sys.color.font_secondary'))
+                .width('100%')
+            }
+          }
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .padding({ left: 46, right: 12, bottom: 10 })
+      }
     }
     .width('100%')
   }
@@ -1736,7 +2602,7 @@ export struct BridgeStatus {
 
   @Builder
   private GlowSettingsPanel() {
-    Row({ space: 12 }) {
+    Row({ space: 10 }) {
       Text($r('app.string.glow_title'))
         .id('settings-page-title')
         .fontSize(14)
@@ -1761,15 +2627,15 @@ export struct BridgeStatus {
     }
     .id('glow-settings')
     .width('100%')
-    .constraintSize({ minHeight: 64 })
-    .padding(16)
+    .constraintSize({ minHeight: 56 })
+    .padding(14)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(14)
   }
 
   @Builder
   private AccountPanel() {
-    Column({ space: 10 }) {
+    Column({ space: 8 }) {
       if (!this.isAuthenticated()) {
         Row({ space: 12 }) {
           Stack() {
@@ -1778,9 +2644,9 @@ export struct BridgeStatus {
               .height(28)
               .fillColor($r('sys.color.icon_secondary'))
           }
-          .width(56)
-          .height(56)
-          .borderRadius(28)
+          .width(48)
+          .height(48)
+          .borderRadius(24)
           .backgroundColor(this.secondaryBackground())
           Text($r('app.string.account_profile_unavailable'))
             .fontSize(13)
@@ -1796,9 +2662,9 @@ export struct BridgeStatus {
             if (this.accountSummary.profilePicURL.length > 0 && !this.avatarLoadFailed) {
               Image(this.accountSummary.profilePicURL)
                 .id('account-avatar')
-                .width(56)
-                .height(56)
-                .borderRadius(28)
+                .width(48)
+                .height(48)
+                .borderRadius(24)
                 .objectFit(ImageFit.Cover)
                 .onError(() => {
                   this.avatarLoadFailed = true;
@@ -1810,9 +2676,9 @@ export struct BridgeStatus {
                 .fontColor($r('sys.color.font_emphasize'))
             }
           }
-          .width(56)
-          .height(56)
-          .borderRadius(28)
+          .width(48)
+          .height(48)
+          .borderRadius(24)
           .backgroundColor(this.secondaryBackground())
 
           Column({ space: 2 }) {
@@ -1873,9 +2739,9 @@ export struct BridgeStatus {
       }
     }
     .width('100%')
-    .padding(16)
+    .padding(14)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(14)
   }
 
   @Builder
@@ -1895,7 +2761,7 @@ export struct BridgeStatus {
         .layoutWeight(1)
     }
     .width('100%')
-    .constraintSize({ minHeight: 44 })
+    .constraintSize({ minHeight: 38 })
     .onClick(() => {
       if (action !== undefined) {
         action();
@@ -1928,7 +2794,7 @@ export struct BridgeStatus {
     }
     .id('app-version-action')
     .width('100%')
-    .height(44)
+    .height(40)
     .padding(0)
     .borderRadius(12)
     .onClick(() => this.onAppVersionTap())
@@ -1942,9 +2808,9 @@ export struct BridgeStatus {
         this.tailscaleVersion, 'tailscale-version')
     }
     .width('100%')
-    .padding(16)
+    .padding(14)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(14)
   }
 
   @Builder
@@ -1964,7 +2830,7 @@ export struct BridgeStatus {
         .width('100%')
     }
     .width('100%')
-    .padding({ top: 10, bottom: 10 })
+    .padding({ top: 8, bottom: 8 })
   }
 
   @Builder
@@ -1991,9 +2857,22 @@ export struct BridgeStatus {
         () => this.runControlProbe())
       this.StandardActionButton('Open MagicDNS probe', 'magicdns-probe', false,
         this.magicDNSProbeUrl.startsWith('http://'), () => this.runMagicDNSProbe())
+      Divider().color($r('sys.color.comp_divider'))
+      Text($r('app.string.diagnostic_report_description'))
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .lineHeight(18)
+        .width('100%')
+      if (this.diagnosticReportStatus.length > 0) {
+        this.DiagnosticStatus($r('app.string.diagnostic_report_title'),
+          this.diagnosticReportStatus, 'diagnostic-report-status')
+      }
+      this.StandardActionButton($r('app.string.diagnostic_report_action'),
+        'diagnostic-report-generate', true, !this.diagnosticReportInProgress,
+        () => this.generateDiagnosticReport(), this.diagnosticReportInProgress)
     }
     .width('100%')
-    .padding({ left: 16, right: 16, bottom: 16 })
+    .padding({ left: 14, right: 14, bottom: 14 })
   }
 
   @Builder
@@ -2030,7 +2909,7 @@ export struct BridgeStatus {
       }
       .id('diagnostics-disclosure')
       .width('100%')
-      .height(64)
+      .height(56)
       .borderRadius(12)
       .onClick(() => {
         this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseInOut }, () => {
@@ -2046,10 +2925,10 @@ export struct BridgeStatus {
       }
     }
     .width('100%')
-    .padding({ left: 12, right: 12 })
+    .padding({ left: 10, right: 10 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
-    .margin({ top: 16 })
+    .borderRadius(14)
+    .margin({ top: 10 })
   }
 
   @Builder
@@ -2084,7 +2963,7 @@ export struct BridgeStatus {
       Column() {
         GridRow({
           columns: { xs: 2, sm: 4, md: 8, lg: 12 },
-          gutter: { x: 12, y: 8 }
+          gutter: { x: 12, y: 5 }
         }) {
           GridCol({ span: { xs: 2, sm: 4, md: 8, lg: 12 } }) {
             this.SettingsGroupHeader($r('app.string.account_title'))

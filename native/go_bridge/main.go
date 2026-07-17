@@ -148,6 +148,16 @@ func TSBackendPeerProbe() *C.char {
 	return C.CString(harmonyBackend.peerProbe())
 }
 
+//export TSBackendPeerConnectivity
+func TSBackendPeerConnectivity(peerKey *C.char) *C.char {
+	if peerKey == nil {
+		return C.CString(marshalPeerConnectivity(peerConnectivityResult{
+			State: "failed", Reason: "missing_peer",
+		}))
+	}
+	return C.CString(harmonyBackend.peerConnectivity(C.GoString(peerKey)))
+}
+
 //export TSBackendMagicDNSProbeURL
 func TSBackendMagicDNSProbeURL() *C.char {
 	return C.CString(harmonyBackend.magicDNSProbeURL())

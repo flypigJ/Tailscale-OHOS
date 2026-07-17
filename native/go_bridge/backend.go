@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/netip"
 	"net/url"
 	"os"
@@ -19,7 +20,6 @@ import (
 	"tailscale.com/hostinfo"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
-	"tailscale.com/net/netmon"
 	"tailscale.com/net/netns"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
@@ -54,23 +54,46 @@ type exitNodeChoice struct {
 }
 
 type peerSummary struct {
-	Key         string   `json:"key"`
-	Name        string   `json:"name"`
-	OS          string   `json:"os"`
-	DeviceModel string   `json:"deviceModel"`
-	DeviceType  string   `json:"deviceType"`
-	Addresses   []string `json:"addresses"`
-	Online      bool     `json:"online"`
-	ExitNode    bool     `json:"exitNode"`
+	Key             string   `json:"key"`
+	Name            string   `json:"name"`
+	OS              string   `json:"os"`
+	DeviceModel     string   `json:"deviceModel"`
+	DeviceType      string   `json:"deviceType"`
+	Addresses       []string `json:"addresses"`
+	Online          bool     `json:"online"`
+	ExitNode        bool     `json:"exitNode"`
+	KeyExpired      bool     `json:"keyExpired"`
+	KeyExpiryUnixMS int64    `json:"keyExpiryUnixMs"`
+}
+
+type peerConnectivityResult struct {
+	State        string `json:"state"`
+	Reason       string `json:"reason"`
+	Sent         int    `json:"sent"`
+	Received     int    `json:"received"`
+	LossPercent  int    `json:"lossPercent"`
+	MinLatencyMS int    `json:"minLatencyMs"`
+	AvgLatencyMS int    `json:"avgLatencyMs"`
+	MaxLatencyMS int    `json:"maxLatencyMs"`
 }
 
 type accountSummary struct {
-	DisplayName   string   `json:"displayName"`
-	LoginName     string   `json:"loginName"`
-	ProfilePicURL string   `json:"profilePicURL"`
-	TailnetName   string   `json:"tailnetName"`
-	DeviceName    string   `json:"deviceName"`
-	Addresses     []string `json:"addresses"`
+	DisplayName     string   `json:"displayName"`
+	LoginName       string   `json:"loginName"`
+	ProfilePicURL   string   `json:"profilePicURL"`
+	TailnetName     string   `json:"tailnetName"`
+	DeviceName      string   `json:"deviceName"`
+	Addresses       []string `json:"addresses"`
+	NeedsApproval   bool     `json:"needsApproval"`
+	KeyExpired      bool     `json:"keyExpired"`
+	KeyExpiryUnixMS int64    `json:"keyExpiryUnixMs"`
+}
+
+func keyExpiryUnixMS(expiry *time.Time) int64 {
+	if expiry == nil || expiry.IsZero() {
+		return 0
+	}
+	return expiry.UnixMilli()
 }
 
 func displayAddresses(addresses []netip.Addr) []string {
@@ -399,14 +422,16 @@ func (b *backendController) peers() string {
 			name = "Unnamed device"
 		}
 		peers = append(peers, peerSummary{
-			Key:         peerStableKey(peer.ID),
-			Name:        name,
-			OS:          peer.OS,
-			DeviceModel: peer.DeviceModel,
-			DeviceType:  classifyPeerDevice(peer.OS, peer.DeviceModel),
-			Addresses:   displayAddresses(peer.TailscaleIPs),
-			Online:      peer.Online,
-			ExitNode:    peer.ExitNodeOption,
+			Key:             peerStableKey(peer.ID),
+			Name:            name,
+			OS:              peer.OS,
+			DeviceModel:     peer.DeviceModel,
+			DeviceType:      classifyPeerDevice(peer.OS, peer.DeviceModel),
+			Addresses:       displayAddresses(peer.TailscaleIPs),
+			Online:          peer.Online,
+			ExitNode:        peer.ExitNodeOption,
+			KeyExpired:      peer.Expired,
+			KeyExpiryUnixMS: keyExpiryUnixMS(peer.KeyExpiry),
 		})
 	}
 	sort.Slice(peers, func(i, j int) bool {
@@ -480,23 +505,7 @@ func (b *backendController) account() string {
 		return "{}"
 	}
 
-	account := accountSummary{}
-	if profile, ok := status.User[status.Self.UserID]; ok {
-		account.DisplayName = strings.TrimSpace(profile.DisplayName)
-		account.LoginName = strings.TrimSpace(profile.LoginName)
-		account.ProfilePicURL = strings.TrimSpace(profile.ProfilePicURL)
-	}
-	account.DeviceName = strings.TrimSuffix(status.Self.DNSName, ".")
-	if account.DeviceName == "" {
-		account.DeviceName = strings.TrimSpace(status.Self.HostName)
-	}
-	account.Addresses = displayAddresses(status.TailscaleIPs)
-	if status.CurrentTailnet != nil {
-		account.TailnetName = strings.TrimSpace(status.CurrentTailnet.Name)
-	}
-	if account.DisplayName == "" {
-		account.DisplayName = account.LoginName
-	}
+	account := buildAccountSummary(status)
 	encoded, err := json.Marshal(account)
 	if err != nil {
 		return "{}"
@@ -547,13 +556,13 @@ func (b *backendController) snapshot() string {
 	}
 	prefs, prefsErr := client.GetPrefs(ctx)
 	snapshot.Status = b.formatRunningStatus(status, prefs, prefsErr)
+	snapshot.Account = buildAccountSummary(status)
 	if status.BackendState != "Running" {
 		return marshalBackendSnapshot(snapshot)
 	}
 
 	snapshot.ExitNodes = buildExitNodeChoices(status, stateDir)
 	snapshot.Peers = buildPeerSummaries(status)
-	snapshot.Account = buildAccountSummary(status)
 	if prefsErr == nil && prefs != nil {
 		snapshot.NetworkSettings = networkPreferences{
 			RouteAll:               prefs.RouteAll,
@@ -613,14 +622,16 @@ func buildPeerSummaries(status *ipnstate.Status) []peerSummary {
 			name = "Unnamed device"
 		}
 		peers = append(peers, peerSummary{
-			Key:         peerStableKey(peer.ID),
-			Name:        name,
-			OS:          peer.OS,
-			DeviceModel: peer.DeviceModel,
-			DeviceType:  classifyPeerDevice(peer.OS, peer.DeviceModel),
-			Addresses:   displayAddresses(peer.TailscaleIPs),
-			Online:      peer.Online,
-			ExitNode:    peer.ExitNodeOption,
+			Key:             peerStableKey(peer.ID),
+			Name:            name,
+			OS:              peer.OS,
+			DeviceModel:     peer.DeviceModel,
+			DeviceType:      classifyPeerDevice(peer.OS, peer.DeviceModel),
+			Addresses:       displayAddresses(peer.TailscaleIPs),
+			Online:          peer.Online,
+			ExitNode:        peer.ExitNodeOption,
+			KeyExpired:      peer.Expired,
+			KeyExpiryUnixMS: keyExpiryUnixMS(peer.KeyExpiry),
 		})
 	}
 	sort.Slice(peers, func(i, j int) bool {
@@ -634,9 +645,12 @@ func buildPeerSummaries(status *ipnstate.Status) []peerSummary {
 
 func buildAccountSummary(status *ipnstate.Status) accountSummary {
 	account := accountSummary{Addresses: []string{}}
+	account.NeedsApproval = status.BackendState == "NeedsMachineAuth"
 	if status.Self == nil {
 		return account
 	}
+	account.KeyExpired = status.Self.Expired
+	account.KeyExpiryUnixMS = keyExpiryUnixMS(status.Self.KeyExpiry)
 	if profile, ok := status.User[status.Self.UserID]; ok {
 		account.DisplayName = strings.TrimSpace(profile.DisplayName)
 		account.LoginName = strings.TrimSpace(profile.LoginName)
@@ -986,6 +1000,105 @@ func (b *backendController) peerProbe() string {
 	return "SKIPPED | peer TSMP probe | no IPv4 peer"
 }
 
+// peerConnectivity performs three TSMP probes against a UI-selected peer. The
+// UI passes only the stable hashed peer key and the result contains aggregate
+// reachability metrics, never the peer address, name, endpoint, or key.
+func (b *backendController) peerConnectivity(peerKey string) string {
+	result := peerConnectivityResult{State: "failed", Reason: "backend_unavailable"}
+	b.mu.Lock()
+	client := b.client
+	b.mu.Unlock()
+	if client == nil {
+		return marshalPeerConnectivity(result)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	status, err := client.Status(ctx)
+	cancel()
+	if err != nil {
+		result.Reason = "status_unavailable"
+		return marshalPeerConnectivity(result)
+	}
+	var target netip.Addr
+	peerFound := false
+	peerOnline := false
+	for _, peer := range status.Peer {
+		if peerStableKey(peer.ID) != peerKey {
+			continue
+		}
+		peerFound = true
+		peerOnline = peer.Online
+		for _, addr := range peer.TailscaleIPs {
+			if addr.Is4() {
+				target = addr
+				break
+			}
+			if !target.IsValid() {
+				target = addr
+			}
+		}
+		break
+	}
+	if !peerFound {
+		result.Reason = "peer_not_found"
+		return marshalPeerConnectivity(result)
+	}
+	if !peerOnline {
+		result.State = "skipped"
+		result.Reason = "peer_offline"
+		return marshalPeerConnectivity(result)
+	}
+	if !target.IsValid() {
+		result.State = "skipped"
+		result.Reason = "no_address"
+		return marshalPeerConnectivity(result)
+	}
+
+	const attempts = 3
+	latencies := make([]int, 0, attempts)
+	result.Sent = attempts
+	for attempt := 0; attempt < attempts; attempt++ {
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		pingResult, pingErr := client.Ping(pingCtx, target, tailcfg.PingTSMP)
+		pingCancel()
+		if pingErr == nil && pingResult != nil && pingResult.Err == "" {
+			latencyMS := int(math.Round(pingResult.LatencySeconds * 1000))
+			latencies = append(latencies, max(0, latencyMS))
+		}
+		if attempt+1 < attempts {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	result.Received = len(latencies)
+	result.LossPercent = (attempts - result.Received) * 100 / attempts
+	if result.Received == 0 {
+		result.Reason = "no_response"
+		return marshalPeerConnectivity(result)
+	}
+	result.State = "reachable"
+	result.Reason = ""
+	if result.Received < attempts {
+		result.State = "degraded"
+	}
+	result.MinLatencyMS = latencies[0]
+	result.MaxLatencyMS = latencies[0]
+	totalLatencyMS := 0
+	for _, latencyMS := range latencies {
+		result.MinLatencyMS = min(result.MinLatencyMS, latencyMS)
+		result.MaxLatencyMS = max(result.MaxLatencyMS, latencyMS)
+		totalLatencyMS += latencyMS
+	}
+	result.AvgLatencyMS = totalLatencyMS / result.Received
+	return marshalPeerConnectivity(result)
+}
+
+func marshalPeerConnectivity(result peerConnectivityResult) string {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return `{"state":"failed","reason":"encoding_failed","sent":0,"received":0,"lossPercent":0,"minLatencyMs":0,"avgLatencyMs":0,"maxLatencyMs":0}`
+	}
+	return string(encoded)
+}
+
 // magicDNSProbeURL returns an in-memory-only browser target for one online
 // peer. Callers must never display, log, or persist the returned URL.
 func (b *backendController) magicDNSProbeURL() string {
@@ -1257,7 +1370,6 @@ func (b *backendController) formatRunningStatus(
 	subnetRoutesEnabled := prefsErr == nil && prefs != nil && prefs.RouteAll
 	corpDNSEnabled := prefsErr == nil && prefs != nil && prefs.CorpDNS
 	exitNodeLANEnabled := prefsErr == nil && prefs != nil && prefs.ExitNodeAllowLANAccess
-	networkUp := netmon.NewStatic().InterfaceState().AnyInterfaceUp()
 	magicDNSState := "unknown"
 	if status.CurrentTailnet != nil {
 		if status.CurrentTailnet.MagicDNSEnabled {
@@ -1266,16 +1378,18 @@ func (b *backendController) formatRunningStatus(
 			magicDNSState = "disabled"
 		}
 	}
-	var tunRead, tunWritten, dnsQueries, dnsResponses, dnsAnswers uint64
+	var tunRead, tunWritten, txBytes, rxBytes, trafficSession uint64
+	var dnsQueries, dnsResponses, dnsAnswers uint64
 	var magicArmed bool
 	var magicQueries, magicResponses, magicAnswers, magicPeerOut, magicPeerIn uint64
 	if tunDevice != nil {
 		tunRead, tunWritten = tunDevice.packetCounts()
+		txBytes, rxBytes, trafficSession = tunDevice.trafficCounts()
 		dnsQueries, dnsResponses, dnsAnswers = tunDevice.dnsCounts()
 		magicArmed, magicQueries, magicResponses, magicAnswers, magicPeerOut, magicPeerIn = tunDevice.magicDNSCounts()
 	}
 	return fmt.Sprintf(
-		"OK | state=%s | loginURLReady=%t | tailscaleIPs=%d | tun=%t | exitNode=%t | routeAll=%t | corpDNS=%t | exitNodeLAN=%t | subnetRoutes=%d | tunRead=%d | tunWrite=%d | dnsQ=%d | dnsR=%d | dnsA=%d | magicDNSState=%s | magicArmed=%t | magicQ=%d | magicR=%d | magicA=%d | magicOut=%d | magicIn=%d | netUp=%t | phase=%s",
+		"OK | state=%s | loginURLReady=%t | tailscaleIPs=%d | tun=%t | exitNode=%t | routeAll=%t | corpDNS=%t | exitNodeLAN=%t | subnetRoutes=%d | tunRead=%d | tunWrite=%d | trafficSession=%d | txBytes=%d | rxBytes=%d | dnsQ=%d | dnsR=%d | dnsA=%d | magicDNSState=%s | magicArmed=%t | magicQ=%d | magicR=%d | magicA=%d | magicOut=%d | magicIn=%d | netUp=unknown | phase=%s",
 		status.BackendState,
 		status.AuthURL != "",
 		len(status.TailscaleIPs),
@@ -1287,6 +1401,9 @@ func (b *backendController) formatRunningStatus(
 		subnetRoutes,
 		tunRead,
 		tunWritten,
+		trafficSession,
+		txBytes,
+		rxBytes,
 		dnsQueries,
 		dnsResponses,
 		dnsAnswers,
@@ -1297,7 +1414,6 @@ func (b *backendController) formatRunningStatus(
 		magicAnswers,
 		magicPeerOut,
 		magicPeerIn,
-		networkUp,
 		phase,
 	)
 }

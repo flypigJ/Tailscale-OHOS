@@ -93,6 +93,14 @@
       "value": "Initializing backend"
     },
     {
+      "name": "connection_approval_required",
+      "value": "Device approval required"
+    },
+    {
+      "name": "connection_key_expired",
+      "value": "Device key expired"
+    },
+    {
       "name": "description_connected",
       "value": "This device is connected to your private Tailscale network"
     },
@@ -121,6 +129,18 @@
       "value": "The system VPN could not start. Allow the VPN request and try connecting again."
     },
     {
+      "name": "description_vpn_conflict_problem",
+      "value": "Another VPN connection is already active. Choose Connect again to replace it."
+    },
+    {
+      "name": "vpn_conflict_title",
+      "value": "Another VPN is active"
+    },
+    {
+      "name": "vpn_conflict_message",
+      "value": "Another VPN connection is already active. Continuing will disconnect it."
+    },
+    {
       "name": "description_status_problem",
       "value": "The VPN status is temporarily unavailable. Reopen the app and try again."
     },
@@ -131,6 +151,14 @@
     {
       "name": "description_starting",
       "value": "Preparing Tailscale, please wait"
+    },
+    {
+      "name": "description_approval_required",
+      "value": "Approve this device in the Tailscale admin console"
+    },
+    {
+      "name": "description_key_expired",
+      "value": "Sign in to Tailscale again to renew the device key"
     },
     {
       "name": "action_connect",
@@ -147,6 +175,14 @@
     {
       "name": "action_disconnect",
       "value": "Disconnect"
+    },
+    {
+      "name": "traffic_download",
+      "value": "Download this connection"
+    },
+    {
+      "name": "traffic_upload",
+      "value": "Upload this connection"
     },
     {
       "name": "action_login",
@@ -174,7 +210,7 @@
     },
     {
       "name": "exit_node_disconnect_first",
-      "value": "Disconnect before changing the exit node. The current selection remains active."
+      "value": "Disconnect to change the exit node"
     },
     {
       "name": "devices_title",
@@ -199,6 +235,74 @@
     {
       "name": "peer_exit_node",
       "value": "Available as an exit node"
+    },
+    {
+      "name": "peer_connectivity_action",
+      "value": "Test connectivity"
+    },
+    {
+      "name": "peer_connectivity_testing",
+      "value": "Testing…"
+    },
+    {
+      "name": "peer_connectivity_summary",
+      "value": "%d/%d replies · %d ms average · %d%% loss"
+    },
+    {
+      "name": "peer_connectivity_latency_range",
+      "value": "%d–%d ms latency range"
+    },
+    {
+      "name": "peer_connectivity_offline",
+      "value": "This peer is offline."
+    },
+    {
+      "name": "peer_connectivity_no_address",
+      "value": "This peer has no reachable Tailscale address."
+    },
+    {
+      "name": "peer_connectivity_no_response",
+      "value": "No TSMP response was received."
+    },
+    {
+      "name": "peer_connectivity_unavailable",
+      "value": "Peer connectivity testing is temporarily unavailable."
+    },
+    {
+      "name": "peer_copy_dns",
+      "value": "Copy DNS"
+    },
+    {
+      "name": "peer_copy_ip",
+      "value": "Copy IP"
+    },
+    {
+      "name": "peer_dns_copied",
+      "value": "DNS name copied"
+    },
+    {
+      "name": "peer_ip_copied",
+      "value": "Device IP copied"
+    },
+    {
+      "name": "device_copy_unavailable",
+      "value": "No device value is available to copy"
+    },
+    {
+      "name": "device_copy_failed",
+      "value": "Copy failed. Try again."
+    },
+    {
+      "name": "device_approval_required",
+      "value": "Approval required"
+    },
+    {
+      "name": "device_key_expired",
+      "value": "Key expired"
+    },
+    {
+      "name": "device_key_expiring",
+      "value": "Key expires in %d days"
     },
     {
       "name": "local_device_badge",
@@ -269,6 +373,10 @@
       "value": "Cancel"
     },
     {
+      "name": "continue_action",
+      "value": "Continue"
+    },
+    {
       "name": "diagnostics_expand",
       "value": "Show engineering diagnostics"
     },
@@ -283,6 +391,26 @@
     {
       "name": "diagnostics_description",
       "value": "Technical status for troubleshooting"
+    },
+    {
+      "name": "diagnostic_report_title",
+      "value": "Diagnostic report"
+    },
+    {
+      "name": "diagnostic_report_description",
+      "value": "Creates a privacy-redacted ZIP with the device model, versions, status summaries, counts, settings, and recent structured events. Raw logs and identity or network details are excluded."
+    },
+    {
+      "name": "diagnostic_report_action",
+      "value": "Generate and share report"
+    },
+    {
+      "name": "diagnostic_report_generating",
+      "value": "Generating diagnostic report…"
+    },
+    {
+      "name": "diagnostic_report_failed",
+      "value": "Failed to generate or share the diagnostic report."
     },
     {
       "name": "settings_subtitle",

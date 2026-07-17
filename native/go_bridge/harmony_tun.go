@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/tailscale/wireguard-go/tun"
 	"golang.org/x/sys/unix"
@@ -23,6 +24,9 @@ type harmonyTunDevice struct {
 	closeOnce          sync.Once
 	readCount          atomic.Uint64
 	writeCount         atomic.Uint64
+	readByteCount      atomic.Uint64
+	writeByteCount     atomic.Uint64
+	trafficSession     uint64
 	dnsQueryCount      atomic.Uint64
 	dnsResponseCount   atomic.Uint64
 	dnsAnswerCount     atomic.Uint64
@@ -51,9 +55,10 @@ func newHarmonyTunDevice(fd, mtu int) (*harmonyTunDevice, error) {
 		return nil, err
 	}
 	device := &harmonyTunDevice{
-		file:   os.NewFile(uintptr(duplicate), "harmony-vpn-tun"),
-		mtu:    mtu,
-		events: make(chan tun.Event, 2),
+		file:           os.NewFile(uintptr(duplicate), "harmony-vpn-tun"),
+		mtu:            mtu,
+		events:         make(chan tun.Event, 2),
+		trafficSession: uint64(time.Now().UnixMilli()),
 	}
 	device.events <- tun.EventUp
 	return device, nil
@@ -69,6 +74,7 @@ func (d *harmonyTunDevice) Read(bufs [][]byte, sizes []int, offset int) (int, er
 	if n > 0 {
 		sizes[0] = n
 		d.readCount.Add(1)
+		d.readByteCount.Add(uint64(n))
 		d.observeDNSPacket(bufs[0][offset:offset+n], true)
 		return 1, nil
 	}
@@ -87,6 +93,7 @@ func (d *harmonyTunDevice) Write(bufs [][]byte, offset int) (int, error) {
 		}
 		if n > 0 {
 			d.writeCount.Add(1)
+			d.writeByteCount.Add(uint64(n))
 			d.observeDNSPacket(buf[offset:offset+n], false)
 		}
 		written++
@@ -114,6 +121,12 @@ func (d *harmonyTunDevice) BatchSize() int { return 1 }
 
 func (d *harmonyTunDevice) packetCounts() (read uint64, written uint64) {
 	return d.readCount.Load(), d.writeCount.Load()
+}
+
+// trafficCounts reports bytes for the current VPN TUN lifetime. Reading from
+// the TUN is device upload; writing decrypted packets back is device download.
+func (d *harmonyTunDevice) trafficCounts() (txBytes uint64, rxBytes uint64, session uint64) {
+	return d.readByteCount.Load(), d.writeByteCount.Load(), d.trafficSession
 }
 
 func (d *harmonyTunDevice) dnsCounts() (queries uint64, responses uint64, answers uint64) {

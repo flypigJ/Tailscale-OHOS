@@ -20,3 +20,11 @@ AGENTS.md
 .codex/
 *.hap
 *.app
+
+# Release signing secrets (public .cer certificates may be tracked)
+certs/release/*.p12
+certs/release/*.pfx
+certs/release/*.jks
+certs/release/*.keystore
+certs/release/*.key
+certs/release/*.p7b

@@ -19,7 +19,7 @@
         "description": "$string:entryability_desc",
         "icon": "$media:app_icon",
         "label": "$string:entryability_label",
-        "startWindowIcon": "$media:app_icon",
+        "startWindowIcon": "$media:start_window_icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [

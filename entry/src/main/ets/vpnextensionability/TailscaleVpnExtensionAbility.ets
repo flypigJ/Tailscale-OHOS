@@ -4,13 +4,31 @@ import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileIo } from '@kit.CoreFileKit';
 import nativeBridge from 'libtailscale_ohos.so';
+import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
 
 const DOMAIN = 0x0000;
 const TAG = 'TailscaleVpn';
 const BUNDLE_NAME = 'io.github.tailscaleohos';
+const VPN_EXISTS_ERROR_CODE: number = 2203002;
+const VPN_DESTROY_SETTLE_MS: number = 300;
+const VPN_ID_FILE_NAME: string = 'tailscale-vpn-id';
+const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
+const VPN_REPLACE_APPROVAL_TTL_MS: number = 10000;
+const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
+const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
 
 interface BackendHealthSnapshot {
   status: string;
+}
+
+interface PeerConnectivityRequest {
+  requestId: number;
+  peerKey: string;
+}
+
+interface PeerConnectivityResponse {
+  requestId: number;
+  result: string;
 }
 
 export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
@@ -18,8 +36,11 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   private tunFd: number = -1;
   private statusTimer: number = -1;
   private statusUpdateInFlight: boolean = false;
+  private activeVpnId: string = '';
+  private peerConnectivityInFlight: boolean = false;
 
   onCreate(want: Want): void {
+    this.recordDiagnosticEvent('vpn_extension_created', 'lifecycle');
     this.writeStatus('VPN extension lifecycle entered');
     hilog.info(DOMAIN, TAG, 'VPN extension created. ability=%{public}s', want.abilityName ?? '');
     try {
@@ -138,19 +159,26 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       }
     }
 
-    // A development reinstall can terminate the prior extension before its
-    // asynchronous onDestroy cleanup finishes. destroy() is scoped to this
-    // application's VPN connection and makes startup idempotent.
-    this.writeStatus('Removing stale application VPN instance');
     try {
-      await this.vpnConnection.destroy();
-    } catch (_cleanupError) {
-      // No existing connection is also a valid clean state.
-    }
-
-    try {
+      if (this.consumeVpnReplaceApproval()) {
+        this.recordDiagnosticEvent('vpn_replacement_approved', 'destroy_existing');
+        this.writeStatus('Disconnecting existing VPN connection');
+        await this.vpnConnection.destroy();
+        this.clearOwnedVpnId();
+        await this.waitForVpnDestroy();
+      }
+      const vpnId: string = await this.vpnConnection.generateVpnId();
+      if (vpnId.length === 0) {
+        this.recordDiagnosticEvent('vpn_id_failed', 'create');
+        this.writeStatus('FAILED | VPN ID generation | empty identifier');
+        return;
+      }
+      config.vpnId = vpnId;
       this.writeStatus('VPN probe TUN creation pending');
       this.tunFd = await this.vpnConnection.create(config);
+      this.recordDiagnosticEvent('vpn_tun_created', 'create');
+      this.activeVpnId = vpnId;
+      this.writeOwnedVpnId(vpnId);
       const probeStatus: string = nativeBridge.tunFdProbe(this.tunFd);
       if (backendReady && probeStatus.startsWith('OK')) {
         const restartStatus: string = nativeBridge.backendRestartWithTun(
@@ -158,6 +186,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
         const finalStatus: string = await this.waitForVpnBackend(restartStatus);
         this.writeStatus(finalStatus);
         if (finalStatus.includes('state=Running')) {
+          this.recordDiagnosticEvent('vpn_connected', 'backend');
           await nativeBridge.backendArmMagicDNSProbeAsync();
           this.writePeerStatus(await nativeBridge.backendPeerProbeAsync());
           this.startStatusUpdates();
@@ -170,10 +199,56 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       hilog.info(DOMAIN, TAG, 'VPN probe TUN created. bridge=%{public}s', probeStatus);
     } catch (error) {
       const businessError = error as BusinessError;
-      this.writeStatus(`FAILED | VPN probe TUN | code=${businessError.code ?? -1}`);
+      const errorCode: number = businessError.code ?? -1;
+      if (errorCode === VPN_EXISTS_ERROR_CODE) {
+        this.recordDiagnosticEvent('vpn_conflict', 'create', errorCode);
+        this.activeVpnId = '';
+        this.clearOwnedVpnId();
+        this.writeStatus(`FAILED | VPN conflict | code=${VPN_EXISTS_ERROR_CODE}`);
+      } else {
+        this.recordDiagnosticEvent('vpn_create_failed', 'create', errorCode);
+        this.writeStatus(`FAILED | VPN probe TUN | code=${errorCode}`);
+      }
       hilog.error(DOMAIN, TAG, 'VPN probe TUN creation failed. code=%{public}d',
-        businessError.code ?? -1);
+        errorCode);
     }
+  }
+
+  private async waitForVpnDestroy(): Promise<void> {
+    await new Promise<void>((resolve: () => void) => {
+      setTimeout(resolve, VPN_DESTROY_SETTLE_MS);
+    });
+  }
+
+  private vpnIdFilePath(): string {
+    return `${this.context.filesDir}/${VPN_ID_FILE_NAME}`;
+  }
+
+  private vpnReplaceApprovalFilePath(): string {
+    return `${this.context.filesDir}/${VPN_REPLACE_APPROVAL_FILE_NAME}`;
+  }
+
+  private consumeVpnReplaceApproval(): boolean {
+    try {
+      const path: string = this.vpnReplaceApprovalFilePath();
+      if (!fileIo.accessSync(path)) {
+        return false;
+      }
+      const approvedAtMs: number = Number(fileIo.readTextSync(path).trim());
+      this.writeTextFile(path, '');
+      const approvalAgeMs: number = Date.now() - approvedAtMs;
+      return approvedAtMs > 0 && approvalAgeMs >= 0 && approvalAgeMs <= VPN_REPLACE_APPROVAL_TTL_MS;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private writeOwnedVpnId(vpnId: string): void {
+    this.writeTextFile(this.vpnIdFilePath(), vpnId);
+  }
+
+  private clearOwnedVpnId(): void {
+    this.writeOwnedVpnId('');
   }
 
   private async restoreBackendVpnConfig(): Promise<string> {
@@ -231,6 +306,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
         .then((snapshotText: string) => {
           const snapshot: BackendHealthSnapshot = JSON.parse(snapshotText) as BackendHealthSnapshot;
           this.writeStatus(snapshot.status);
+          this.processPeerConnectivityRequest();
         })
         .catch(() => {
           this.writeStatus('FAILED | VPN backend | status unavailable');
@@ -243,6 +319,59 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
 
   private writePeerStatus(status: string): void {
     this.writeTextFile(`${this.context.filesDir}/vpn-peer-probe-status.txt`, status);
+  }
+
+  private peerConnectivityRequestPath(): string {
+    return `${this.context.filesDir}/${PEER_CONNECTIVITY_REQUEST_FILE_NAME}`;
+  }
+
+  private peerConnectivityResponsePath(): string {
+    return `${this.context.filesDir}/${PEER_CONNECTIVITY_RESPONSE_FILE_NAME}`;
+  }
+
+  private processPeerConnectivityRequest(): void {
+    if (this.peerConnectivityInFlight) {
+      return;
+    }
+    const requestPath: string = this.peerConnectivityRequestPath();
+    try {
+      if (!fileIo.accessSync(requestPath)) {
+        return;
+      }
+      const requestText: string = fileIo.readTextSync(requestPath).trim();
+      if (requestText.length === 0) {
+        return;
+      }
+      this.writeTextFile(requestPath, '');
+      const request: PeerConnectivityRequest = JSON.parse(requestText) as PeerConnectivityRequest;
+      if (request.requestId <= 0 || !/^peer-[a-f0-9]{16}$/.test(request.peerKey)) {
+        return;
+      }
+      this.peerConnectivityInFlight = true;
+      nativeBridge.backendPeerConnectivityAsync(request.peerKey)
+        .then((result: string) => {
+          const response: PeerConnectivityResponse = { requestId: request.requestId, result: result };
+          this.writeTextFile(this.peerConnectivityResponsePath(), JSON.stringify(response));
+        })
+        .catch(() => {
+          const failedResult: string = '{"state":"failed","reason":"extension_error",' +
+            '"sent":0,"received":0,"lossPercent":0,"minLatencyMs":0,"avgLatencyMs":0,"maxLatencyMs":0}';
+          const response: PeerConnectivityResponse = {
+            requestId: request.requestId,
+            result: failedResult
+          };
+          this.writeTextFile(this.peerConnectivityResponsePath(), JSON.stringify(response));
+        })
+        .finally(() => {
+          this.peerConnectivityInFlight = false;
+        });
+    } catch (_error) {
+      this.writeTextFile(requestPath, '');
+    }
+  }
+
+  private recordDiagnosticEvent(event: string, phase: string, code: number = 0): void {
+    DiagnosticEventStore.record(this.context.filesDir, 'vpn', event, phase, code);
   }
 
   private writeStatus(status: string): void {
@@ -270,18 +399,29 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   }
 
   onDestroy(): void {
+    this.recordDiagnosticEvent('vpn_extension_destroyed', 'lifecycle');
     if (this.statusTimer >= 0) {
       clearInterval(this.statusTimer);
       this.statusTimer = -1;
     }
     const connection = this.vpnConnection;
+    const vpnId: string = this.activeVpnId;
     this.vpnConnection = undefined;
+    this.activeVpnId = '';
     this.tunFd = -1;
     this.writeStatus('VPN extension destroyed');
-    if (connection !== undefined) {
-      connection.destroy().catch((error: BusinessError) => {
-        hilog.error(DOMAIN, TAG, 'VPN destroy failed. code=%{public}d', error.code);
-      });
+    if (connection !== undefined && vpnId.length > 0) {
+      try {
+        const destroyPromise: Promise<void> = connection.destroy(vpnId);
+        destroyPromise
+          .then(() => this.clearOwnedVpnId())
+          .catch((error: BusinessError) => {
+            hilog.error(DOMAIN, TAG, 'VPN destroy failed. code=%{public}d', error.code);
+          });
+      } catch (error) {
+        const businessError = error as BusinessError;
+        hilog.error(DOMAIN, TAG, 'VPN destroy failed. code=%{public}d', businessError.code ?? -1);
+      }
     }
     hilog.info(DOMAIN, TAG, 'VPN extension destroyed');
   }
