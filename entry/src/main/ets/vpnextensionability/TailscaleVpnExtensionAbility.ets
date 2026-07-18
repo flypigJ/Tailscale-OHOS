@@ -1,11 +1,12 @@
 import { Want } from '@kit.AbilityKit';
 import { vpnExtension, VpnExtensionAbility } from '@kit.NetworkKit';
-import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileIo } from '@kit.CoreFileKit';
 import nativeBridge from 'libtailscale_ohos.so';
 import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
 import { ControlServerConfig, ControlServerSettings } from '../services/ControlServerConfig';
+import { DeviceNameService } from '../services/DeviceNameService';
 
 const DOMAIN = 0x0000;
 const TAG = 'TailscaleVpn';
@@ -382,11 +383,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   }
 
   private deviceModel(): string {
-    const marketName: string = deviceInfo.marketName.trim();
-    if (marketName.length > 0 && marketName !== 'default') {
-      return marketName;
-    }
-    return deviceInfo.productModel.trim();
+    return DeviceNameService.model();
   }
 
   private async waitForVpnBackend(initialStatus: string): Promise<string> {

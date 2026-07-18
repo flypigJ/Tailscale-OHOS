@@ -10,6 +10,7 @@ import {
   DiagnosticReportResult,
   DiagnosticReportService
 } from '../services/DiagnosticReportService';
+import { DeviceNameService } from '../services/DeviceNameService';
 import {
   BlurStrategy,
   DividerMode,
@@ -557,11 +558,7 @@ export struct BridgeStatus {
   }
 
   private deviceModel(): string {
-    const marketName: string = deviceInfo.marketName.trim();
-    if (marketName.length > 0 && marketName !== 'default') {
-      return marketName;
-    }
-    return deviceInfo.productModel.trim();
+    return DeviceNameService.model();
   }
 
   private async refreshBackendStatus(): Promise<void> {
@@ -670,7 +667,8 @@ export struct BridgeStatus {
         loginName: backendAccount.loginName,
         profilePicURL: backendAccount.profilePicURL,
         tailnetName: backendAccount.tailnetName,
-        deviceName: backendAccount.deviceName.length > 0 ? backendAccount.deviceName : this.deviceModel(),
+        deviceName: DeviceNameService.withoutHuaweiBrand(
+          backendAccount.deviceName.length > 0 ? backendAccount.deviceName : this.deviceModel()),
         addresses: backendAccount.addresses,
         needsApproval: backendAccount.needsApproval,
         keyExpired: backendAccount.keyExpired,
@@ -825,7 +823,8 @@ export struct BridgeStatus {
       loginName: account.loginName,
       profilePicURL: account.profilePicURL,
       tailnetName: account.tailnetName,
-      deviceName: account.deviceName.length > 0 ? account.deviceName : this.deviceModel(),
+      deviceName: DeviceNameService.withoutHuaweiBrand(
+        account.deviceName.length > 0 ? account.deviceName : this.deviceModel()),
       addresses: account.addresses,
       needsApproval: account.needsApproval,
       keyExpired: account.keyExpired,
