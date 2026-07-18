@@ -1,7 +1,7 @@
 export const hello: () => string;
 export const probeEngine: () => string;
 export const probeEngineAsync: () => Promise<string>;
-export const backendStart: (stateDir: string, deviceModel: string) => string;
+export const backendStart: (stateDir: string, deviceModel: string, controlURL: string) => string;
 export const backendStop: () => string;
 export const backendLogout: () => string;
 export const backendStatus: () => string;
@@ -29,6 +29,7 @@ export const backendMagicDNSProbeURL: () => string;
 export const backendMagicDNSProbeURLAsync: () => Promise<string>;
 export const backendArmMagicDNSProbe: () => string;
 export const backendArmMagicDNSProbeAsync: () => Promise<string>;
-export const backendRestartWithTun: (stateDir: string, deviceModel: string, fd: number) => string;
+export const backendRestartWithTun: (stateDir: string, deviceModel: string,
+  controlURL: string, fd: number) => string;
 export const controlProbe: () => string;
 export const tunFdProbe: (fd: number) => string;

@@ -16,10 +16,16 @@ import {
   HdsNavigation,
   HdsNavigationTitleMode,
   HdsTabs,
+  HdsTabsController,
   ScrollEffectType,
   hdsEffect,
   hdsMaterial
 } from '@kit.UIDesignKit';
+import {
+  ControlServerConfig,
+  ControlServerSettings,
+  DEFAULT_CONTROL_SERVER_URL
+} from '../services/ControlServerConfig';
 
 const MIN_CONNECTION_LOADING_MS: number = 1400;
 const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
@@ -165,6 +171,10 @@ interface VpnStopResponse {
   status: string;
 }
 
+interface ControlServerTipStateChange {
+  isVisible: boolean;
+}
+
 interface BackendSnapshot {
   status: string;
   exitNodes: ExitNodeChoice[];
@@ -275,6 +285,15 @@ export struct BridgeStatus {
   @State devicesLoading: boolean = true;
   @State hasAuthenticatedSession: boolean = false;
   @State currentTab: number = 0;
+  @State controlServerURL: string = DEFAULT_CONTROL_SERVER_URL;
+  @State controlServerInput: string = DEFAULT_CONTROL_SERVER_URL;
+  @State controlServerConfirmed: boolean = false;
+  @State controlServerStatus: string = '';
+  @State controlServerEditorVisible: boolean = true;
+  @State controlServerTipVisible: boolean = false;
+  @State controlServerTipMessage: string = '';
+  @State diagnosticActionStatus: string = '';
+  @State diagnosticActionInProgress: boolean = false;
   @State glowLevel: number = 3;
   @State layoutWidth: number = 360;
   @State expandedPeerKeys: string[] = [];
@@ -286,6 +305,7 @@ export struct BridgeStatus {
   private magicDNSProbeUrl: string = '';
   private transferScroller: Scroller = new Scroller();
   private settingsScroller: Scroller = new Scroller();
+  private tabsController: HdsTabsController = new HdsTabsController();
   private diagnosticsTapCount: number = 0;
   private diagnosticsLastTapMs: number = 0;
   private lifecycleTimers: number[] = [];
@@ -318,9 +338,21 @@ export struct BridgeStatus {
     this.devicesLoading = true;
     this.verifyNativeBridge();
     this.loadAppVersion();
+    this.loadControlServerSettings();
     this.recordDiagnosticEvent('ui_opened', 'lifecycle');
     const vpnIsLive: boolean = this.refreshVpnProbeStatus();
-    if (!vpnIsLive) {
+    if (!this.controlServerConfirmed) {
+      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
+      this.backendReady = true;
+      this.backendInitializationVisible = false;
+      this.devicesLoading = false;
+      if (vpnIsLive) {
+        vpnExtension.stopVpnExtensionAbility(this.vpnWant()).catch(() => {
+          // The extension also refuses to restore its backend without a confirmed server.
+        });
+      }
+      this.scheduleLifecycleTask(() => this.showControlServerTip(), 800);
+    } else if (!vpnIsLive) {
       this.startBackend();
       this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
     } else {
@@ -333,7 +365,7 @@ export struct BridgeStatus {
     // process that was killed just before the UI appeared (for example during
     // an application update) while its last heartbeat still looked current.
     this.scheduleLifecycleTask(() => {
-      if (!this.refreshVpnProbeStatus()) {
+      if (this.controlServerConfirmed && !this.refreshVpnProbeStatus()) {
         this.startBackend();
         this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
       }
@@ -344,6 +376,7 @@ export struct BridgeStatus {
   aboutToDisappear(): void {
     this.lifecycleGeneration++;
     this.vpnConflictDialogVisible = false;
+    this.controlServerTipVisible = false;
     this.stopConnectionPolling();
     this.clearConnectionCompletionTimer();
     this.stopHealthPolling();
@@ -381,6 +414,105 @@ export struct BridgeStatus {
       });
   }
 
+  private loadControlServerSettings(): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const settings: ControlServerSettings = ControlServerConfig.load(context.filesDir);
+    this.controlServerURL = settings.controlURL;
+    this.controlServerInput = settings.controlURL;
+    this.controlServerConfirmed = settings.confirmed;
+    this.controlServerEditorVisible = !settings.confirmed;
+    this.controlServerTipMessage = context.resourceManager.getStringSync(
+      $r('app.string.control_server_first_run_tip').id);
+    this.controlServerStatus = '';
+  }
+
+  private showControlServerTip(): void {
+    if (this.controlServerConfirmed || this.controlServerTipVisible) {
+      return;
+    }
+    this.controlServerTipVisible = true;
+    this.recordDiagnosticEvent('control_server_tip_shown', 'first_run');
+  }
+
+  private openControlServerSettings(): void {
+    this.controlServerTipVisible = false;
+    this.navigateToTab(2);
+    this.showToast($r('app.string.control_server_required_to_connect'));
+  }
+
+  private navigateToTab(index: number): void {
+    if (this.currentTab === index) {
+      return;
+    }
+    this.tabsController.changeIndex(index);
+  }
+
+  private toggleControlServerEditor(): void {
+    const visible: boolean = !this.controlServerEditorVisible;
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseInOut }, () => {
+      this.controlServerEditorVisible = visible;
+    });
+    this.recordDiagnosticEvent(visible ? 'control_server_editor_opened' :
+      'control_server_editor_closed', 'account');
+  }
+
+  private saveControlServer(): void {
+    if (this.isConnected() || this.isConnecting()) {
+      this.controlServerStatus = 'disconnect';
+      this.recordDiagnosticEvent('control_server_confirm_blocked', 'connected');
+      return;
+    }
+    const normalized: string = ControlServerConfig.normalize(this.controlServerInput);
+    if (normalized.length === 0) {
+      this.controlServerStatus = 'invalid';
+      this.recordDiagnosticEvent('control_server_confirm_failed', 'invalid');
+      return;
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const settings: ControlServerSettings | undefined =
+      ControlServerConfig.save(context.filesDir, normalized);
+    if (settings === undefined) {
+      this.controlServerStatus = 'failed';
+      this.recordDiagnosticEvent('control_server_confirm_failed', 'storage');
+      return;
+    }
+    const changed: boolean = !this.controlServerConfirmed || this.controlServerURL !== settings.controlURL;
+    this.controlServerURL = settings.controlURL;
+    this.controlServerInput = settings.controlURL;
+    this.controlServerConfirmed = true;
+    this.controlServerStatus = 'saved';
+    this.controlServerTipVisible = false;
+    this.recordDiagnosticEvent('control_server_confirmed',
+      settings.controlURL === DEFAULT_CONTROL_SERVER_URL ? 'official' : 'custom');
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseInOut }, () => {
+      this.controlServerEditorVisible = false;
+    });
+    if (changed) {
+      this.backendReady = false;
+      this.backendInitializationVisible = true;
+      this.devicesLoading = true;
+      nativeBridge.backendStopAsync()
+        .catch(() => 'FAILED | backend stop')
+        .finally(() => {
+          this.startBackend();
+          this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
+        });
+    }
+  }
+
+  private controlServerStatusText(): ResourceStr {
+    switch (this.controlServerStatus) {
+      case 'saved':
+        return $r('app.string.control_server_saved');
+      case 'disconnect':
+        return $r('app.string.control_server_disconnect_first');
+      case 'failed':
+        return $r('app.string.control_server_save_failed');
+      default:
+        return $r('app.string.control_server_invalid');
+    }
+  }
+
   private verifyNativeBridge(): void {
     try {
       this.nativeStatus = nativeBridge.hello();
@@ -399,6 +531,13 @@ export struct BridgeStatus {
   }
 
   private startBackend(showInitialization: boolean = true): void {
+    if (!this.controlServerConfirmed) {
+      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
+      this.backendReady = true;
+      this.backendInitializationVisible = false;
+      this.devicesLoading = false;
+      return;
+    }
     this.peerSnapshotSignature = '';
     this.backendReady = false;
     this.backendInitializationVisible = showInitialization;
@@ -406,7 +545,8 @@ export struct BridgeStatus {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       this.recordDiagnosticEvent('backend_start_requested', showInitialization ? 'visible' : 'silent');
-      this.backendStatus = nativeBridge.backendStart(`${context.filesDir}/tailscale`, this.deviceModel());
+      this.backendStatus = nativeBridge.backendStart(
+        `${context.filesDir}/tailscale`, this.deviceModel(), this.controlServerURL);
     } catch (error) {
       this.recordDiagnosticEvent('backend_start_failed', 'start');
       this.backendStatus = `Tailscale Backend Failed: ${JSON.stringify(error)}`;
@@ -425,6 +565,13 @@ export struct BridgeStatus {
   }
 
   private async refreshBackendStatus(): Promise<void> {
+    if (!this.controlServerConfirmed) {
+      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
+      this.backendReady = true;
+      this.backendInitializationVisible = false;
+      this.devicesLoading = false;
+      return;
+    }
     if (this.refreshInFlight) {
       return;
     }
@@ -560,7 +707,10 @@ export struct BridgeStatus {
   }
 
   private openSecureLogin(): void {
-    if (this.loginInProgress) {
+    if (this.loginInProgress || !this.controlServerConfirmed) {
+      if (!this.controlServerConfirmed) {
+        this.openControlServerSettings();
+      }
       return;
     }
     this.loginInProgress = true;
@@ -583,7 +733,7 @@ export struct BridgeStatus {
         this.loginPollTimer = setTimeout(() => this.pollSecureLogin(attempt + 1), 400);
         return;
       }
-      if (!authUrl.startsWith('https://login.tailscale.com/')) {
+      if (!authUrl.startsWith('https://') && !authUrl.startsWith('http://')) {
         this.loginHandoffStatus = authUrl.startsWith('FAILED') ? authUrl :
           'FAILED | login URL | rejected unexpected origin';
         this.loginInProgress = false;
@@ -614,6 +764,11 @@ export struct BridgeStatus {
   }
 
   private runControlProbe(): void {
+    if (!this.controlServerConfirmed || this.controlServerURL !== DEFAULT_CONTROL_SERVER_URL) {
+      this.controlProbeStatus = 'SKIPPED | Control TLS probe | official backend not selected';
+      this.recordDiagnosticEvent('control_probe_skipped', 'backend_selection');
+      return;
+    }
     try {
       this.controlProbeStatus = nativeBridge.controlProbe();
     } catch (error) {
@@ -629,6 +784,10 @@ export struct BridgeStatus {
   }
 
   private beginVpnConnection(): void {
+    if (!this.controlServerConfirmed) {
+      this.openControlServerSettings();
+      return;
+    }
     if (this.connectInProgress || this.isConnecting()) {
       return;
     }
@@ -1585,6 +1744,9 @@ export struct BridgeStatus {
   }
 
   private connectionTitle(): ResourceStr {
+    if (!this.controlServerConfirmed) {
+      return $r('app.string.connection_server_required');
+    }
     if (this.isBackendLoading()) {
       return $r('app.string.connection_starting');
     }
@@ -1610,6 +1772,9 @@ export struct BridgeStatus {
   }
 
   private connectionDescription(): ResourceStr {
+    if (!this.controlServerConfirmed) {
+      return $r('app.string.description_server_required');
+    }
     if (this.isBackendLoading()) {
       return $r('app.string.description_starting');
     }
@@ -2372,6 +2537,9 @@ export struct BridgeStatus {
   }
 
   private connectionActionNodeId(): string {
+    if (!this.controlServerConfirmed) {
+      return 'control-server-setup';
+    }
     if (this.isConnected()) {
       return 'vpn-stop';
     }
@@ -2408,7 +2576,9 @@ export struct BridgeStatus {
   }
 
   private runConnectionAction(): void {
-    if (this.isConnected()) {
+    if (!this.controlServerConfirmed) {
+      this.openControlServerSettings();
+    } else if (this.isConnected()) {
       this.stopVpnProbe();
     } else if (this.needsLogin()) {
       this.openSecureLogin();
@@ -3182,6 +3352,62 @@ export struct BridgeStatus {
   @Builder
   private AccountPanel() {
     Column({ space: 8 }) {
+      Column({ space: 6 }) {
+        Row({ space: 8 }) {
+          Text($r('app.string.control_server_title'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1)
+          Text(this.controlServerConfirmed ? $r('app.string.control_server_confirmed') :
+            $r('app.string.control_server_not_confirmed'))
+            .fontSize(11)
+            .fontColor(this.controlServerConfirmed ? $r('app.color.status_success') :
+              $r('app.color.status_warning'))
+        }
+        Text($r('app.string.control_server_description'))
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .lineHeight(17)
+          .width('100%')
+        TextInput({
+          text: this.controlServerInput,
+          placeholder: DEFAULT_CONTROL_SERVER_URL
+        })
+          .id('control-server-input')
+          .width('100%')
+          .height(42)
+          .fontSize(13)
+          .enabled(!this.isConnected() && !this.isConnecting())
+          .onChange((value: string) => {
+            this.controlServerInput = value;
+            this.controlServerStatus = '';
+          })
+        Button($r('app.string.control_server_save'), {
+          type: ButtonType.ROUNDED_RECTANGLE,
+          stateEffect: true,
+          buttonStyle: ButtonStyleMode.NORMAL,
+          controlSize: ControlSize.NORMAL
+        })
+          .id('control-server-save')
+          .width('100%')
+          .enabled(!this.isConnected() && !this.isConnecting())
+          .onClick(() => this.saveControlServer())
+        if (this.controlServerStatus.length > 0) {
+          Text(this.controlServerStatusText())
+            .fontSize(12)
+            .fontColor(this.controlServerStatus === 'saved' ? $r('app.color.status_success') :
+              $r('app.color.status_error'))
+            .width('100%')
+        }
+        Divider().color($r('sys.color.comp_divider'))
+      }
+      .width('100%')
+      .constraintSize({ maxHeight: this.controlServerEditorVisible ? 360 : 0 })
+      .opacity(this.controlServerEditorVisible ? 1 : 0)
+      .clip(true)
+      .animation({ duration: 320, curve: Curve.EaseInOut })
+
       if (!this.isAuthenticated()) {
         Row({ space: 12 }) {
           Stack() {
@@ -3200,8 +3426,44 @@ export struct BridgeStatus {
             .layoutWeight(1)
         }
         .width('100%')
-        this.StandardActionButton($r('app.string.action_login'), 'account-login', true,
-          !this.loginInProgress, () => this.openSecureLogin(), this.loginInProgress)
+        Row({ space: 8 }) {
+          Button({
+            type: ButtonType.Capsule,
+            stateEffect: true,
+            buttonStyle: ButtonStyleMode.EMPHASIZED,
+            controlSize: ControlSize.NORMAL
+          }) {
+            this.ButtonContent($r('app.string.action_login'), true, this.loginInProgress)
+          }
+            .id('account-login')
+            .height(48)
+            .layoutWeight(1)
+            .opacity(this.controlServerConfirmed && !this.loginInProgress ? 1 : 0.4)
+            .enabled(this.controlServerConfirmed && !this.loginInProgress)
+            .onClick(() => this.openSecureLogin())
+
+          if (this.controlServerConfirmed) {
+            Button({
+              type: ButtonType.Circle,
+              stateEffect: true,
+              buttonStyle: ButtonStyleMode.NORMAL,
+              controlSize: ControlSize.NORMAL
+            }) {
+              Image($r('app.media.edit'))
+                .width(20)
+                .height(20)
+                .fillColor($r('sys.color.icon_primary'))
+            }
+              .id('control-server-edit')
+              .width(48)
+              .height(48)
+              .visualEffect(new hdsEffect.HdsEffectBuilder()
+                .pressShadow(hdsEffect.PressShadowType.BLEND_WHITE)
+                .buildEffect())
+              .onClick(() => this.toggleControlServerEditor())
+          }
+        }
+        .width('100%')
       } else {
         Row({ space: 12 }) {
           Stack() {
@@ -3399,10 +3661,27 @@ export struct BridgeStatus {
       })
       this.StandardActionButton('Probe engine', 'engine-probe', false, true,
         () => this.probeUserspaceEngine())
-      this.StandardActionButton('Probe control TLS', 'control-probe', false, true,
+      this.StandardActionButton('Probe control TLS', 'control-probe', false,
+        this.controlServerConfirmed && this.controlServerURL === DEFAULT_CONTROL_SERVER_URL,
         () => this.runControlProbe())
       this.StandardActionButton('Open MagicDNS probe', 'magicdns-probe', false,
         this.magicDNSProbeUrl.startsWith('http://'), () => this.runMagicDNSProbe())
+      Divider().color($r('sys.color.comp_divider'))
+      Text($r('app.string.diagnostic_first_run_tools_description'))
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .lineHeight(18)
+        .width('100%')
+      this.StandardActionButton($r('app.string.diagnostic_reset_first_run_action'),
+        'diagnostic-reset-first-run', false, !this.diagnosticActionInProgress,
+        () => this.confirmResetFirstRun())
+      this.StandardActionButton($r('app.string.diagnostic_force_vpn_stop_action'),
+        'diagnostic-force-vpn-stop', false, !this.diagnosticActionInProgress,
+        () => this.forceStopSystemVpn())
+      if (this.diagnosticActionStatus.length > 0) {
+        this.DiagnosticStatus($r('app.string.diagnostic_action_status'),
+          this.diagnosticActionStatus, 'diagnostic-action-status')
+      }
       Divider().color($r('sys.color.comp_divider'))
       Text($r('app.string.diagnostic_report_description'))
         .fontSize(12)
@@ -3971,8 +4250,48 @@ export struct BridgeStatus {
   }
 
   @Builder
+  private SettingsTabBar() {
+    Column({ space: 2 }) {
+      Image($r('app.media.tab_settings'))
+        .width(24)
+        .height(24)
+        .fillColor(this.currentTab === 2 ? $r('sys.color.icon_emphasize') :
+          $r('sys.color.icon_secondary'))
+      Text($r('app.string.tab_settings'))
+        .fontSize(10)
+        .fontColor(this.currentTab === 2 ? $r('sys.color.font_emphasize') :
+          $r('sys.color.font_secondary'))
+        .maxLines(1)
+    }
+    .id('tab-settings')
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .bindPopup(this.controlServerTipVisible, {
+      message: this.controlServerTipMessage,
+      placement: Placement.Top,
+      enableArrow: true,
+      autoCancel: true,
+      mask: false,
+      width: 252,
+      popupColor: this.glowSurface(),
+      backgroundBlurStyle: BlurStyle.COMPONENT_REGULAR,
+      onStateChange: (event: ControlServerTipStateChange) => {
+        if (!event.isVisible && this.controlServerTipVisible) {
+          this.controlServerTipVisible = false;
+          this.recordDiagnosticEvent('control_server_tip_dismissed', 'message');
+        }
+      }
+    })
+  }
+
+  @Builder
   private MobileTabs() {
-    HdsTabs({ barPosition: BarPosition.End, index: this.currentTab }) {
+    HdsTabs({
+      barPosition: BarPosition.End,
+      index: this.currentTab,
+      controller: this.tabsController
+    }) {
       TabContent() {
         this.HomePage()
       }
@@ -4004,16 +4323,7 @@ export struct BridgeStatus {
       TabContent() {
         this.SettingsPage()
       }
-      .tabBar(new BottomTabBarStyle($r('app.media.tab_settings'), $r('app.string.tab_settings'))
-        .id('tab-settings')
-        .labelStyle({
-          unselectedColor: $r('sys.color.font_secondary'),
-          selectedColor: $r('sys.color.font_emphasize')
-        })
-        .iconStyle({
-          unselectedColor: $r('sys.color.icon_secondary'),
-          selectedColor: $r('sys.color.icon_emphasize')
-        }))
+      .tabBar(this.SettingsTabBar())
     }
     .vertical(false)
     .scrollable(true)
@@ -4040,14 +4350,129 @@ export struct BridgeStatus {
     .divider({ mode: DividerMode.NONE })
     .onChange((index: number) => {
       this.currentTab = index;
+      if (index === 2 && this.controlServerTipVisible) {
+        this.controlServerTipVisible = false;
+        this.recordDiagnosticEvent('control_server_tip_dismissed', 'settings_opened');
+      }
     })
     .width('100%')
     .height('100%')
   }
 
+  private confirmResetFirstRun(): void {
+    this.getUIContext().showAlertDialog({
+      title: $r('app.string.diagnostic_reset_first_run_confirm_title'),
+      message: $r('app.string.diagnostic_reset_first_run_confirm_message'),
+      autoCancel: true,
+      primaryButton: {
+        value: $r('app.string.cancel_action'),
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.diagnostic_reset_first_run_action'),
+        fontColor: $r('app.color.status_error'),
+        action: () => this.resetFirstRunState()
+      }
+    });
+  }
+
+  private async resetFirstRunState(): Promise<void> {
+    if (this.diagnosticActionInProgress) {
+      return;
+    }
+    this.diagnosticActionInProgress = true;
+    this.diagnosticActionStatus = '';
+    this.recordDiagnosticEvent('diagnostic_first_run_reset_requested', 'diagnostics');
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      try {
+        await vpnExtension.stopVpnExtensionAbility(this.vpnWant());
+      } catch (_vpnError) {
+        // A stopped extension is already in the desired state.
+      }
+      try {
+        await nativeBridge.backendStopAsync();
+      } catch (_backendError) {
+        // Continue with cleanup when no in-process backend exists.
+      }
+      await new Promise<void>((resolve: () => void) => setTimeout(resolve, 300));
+      if (!ControlServerConfig.reset(context.filesDir)) {
+        throw new Error('first-run reset failed');
+      }
+      this.controlServerURL = DEFAULT_CONTROL_SERVER_URL;
+      this.controlServerInput = DEFAULT_CONTROL_SERVER_URL;
+      this.controlServerConfirmed = false;
+      this.controlServerStatus = '';
+      this.controlServerEditorVisible = true;
+      this.controlServerTipVisible = false;
+      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
+      this.vpnStatus = 'HarmonyOS VPN Extension stopped';
+      this.backendReady = true;
+      this.backendInitializationVisible = false;
+      this.devicesLoading = false;
+      this.hasAuthenticatedSession = false;
+      this.applyPeers([]);
+      this.exitNodes = [];
+      this.applyAccountSummary({
+        displayName: '', loginName: '', profilePicURL: '', tailnetName: '', deviceName: '', addresses: [],
+        needsApproval: false, keyExpired: false, keyExpiryUnixMs: 0
+      });
+      this.diagnosticActionStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_reset_first_run_completed').id);
+      this.recordDiagnosticEvent('diagnostic_first_run_reset_completed', 'diagnostics');
+      this.navigateToTab(0);
+      this.scheduleLifecycleTask(() => this.showControlServerTip(), 700);
+    } catch (_error) {
+      this.diagnosticActionStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_reset_first_run_failed').id);
+      this.recordDiagnosticEvent('diagnostic_first_run_reset_failed', 'diagnostics');
+    } finally {
+      this.diagnosticActionInProgress = false;
+    }
+  }
+
+  private async forceStopSystemVpn(): Promise<void> {
+    if (this.diagnosticActionInProgress) {
+      return;
+    }
+    this.diagnosticActionInProgress = true;
+    this.diagnosticActionStatus = '';
+    this.recordDiagnosticEvent('diagnostic_vpn_cut_requested', 'diagnostics');
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      await vpnExtension.stopVpnExtensionAbility(this.vpnWant());
+      this.stopConnectionPolling();
+      this.clearConnectionCompletionTimer();
+      this.connectInProgress = false;
+      this.disconnectInProgress = false;
+      this.vpnStatus = 'HarmonyOS VPN Extension stopped manually';
+      this.diagnosticActionStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_force_vpn_stop_completed').id);
+      this.recordDiagnosticEvent('diagnostic_vpn_cut_completed', 'diagnostics');
+      if (this.controlServerConfirmed) {
+        this.scheduleLifecycleTask(() => {
+          this.startBackend(false);
+          this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
+        }, 500);
+      }
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.diagnosticActionStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_force_vpn_stop_failed').id);
+      this.recordDiagnosticEvent('diagnostic_vpn_cut_failed', 'diagnostics', businessError.code ?? -1);
+    } finally {
+      this.diagnosticActionInProgress = false;
+    }
+  }
+
   @Builder
   private WideTabs() {
-    HdsTabs({ barPosition: BarPosition.Start, index: this.currentTab }) {
+    HdsTabs({
+      barPosition: BarPosition.Start,
+      index: this.currentTab,
+      controller: this.tabsController
+    }) {
       TabContent() {
         this.HomePage()
       }

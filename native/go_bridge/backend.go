@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -191,8 +192,8 @@ func (r *taildropProgressReader) Read(buffer []byte) (int, error) {
 	return read, err
 }
 
-func (b *backendController) start(stateDir, deviceModel string) string {
-	return b.startWithDevice(stateDir, deviceModel, nil)
+func (b *backendController) start(stateDir, deviceModel, controlURL string) string {
+	return b.startWithDevice(stateDir, deviceModel, controlURL, nil)
 }
 
 func (b *backendController) stop() string {
@@ -250,7 +251,12 @@ func (b *backendController) logout() string {
 	return "OK | logged out"
 }
 
-func (b *backendController) startWithDevice(stateDir, deviceModel string, device *harmonyTunDevice) string {
+func (b *backendController) startWithDevice(stateDir, deviceModel, controlURL string, device *harmonyTunDevice) string {
+	normalizedControlURL, err := normalizeControlURL(controlURL)
+	if err != nil {
+		return "FAILED | backend start | invalid control server"
+	}
+	profileStateDir := controlServerStateDir(stateDir, normalizedControlURL)
 	b.mu.Lock()
 	if b.server != nil || b.starting {
 		b.mu.Unlock()
@@ -275,11 +281,12 @@ func (b *backendController) startWithDevice(stateDir, deviceModel string, device
 	generation := b.generation
 	startContext, cancelStart := context.WithCancel(context.Background())
 	server := &tsnet.Server{
-		Dir:       stateDir,
-		Hostname:  harmonyHostname(trimmedModel),
-		Ephemeral: false,
-		UserLogf:  b.userLogf,
-		Logf:      b.backendLogf,
+		Dir:        profileStateDir,
+		Hostname:   harmonyHostname(trimmedModel),
+		ControlURL: normalizedControlURL,
+		Ephemeral:  false,
+		UserLogf:   b.userLogf,
+		Logf:       b.backendLogf,
 	}
 	// Assigning a nil *harmonyTunDevice directly to the tun.Device interface
 	// creates a non-nil interface containing a nil pointer. wireguard-go then
@@ -294,18 +301,18 @@ func (b *backendController) startWithDevice(stateDir, deviceModel string, device
 	b.phase = "netns-disabled"
 	b.externalTun = device != nil
 	b.tunDevice = device
-	b.stateDir = stateDir
+	b.stateDir = profileStateDir
 	b.cancelStart = cancelStart
 	b.mu.Unlock()
 
-	go b.startAsync(server, stateDir, generation, startContext)
+	go b.startAsync(server, profileStateDir, generation, startContext)
 	if device != nil {
 		return "OK | VPN backend starting | persistent private state"
 	}
 	return "OK | backend starting | persistent private state"
 }
 
-func (b *backendController) restartWithTun(stateDir, deviceModel string, fd int) string {
+func (b *backendController) restartWithTun(stateDir, deviceModel, controlURL string, fd int) string {
 	device, err := newHarmonyTunDevice(fd, 1280)
 	if err != nil {
 		return "FAILED | VPN backend | TUN descriptor adaptation"
@@ -333,7 +340,26 @@ func (b *backendController) restartWithTun(stateDir, deviceModel string, fd int)
 			return "FAILED | VPN backend | previous backend close"
 		}
 	}
-	return b.startWithDevice(stateDir, deviceModel, device)
+	return b.startWithDevice(stateDir, deviceModel, controlURL, device)
+}
+
+func normalizeControlURL(rawURL string) (string, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" || len(trimmed) > 2048 {
+		return "", errors.New("empty control server")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
+		parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("invalid control server")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String(), nil
+}
+
+func controlServerStateDir(baseDir, controlURL string) string {
+	sum := sha256.Sum256([]byte(controlURL))
+	return filepath.Join(baseDir, "control-"+hex.EncodeToString(sum[:8]))
 }
 
 func harmonyHostname(deviceModel string) string {
@@ -1844,7 +1870,8 @@ func (b *backendController) authURL() string {
 		return "PENDING | login URL | requested"
 	}
 	parsed, err := url.Parse(status.AuthURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() != "login.tailscale.com" {
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
+		parsed.Host == "" || parsed.User != nil {
 		return "FAILED | login URL | rejected unexpected origin"
 	}
 	return status.AuthURL

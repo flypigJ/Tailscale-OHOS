@@ -581,6 +581,114 @@
       "value": "Unavailable"
     },
     {
+      "name": "control_server_title",
+      "value": "Backend server"
+    },
+    {
+      "name": "control_server_description",
+      "value": "Enter a backend server address to continue. If you are unsure what this is, use the default address. The app stays offline until you confirm."
+    },
+    {
+      "name": "control_server_confirmed",
+      "value": "Confirmed"
+    },
+    {
+      "name": "control_server_not_confirmed",
+      "value": "Not confirmed"
+    },
+    {
+      "name": "control_server_save",
+      "value": "Confirm backend server"
+    },
+    {
+      "name": "control_server_saved",
+      "value": "Backend server saved. You can now sign in."
+    },
+    {
+      "name": "control_server_invalid",
+      "value": "Enter a valid HTTP or HTTPS control server URL without query parameters."
+    },
+    {
+      "name": "control_server_save_failed",
+      "value": "The control server could not be saved. Try again."
+    },
+    {
+      "name": "control_server_disconnect_first",
+      "value": "Disconnect before changing the backend server."
+    },
+    {
+      "name": "control_server_guide_title",
+      "value": "Choose a control server"
+    },
+    {
+      "name": "control_server_guide_message",
+      "value": "Tailscale OHOS will not connect to any server until you confirm an address. The official Tailscale server is prefilled, or you can enter your self-hosted Headscale address in Settings."
+    },
+    {
+      "name": "control_server_later",
+      "value": "Later"
+    },
+    {
+      "name": "control_server_configure",
+      "value": "Configure now"
+    },
+    {
+      "name": "control_server_required_to_connect",
+      "value": "Confirm a backend server in Account settings first."
+    },
+    {
+      "name": "connection_server_required",
+      "value": "Backend server required"
+    },
+    {
+      "name": "description_server_required",
+      "value": "Choose and confirm a backend server before Tailscale starts."
+    },
+    {
+      "name": "control_server_first_run_tip",
+      "value": "Enter a backend server address in Settings and sign in first"
+    },
+    {
+      "name": "diagnostic_first_run_tools_description",
+      "value": "Engineering actions for testing first-run setup and unexpected system VPN disconnection. Each action is recorded in the diagnostic event log."
+    },
+    {
+      "name": "diagnostic_reset_first_run_action",
+      "value": "Clear data and simulate first launch"
+    },
+    {
+      "name": "diagnostic_reset_first_run_confirm_title",
+      "value": "Simulate first launch?"
+    },
+    {
+      "name": "diagnostic_reset_first_run_confirm_message",
+      "value": "This removes the confirmed backend server and local Tailscale account state, then returns to the first-run guide."
+    },
+    {
+      "name": "diagnostic_reset_first_run_completed",
+      "value": "First-run state restored"
+    },
+    {
+      "name": "diagnostic_reset_first_run_failed",
+      "value": "Could not fully clear first-run data"
+    },
+    {
+      "name": "diagnostic_force_vpn_stop_action",
+      "value": "Manually cut system VPN"
+    },
+    {
+      "name": "diagnostic_force_vpn_stop_completed",
+      "value": "System VPN stopped manually"
+    },
+    {
+      "name": "diagnostic_force_vpn_stop_failed",
+      "value": "Could not stop the system VPN"
+    },
+    {
+      "name": "diagnostic_action_status",
+      "value": "Engineering action"
+    },
+    {
       "name": "settings_appearance_title",
       "value": "Appearance"
     }

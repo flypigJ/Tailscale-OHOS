@@ -5,6 +5,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileIo } from '@kit.CoreFileKit';
 import nativeBridge from 'libtailscale_ohos.so';
 import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
+import { ControlServerConfig, ControlServerSettings } from '../services/ControlServerConfig';
 
 const DOMAIN = 0x0000;
 const TAG = 'TailscaleVpn';
@@ -162,6 +163,12 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     if (this.vpnConnection === undefined) {
       return;
     }
+    const controlSettings: ControlServerSettings = ControlServerConfig.load(this.context.filesDir);
+    if (!controlSettings.confirmed) {
+      this.writeStatus('FAILED | VPN backend | control server not configured');
+      this.recordDiagnosticEvent('vpn_control_server_missing', 'preflight');
+      return;
+    }
 
     // Until login is complete, use a documentation-only route that cannot
     // intercept normal device traffic. Once the persistent backend is Running,
@@ -285,7 +292,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       const probeStatus: string = nativeBridge.tunFdProbe(this.tunFd);
       if (backendReady && probeStatus.startsWith('OK')) {
         const restartStatus: string = nativeBridge.backendRestartWithTun(
-          `${this.context.filesDir}/tailscale`, this.deviceModel(), this.tunFd);
+          `${this.context.filesDir}/tailscale`, this.deviceModel(), controlSettings.controlURL, this.tunFd);
         const finalStatus: string = await this.waitForVpnBackend(restartStatus);
         this.writeStatus(finalStatus);
         if (finalStatus.includes('state=Running')) {
@@ -356,7 +363,11 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
 
   private async restoreBackendVpnConfig(): Promise<string> {
     const stateDir: string = `${this.context.filesDir}/tailscale`;
-    nativeBridge.backendStart(stateDir, this.deviceModel());
+    const controlSettings: ControlServerSettings = ControlServerConfig.load(this.context.filesDir);
+    if (!controlSettings.confirmed) {
+      return 'FAILED | VPN config | control server not configured';
+    }
+    nativeBridge.backendStart(stateDir, this.deviceModel(), controlSettings.controlURL);
     let configStatus: string = 'FAILED | VPN config | backend restore timeout';
     for (let attempt: number = 0; attempt < 60; attempt++) {
       configStatus = nativeBridge.backendVpnConfig();
