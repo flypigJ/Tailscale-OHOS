@@ -24,6 +24,7 @@ export const backendSetExitNodeAsync: (id: string) => Promise<string>;
 export const backendPeerProbe: () => string;
 export const backendPeerProbeAsync: () => Promise<string>;
 export const backendPeerConnectivityAsync: (peerKey: string) => Promise<string>;
+export const backendTaildropSendAsync: (request: string) => Promise<string>;
 export const backendMagicDNSProbeURL: () => string;
 export const backendMagicDNSProbeURLAsync: () => Promise<string>;
 export const backendArmMagicDNSProbe: () => string;

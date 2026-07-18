@@ -2,7 +2,7 @@ import nativeBridge from 'libtailscale_ohos.so';
 import { bundleManager, common, Want } from '@kit.AbilityKit';
 import { vpnExtension } from '@kit.NetworkKit';
 import { BusinessError, deviceInfo, pasteboard } from '@kit.BasicServicesKit';
-import { fileIo } from '@kit.CoreFileKit';
+import { fileIo, picker } from '@kit.CoreFileKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
 import {
@@ -25,6 +25,8 @@ const MIN_CONNECTION_LOADING_MS: number = 1400;
 const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
 const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
+const TAILDROP_OUTBOX_DIR_NAME: string = 'taildrop-outbox';
+const TAILDROP_SEND_REQUEST_FILE_NAME: string = 'taildrop-send-request.json';
 const TAILDROP_TARGETS_FILE_NAME: string = 'taildrop-targets.json';
 const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
 const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
@@ -106,7 +108,47 @@ interface TaildropSnapshot {
   state: string;
   reason: string;
   targets: TaildropTargetSummary[];
+  transfer: TaildropTransferSummary;
   updatedAtMs: number;
+}
+
+interface TaildropTransferSummary {
+  requestId: number;
+  state: string;
+  reason: string;
+  targetKey: string;
+  targetName: string;
+  fileName: string;
+  fileIndex: number;
+  fileCount: number;
+  fileBytes: number;
+  fileSize: number;
+  bytesSent: number;
+  totalBytes: number;
+  completedAtMs: number;
+}
+
+interface TaildropSendFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
+interface TaildropSendRequest {
+  requestId: number;
+  targetKey: string;
+  outboxRoot: string;
+  files: TaildropSendFile[];
+}
+
+interface TaildropTransferRecord {
+  requestId: number;
+  state: string;
+  reason: string;
+  targetName: string;
+  fileCount: number;
+  totalBytes: number;
+  completedAtMs: number;
 }
 
 interface PersistedPeerSnapshot {
@@ -130,6 +172,14 @@ interface BackendSnapshot {
   networkSettings: NetworkSettings;
   account: AccountSummary;
   taildrop: TaildropSnapshot;
+}
+
+function emptyTaildropTransfer(): TaildropTransferSummary {
+  return {
+    requestId: 0, state: 'idle', reason: '', targetKey: '', targetName: '', fileName: '',
+    fileIndex: 0, fileCount: 0, fileBytes: 0, fileSize: 0, bytesSent: 0, totalBytes: 0,
+    completedAtMs: 0
+  };
 }
 
 class PeerDataSource implements IDataSource {
@@ -214,6 +264,9 @@ export struct BridgeStatus {
   @State taildropState: string = 'disconnected';
   @State taildropReason: string = '';
   @State taildropTargets: TaildropTargetSummary[] = [];
+  @State taildropTransfer: TaildropTransferSummary = emptyTaildropTransfer();
+  @State taildropHistory: TaildropTransferRecord[] = [];
+  @State taildropPreparing: boolean = false;
   @State loginInProgress: boolean = false;
   @State connectInProgress: boolean = false;
   @State disconnectInProgress: boolean = false;
@@ -248,6 +301,8 @@ export struct BridgeStatus {
   private vpnStopPollTimer: number = -1;
   private vpnStopRequestId: number = 0;
   private peerSnapshotSignature: string = '';
+  private lastHandledTaildropRequestId: number = 0;
+  private taildropRequestSubmittedAtMs: number = 0;
   private peerDataSource: PeerDataSource = new PeerDataSource();
 
   private applyPeers(peers: PeerSummary[]): void {
@@ -1015,6 +1070,81 @@ export struct BridgeStatus {
     this.taildropState = 'disconnected';
     this.taildropReason = '';
     this.taildropTargets = [];
+    if (this.taildropTransfer.state === 'queued' || this.taildropTransfer.state === 'sending') {
+      const failed: TaildropTransferSummary = this.taildropTransfer;
+      failed.state = 'failed';
+      failed.reason = 'disconnected';
+      failed.completedAtMs = Date.now();
+      this.applyTaildropTransfer(failed);
+    }
+  }
+
+  private validTaildropTransfer(transfer: TaildropTransferSummary): boolean {
+    if (transfer.state !== 'idle' && transfer.state !== 'queued' && transfer.state !== 'sending' &&
+      transfer.state !== 'completed' && transfer.state !== 'failed') {
+      return false;
+    }
+    return transfer.requestId >= 0 && transfer.fileIndex >= 0 && transfer.fileCount >= 0 &&
+      transfer.fileBytes >= 0 && transfer.fileSize >= 0 && transfer.bytesSent >= 0 &&
+      transfer.totalBytes >= 0;
+  }
+
+  private taildropTransferFailure(
+    transfer: TaildropTransferSummary, reason: string
+  ): TaildropTransferSummary {
+    return {
+      requestId: transfer.requestId,
+      state: 'failed',
+      reason: reason,
+      targetKey: transfer.targetKey,
+      targetName: transfer.targetName,
+      fileName: transfer.fileName,
+      fileIndex: transfer.fileIndex,
+      fileCount: transfer.fileCount,
+      fileBytes: transfer.fileBytes,
+      fileSize: transfer.fileSize,
+      bytesSent: transfer.bytesSent,
+      totalBytes: transfer.totalBytes,
+      completedAtMs: Date.now()
+    };
+  }
+
+  private applyTaildropTransfer(transfer: TaildropTransferSummary): void {
+    if (!this.validTaildropTransfer(transfer)) {
+      return;
+    }
+    if (transfer.state === 'idle' &&
+      (this.taildropTransfer.state === 'queued' || this.taildropTransfer.state === 'sending') &&
+      Date.now() - this.taildropRequestSubmittedAtMs < 5000) {
+      return;
+    }
+    if (transfer.state === 'idle' && this.taildropTransfer.state === 'queued' &&
+      Date.now() - this.taildropRequestSubmittedAtMs >= 5000) {
+      this.applyTaildropTransfer(this.taildropTransferFailure(
+        this.taildropTransfer, 'extension_error'));
+      return;
+    }
+    this.taildropTransfer = transfer;
+    if ((transfer.state === 'completed' || transfer.state === 'failed') && transfer.requestId > 0 &&
+      transfer.requestId !== this.lastHandledTaildropRequestId) {
+      this.lastHandledTaildropRequestId = transfer.requestId;
+      const target: TaildropTargetSummary | undefined = this.taildropTargets.find(
+        (item: TaildropTargetSummary) => item.key === transfer.targetKey);
+      const targetName: string = transfer.targetName.length > 0 ? transfer.targetName :
+        (target === undefined ? 'Tailscale' : target.name);
+      const record: TaildropTransferRecord = {
+        requestId: transfer.requestId,
+        state: transfer.state,
+        reason: transfer.reason,
+        targetName: targetName,
+        fileCount: transfer.fileCount,
+        totalBytes: transfer.totalBytes,
+        completedAtMs: transfer.completedAtMs > 0 ? transfer.completedAtMs : Date.now()
+      };
+      this.taildropHistory = [record].concat(this.taildropHistory).slice(0, 20);
+      this.showToast(transfer.state === 'completed' ?
+        $r('app.string.transfer_send_completed') : this.taildropFailureMessage(transfer.reason));
+    }
   }
 
   private refreshTaildropSnapshot(): void {
@@ -1042,6 +1172,7 @@ export struct BridgeStatus {
       this.taildropState = snapshot.state;
       this.taildropReason = snapshot.reason;
       this.taildropTargets = validTargets;
+      this.applyTaildropTransfer(snapshot.transfer);
     } catch (_error) {
       // The Extension may be replacing the snapshot file. Keep the previous
       // valid result and retry on the next one-second health poll.
@@ -1733,6 +1864,166 @@ export struct BridgeStatus {
           // The descriptor may already be closed after a platform write failure.
         }
       }
+    }
+  }
+
+  private taildropOutboxRoot(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${TAILDROP_OUTBOX_DIR_NAME}`;
+  }
+
+  private taildropSendRequestPath(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${TAILDROP_SEND_REQUEST_FILE_NAME}`;
+  }
+
+  private taildropSendActive(): boolean {
+    return this.taildropPreparing || this.taildropTransfer.state === 'queued' ||
+      this.taildropTransfer.state === 'sending';
+  }
+
+  private writeTaildropSendRequest(request: TaildropSendRequest): boolean {
+    const requestPath: string = this.taildropSendRequestPath();
+    const temporaryPath: string = `${requestPath}.${request.requestId}.tmp`;
+    if (!this.writePrivateTextFile(temporaryPath, JSON.stringify(request))) {
+      return false;
+    }
+    try {
+      fileIo.renameSync(temporaryPath, requestPath);
+      return true;
+    } catch (_error) {
+      try {
+        if (fileIo.accessSync(temporaryPath)) {
+          fileIo.unlinkSync(temporaryPath);
+        }
+      } catch (_cleanupError) {
+        // The Extension startup cleanup removes any remaining temporary file.
+      }
+      return false;
+    }
+  }
+
+  private sanitizeTaildropFileName(name: string, index: number): string {
+    let sanitized: string = name.replace(/[\\/\u0000]/g, '_').trim();
+    if (sanitized.length === 0 || sanitized === '.' || sanitized === '..') {
+      sanitized = `file-${index + 1}`;
+    }
+    if (sanitized.length > 180) {
+      sanitized = sanitized.substring(0, 180);
+    }
+    return sanitized;
+  }
+
+  private async prepareTaildropFiles(uris: string[], requestId: number): Promise<TaildropSendFile[]> {
+    const root: string = this.taildropOutboxRoot();
+    const requestDir: string = `${root}/${requestId}`;
+    fileIo.mkdirSync(requestDir, true);
+    const prepared: TaildropSendFile[] = [];
+    for (let index: number = 0; index < uris.length; index++) {
+      let source: fileIo.File | undefined = undefined;
+      try {
+        source = fileIo.openSync(uris[index], fileIo.OpenMode.READ_ONLY);
+        const stat: fileIo.Stat = fileIo.statSync(source.fd);
+        if (!stat.isFile() || stat.size < 0) {
+          throw new Error('Selected item is not a regular file.');
+        }
+        const name: string = this.sanitizeTaildropFileName(source.name, index);
+        const destination: string = `${requestDir}/${index}.taildrop`;
+        await fileIo.copyFile(source.fd, destination);
+        const copiedStat: fileIo.Stat = fileIo.statSync(destination);
+        if (!copiedStat.isFile() || copiedStat.size !== stat.size) {
+          throw new Error('Copied Taildrop file failed verification.');
+        }
+        prepared.push({ path: destination, name: name, size: copiedStat.size });
+      } finally {
+        if (source !== undefined) {
+          try {
+            fileIo.closeSync(source);
+          } catch (_error) {
+            // The picker descriptor may already be closed after a copy failure.
+          }
+        }
+      }
+    }
+    return prepared;
+  }
+
+  private cleanupPreparedTaildropFiles(files: TaildropSendFile[]): void {
+    files.forEach((file: TaildropSendFile) => {
+      try {
+        if (fileIo.accessSync(file.path)) {
+          fileIo.unlinkSync(file.path);
+        }
+      } catch (_error) {
+        // Extension startup cleanup handles any remaining outbox file.
+      }
+    });
+    if (files.length > 0) {
+      const requestDir: string = files[0].path.substring(0, files[0].path.lastIndexOf('/'));
+      try {
+        fileIo.rmdirSync(requestDir);
+      } catch (_error) {
+        // The directory may still contain a file whose cleanup failed.
+      }
+    }
+  }
+
+  private startTaildropSelection(target: TaildropTargetSummary): void {
+    this.selectTaildropFiles(target).catch(() => {
+      this.taildropPreparing = false;
+      this.showToast($r('app.string.transfer_file_selection_failed'));
+    });
+  }
+
+  private async selectTaildropFiles(target: TaildropTargetSummary): Promise<void> {
+    if (!target.online || !this.isConnected() || this.taildropState !== 'ready' ||
+      this.taildropSendActive()) {
+      return;
+    }
+    this.taildropPreparing = true;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const documentPicker = new picker.DocumentViewPicker(context);
+    const options = new picker.DocumentSelectOptions();
+    options.maxSelectNumber = 10;
+    const uris: string[] = await documentPicker.select(options);
+    if (uris.length === 0) {
+      this.taildropPreparing = false;
+      return;
+    }
+    const requestId: number = Date.now();
+    let files: TaildropSendFile[] = [];
+    try {
+      files = await this.prepareTaildropFiles(uris.slice(0, 10), requestId);
+      let totalBytes: number = 0;
+      files.forEach((file: TaildropSendFile) => {
+        totalBytes += file.size;
+      });
+      const request: TaildropSendRequest = {
+        requestId: requestId,
+        targetKey: target.key,
+        outboxRoot: this.taildropOutboxRoot(),
+        files: files
+      };
+      this.taildropTransfer = {
+        requestId: requestId, state: 'queued', reason: '', targetKey: target.key,
+        targetName: target.name, fileName: '', fileIndex: 0, fileCount: files.length,
+        fileBytes: 0, fileSize: 0, bytesSent: 0, totalBytes: totalBytes, completedAtMs: 0
+      };
+      this.taildropRequestSubmittedAtMs = Date.now();
+      if (!this.writeTaildropSendRequest(request)) {
+        this.cleanupPreparedTaildropFiles(files);
+        const failed: TaildropTransferSummary = this.taildropTransferFailure(
+          this.taildropTransfer, 'extension_error');
+        this.taildropPreparing = false;
+        this.applyTaildropTransfer(failed);
+        return;
+      }
+      this.recordDiagnosticEvent('taildrop_send_queued', 'transfer');
+      this.taildropPreparing = false;
+    } catch (_error) {
+      this.cleanupPreparedTaildropFiles(files);
+      this.taildropPreparing = false;
+      this.showToast($r('app.string.transfer_file_copy_failed'));
     }
   }
 

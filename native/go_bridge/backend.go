@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/netip"
 	"net/url"
@@ -30,6 +32,7 @@ import (
 
 type backendController struct {
 	mu           sync.Mutex
+	taildropMu   sync.Mutex
 	server       *tsnet.Server
 	client       *local.Client
 	starting     bool
@@ -41,6 +44,8 @@ type backendController struct {
 	subnetRoutes int
 	generation   uint64
 	cancelStart  context.CancelFunc
+	taildropStop context.CancelFunc
+	taildropTask taildropTransferSnapshot
 }
 
 var harmonyBackend backendController
@@ -132,9 +137,58 @@ type taildropTargetSummary struct {
 }
 
 type taildropSnapshot struct {
-	State   string                  `json:"state"`
-	Reason  string                  `json:"reason"`
-	Targets []taildropTargetSummary `json:"targets"`
+	State    string                   `json:"state"`
+	Reason   string                   `json:"reason"`
+	Targets  []taildropTargetSummary  `json:"targets"`
+	Transfer taildropTransferSnapshot `json:"transfer"`
+}
+
+type taildropTransferSnapshot struct {
+	RequestID   int64  `json:"requestId"`
+	State       string `json:"state"`
+	Reason      string `json:"reason"`
+	TargetKey   string `json:"targetKey"`
+	TargetName  string `json:"targetName"`
+	FileName    string `json:"fileName"`
+	FileIndex   int    `json:"fileIndex"`
+	FileCount   int    `json:"fileCount"`
+	FileBytes   int64  `json:"fileBytes"`
+	FileSize    int64  `json:"fileSize"`
+	BytesSent   int64  `json:"bytesSent"`
+	TotalBytes  int64  `json:"totalBytes"`
+	CompletedAt int64  `json:"completedAtMs"`
+}
+
+type taildropSendFile struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+type taildropSendRequest struct {
+	RequestID  int64              `json:"requestId"`
+	TargetKey  string             `json:"targetKey"`
+	OutboxRoot string             `json:"outboxRoot"`
+	Files      []taildropSendFile `json:"files"`
+}
+
+type validatedTaildropFile struct {
+	Path string
+	Name string
+	Size int64
+}
+
+type taildropProgressReader struct {
+	reader io.Reader
+	onRead func(int)
+}
+
+func (r *taildropProgressReader) Read(buffer []byte) (int, error) {
+	read, err := r.reader.Read(buffer)
+	if read > 0 {
+		r.onRead(read)
+	}
+	return read, err
 }
 
 func (b *backendController) start(stateDir, deviceModel string) string {
@@ -142,6 +196,7 @@ func (b *backendController) start(stateDir, deviceModel string) string {
 }
 
 func (b *backendController) stop() string {
+	b.cancelTaildropTransfer("disconnected")
 	b.mu.Lock()
 	server := b.server
 	cancelStart := b.cancelStart
@@ -549,7 +604,9 @@ func (b *backendController) snapshot() string {
 		Peers:           []peerSummary{},
 		NetworkSettings: settings,
 		Account:         accountSummary{Addresses: []string{}},
-		Taildrop:        taildropSnapshot{State: "loading", Targets: []taildropTargetSummary{}},
+		Taildrop: taildropSnapshot{
+			State: "loading", Targets: []taildropTargetSummary{}, Transfer: b.taildropTransferSnapshot(),
+		},
 	}
 	switch {
 	case startErr != "":
@@ -582,7 +639,7 @@ func (b *backendController) snapshot() string {
 
 	snapshot.ExitNodes = buildExitNodeChoices(status, stateDir)
 	snapshot.Peers = buildPeerSummaries(status)
-	snapshot.Taildrop = buildTaildropSnapshot(client)
+	snapshot.Taildrop = buildTaildropSnapshot(client, b.taildropTransferSnapshot())
 	if prefsErr == nil && prefs != nil {
 		snapshot.NetworkSettings = networkPreferences{
 			RouteAll:               prefs.RouteAll,
@@ -593,8 +650,8 @@ func (b *backendController) snapshot() string {
 	return marshalBackendSnapshot(snapshot)
 }
 
-func buildTaildropSnapshot(client *local.Client) taildropSnapshot {
-	snapshot := taildropSnapshot{State: "ready", Targets: []taildropTargetSummary{}}
+func buildTaildropSnapshot(client *local.Client, transfer taildropTransferSnapshot) taildropSnapshot {
+	snapshot := taildropSnapshot{State: "ready", Targets: []taildropTargetSummary{}, Transfer: transfer}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	targets, err := client.FileTargets(ctx)
@@ -641,6 +698,281 @@ func summarizeTaildropTargets(targets []apitype.FileTarget) []taildropTargetSumm
 		return summaries[i].Name < summaries[j].Name
 	})
 	return summaries
+}
+
+func (b *backendController) taildropTransferSnapshot() taildropTransferSnapshot {
+	b.taildropMu.Lock()
+	defer b.taildropMu.Unlock()
+	snapshot := b.taildropTask
+	if snapshot.State == "" {
+		snapshot.State = "idle"
+	}
+	return snapshot
+}
+
+func (b *backendController) taildropSend(requestText string) string {
+	var request taildropSendRequest
+	if err := json.Unmarshal([]byte(requestText), &request); err != nil {
+		return marshalTaildropTransfer(taildropTransferSnapshot{State: "failed", Reason: "invalid_request"})
+	}
+	files, totalBytes, err := validateTaildropSendRequest(request)
+	if err != nil {
+		failed := taildropTransferSnapshot{
+			RequestID: request.RequestID, State: "failed", Reason: "invalid_request",
+			TargetKey: request.TargetKey, FileCount: len(request.Files), CompletedAt: time.Now().UnixMilli(),
+		}
+		b.replaceTaildropTransfer(failed)
+		return marshalTaildropTransfer(failed)
+	}
+
+	b.mu.Lock()
+	client := b.client
+	starting := b.starting
+	b.mu.Unlock()
+	if client == nil || starting {
+		failed := taildropTransferSnapshot{
+			RequestID: request.RequestID, State: "failed", Reason: "backend_unavailable",
+			TargetKey: request.TargetKey, FileCount: len(files), TotalBytes: totalBytes,
+			CompletedAt: time.Now().UnixMilli(),
+		}
+		b.replaceTaildropTransfer(failed)
+		return marshalTaildropTransfer(failed)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	queued := taildropTransferSnapshot{
+		RequestID: request.RequestID, State: "queued", TargetKey: request.TargetKey,
+		FileCount: len(files), TotalBytes: totalBytes,
+	}
+	b.taildropMu.Lock()
+	if b.taildropTask.State == "queued" || b.taildropTask.State == "sending" {
+		b.taildropMu.Unlock()
+		cancel()
+		queued.State = "failed"
+		queued.Reason = "busy"
+		queued.CompletedAt = time.Now().UnixMilli()
+		return marshalTaildropTransfer(queued)
+	}
+	b.taildropTask = queued
+	b.taildropStop = cancel
+	b.taildropMu.Unlock()
+
+	lookupCtx, lookupCancel := context.WithTimeout(ctx, 5*time.Second)
+	targetID, targetName, lookupErr := resolveTaildropTarget(lookupCtx, client, request.TargetKey)
+	lookupCancel()
+	if lookupErr != nil {
+		return marshalTaildropTransfer(b.finishTaildropTransfer(
+			request.RequestID, "failed", classifyTaildropSendError(lookupErr)))
+	}
+	b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
+		snapshot.TargetName = targetName
+	})
+
+	var completedBytes int64
+	for index, file := range files {
+		if err := ctx.Err(); err != nil {
+			return marshalTaildropTransfer(b.finishTaildropTransfer(
+				request.RequestID, "failed", classifyTaildropSendError(err)))
+		}
+		handle, openErr := os.Open(file.Path)
+		if openErr != nil {
+			return marshalTaildropTransfer(b.finishTaildropTransfer(request.RequestID, "failed", "file_unavailable"))
+		}
+		info, statErr := handle.Stat()
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() != file.Size {
+			handle.Close()
+			return marshalTaildropTransfer(b.finishTaildropTransfer(request.RequestID, "failed", "file_changed"))
+		}
+
+		b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
+			snapshot.State = "sending"
+			snapshot.FileName = file.Name
+			snapshot.FileIndex = index + 1
+			snapshot.FileBytes = 0
+			snapshot.FileSize = file.Size
+			snapshot.BytesSent = completedBytes
+		})
+		progressReader := &taildropProgressReader{
+			reader: handle,
+			onRead: func(read int) {
+				b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
+					snapshot.FileBytes += int64(read)
+					snapshot.BytesSent = completedBytes + snapshot.FileBytes
+				})
+			},
+		}
+		pushErr := client.PushFile(ctx, targetID, file.Size, file.Name, progressReader)
+		closeErr := handle.Close()
+		if pushErr != nil {
+			return marshalTaildropTransfer(b.finishTaildropTransfer(
+				request.RequestID, "failed", classifyTaildropSendError(pushErr)))
+		}
+		if closeErr != nil {
+			return marshalTaildropTransfer(b.finishTaildropTransfer(request.RequestID, "failed", "file_unavailable"))
+		}
+		completedBytes += file.Size
+		b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
+			snapshot.FileBytes = file.Size
+			snapshot.BytesSent = completedBytes
+		})
+	}
+
+	return marshalTaildropTransfer(b.finishTaildropTransfer(request.RequestID, "completed", ""))
+}
+
+func validateTaildropSendRequest(request taildropSendRequest) ([]validatedTaildropFile, int64, error) {
+	if request.RequestID <= 0 || !validPeerKey(request.TargetKey) ||
+		len(request.Files) == 0 || len(request.Files) > 10 || !filepath.IsAbs(request.OutboxRoot) {
+		return nil, 0, errors.New("invalid request metadata")
+	}
+	root, err := filepath.EvalSymlinks(filepath.Clean(request.OutboxRoot))
+	if err != nil {
+		return nil, 0, err
+	}
+	validated := make([]validatedTaildropFile, 0, len(request.Files))
+	var totalBytes int64
+	for _, file := range request.Files {
+		if file.Name == "" || len(file.Name) > 255 || file.Name != filepath.Base(file.Name) ||
+			file.Name == "." || file.Name == ".." || strings.ContainsRune(file.Name, '\x00') {
+			return nil, 0, errors.New("invalid file name")
+		}
+		cleanPath := filepath.Clean(file.Path)
+		resolvedPath, resolveErr := filepath.EvalSymlinks(cleanPath)
+		if resolveErr != nil {
+			return nil, 0, resolveErr
+		}
+		relative, relErr := filepath.Rel(root, resolvedPath)
+		if relErr != nil || relative == "." || relative == ".." ||
+			strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, 0, errors.New("file outside outbox")
+		}
+		info, statErr := os.Stat(resolvedPath)
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() != file.Size {
+			return nil, 0, errors.New("invalid file")
+		}
+		if info.Size() > (1<<63-1)-totalBytes {
+			return nil, 0, errors.New("transfer too large")
+		}
+		totalBytes += info.Size()
+		validated = append(validated, validatedTaildropFile{
+			Path: resolvedPath, Name: file.Name, Size: info.Size(),
+		})
+	}
+	return validated, totalBytes, nil
+}
+
+func validPeerKey(key string) bool {
+	if len(key) != len("peer-")+16 || !strings.HasPrefix(key, "peer-") {
+		return false
+	}
+	for _, digit := range key[len("peer-"):] {
+		if !strings.ContainsRune("0123456789abcdef", digit) {
+			return false
+		}
+	}
+	return true
+}
+
+func resolveTaildropTarget(
+	ctx context.Context, client *local.Client, targetKey string,
+) (tailcfg.StableNodeID, string, error) {
+	targets, err := client.FileTargets(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	for _, target := range targets {
+		if target.Node == nil || target.Node.StableID.IsZero() || peerStableKey(target.Node.StableID) != targetKey {
+			continue
+		}
+		name := strings.TrimSuffix(target.Node.DisplayName(true), ".")
+		if name == "" {
+			name = strings.TrimSuffix(target.Node.Name, ".")
+		}
+		return target.Node.StableID, name, nil
+	}
+	return "", "", errors.New("target not found")
+}
+
+func (b *backendController) replaceTaildropTransfer(snapshot taildropTransferSnapshot) {
+	b.taildropMu.Lock()
+	b.taildropTask = snapshot
+	b.taildropMu.Unlock()
+}
+
+func (b *backendController) updateTaildropTransfer(
+	requestID int64, update func(*taildropTransferSnapshot),
+) {
+	b.taildropMu.Lock()
+	defer b.taildropMu.Unlock()
+	if b.taildropTask.RequestID != requestID ||
+		(b.taildropTask.State != "queued" && b.taildropTask.State != "sending") {
+		return
+	}
+	update(&b.taildropTask)
+}
+
+func (b *backendController) finishTaildropTransfer(
+	requestID int64, state, reason string,
+) taildropTransferSnapshot {
+	b.taildropMu.Lock()
+	defer b.taildropMu.Unlock()
+	if b.taildropTask.RequestID != requestID {
+		return b.taildropTask
+	}
+	if b.taildropTask.State != "queued" && b.taildropTask.State != "sending" {
+		return b.taildropTask
+	}
+	b.taildropTask.State = state
+	b.taildropTask.Reason = reason
+	b.taildropTask.CompletedAt = time.Now().UnixMilli()
+	b.taildropStop = nil
+	return b.taildropTask
+}
+
+func (b *backendController) cancelTaildropTransfer(reason string) {
+	b.taildropMu.Lock()
+	cancel := b.taildropStop
+	if b.taildropTask.State == "queued" || b.taildropTask.State == "sending" {
+		b.taildropTask.State = "failed"
+		b.taildropTask.Reason = reason
+		b.taildropTask.CompletedAt = time.Now().UnixMilli()
+	}
+	b.taildropStop = nil
+	b.taildropMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func classifyTaildropSendError(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "target not found"), strings.Contains(message, "node not found"):
+		return "target_unavailable"
+	case strings.Contains(message, "file sharing not enabled"):
+		return "admin_disabled"
+	case strings.Contains(message, "permission denied"):
+		return "permission_denied"
+	case strings.Contains(message, "offline"), strings.Contains(message, "no route"),
+		strings.Contains(message, "connection refused"), strings.Contains(message, "connection reset"):
+		return "target_offline"
+	default:
+		return "send_failed"
+	}
+}
+
+func marshalTaildropTransfer(snapshot taildropTransferSnapshot) string {
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return `{"state":"failed","reason":"invalid_result"}`
+	}
+	return string(encoded)
 }
 
 func marshalBackendSnapshot(snapshot backendSnapshot) string {

@@ -158,6 +158,14 @@ func TSBackendPeerConnectivity(peerKey *C.char) *C.char {
 	return C.CString(harmonyBackend.peerConnectivity(C.GoString(peerKey)))
 }
 
+//export TSBackendTaildropSend
+func TSBackendTaildropSend(request *C.char) *C.char {
+	if request == nil {
+		return C.CString(`{"state":"failed","reason":"invalid_request"}`)
+	}
+	return C.CString(harmonyBackend.taildropSend(C.GoString(request)))
+}
+
 //export TSBackendMagicDNSProbeURL
 func TSBackendMagicDNSProbeURL() *C.char {
 	return C.CString(harmonyBackend.magicDNSProbeURL())
