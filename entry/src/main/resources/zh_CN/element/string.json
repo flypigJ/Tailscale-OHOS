@@ -1,9 +1,9 @@
 {
   "string": [
-    { "name": "module_desc", "value": "Tailscale for HarmonyOS NEXT" },
-    { "name": "entryability_desc", "value": "Tailscale 鸿蒙主程序" },
-    { "name": "entryability_label", "value": "Tailscale OHOS" },
-    { "name": "app_title", "value": "Tailscale OHOS" },
+    { "name": "module_desc", "value": "MeshArc for HarmonyOS NEXT" },
+    { "name": "entryability_desc", "value": "MeshArc 鸿蒙主程序" },
+    { "name": "entryability_label", "value": "MeshArc" },
+    { "name": "app_title", "value": "MeshArc" },
     { "name": "app_tagline", "value": "安全连接你的设备" },
     { "name": "tab_home", "value": "主页" },
     { "name": "tab_settings", "value": "设置" },

@@ -2,19 +2,19 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "Tailscale for HarmonyOS NEXT"
+      "value": "MeshArc for HarmonyOS NEXT"
     },
     {
       "name": "entryability_desc",
-      "value": "Tailscale OHOS main ability"
+      "value": "MeshArc main ability"
     },
     {
       "name": "entryability_label",
-      "value": "Tailscale OHOS"
+      "value": "MeshArc"
     },
     {
       "name": "app_title",
-      "value": "Tailscale OHOS"
+      "value": "MeshArc"
     },
     {
       "name": "app_tagline",
