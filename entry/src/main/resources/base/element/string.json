@@ -41,6 +41,30 @@
       "value": "No eligible devices found. Make sure another Taildrop device is online."
     },
     {
+      "name": "transfer_send_completed",
+      "value": "Files sent"
+    },
+    {
+      "name": "transfer_send_failed",
+      "value": "File transfer failed. Try again."
+    },
+    {
+      "name": "transfer_send_target_unavailable",
+      "value": "The selected device is no longer available."
+    },
+    {
+      "name": "transfer_send_disconnected",
+      "value": "Tailscale disconnected before the transfer finished."
+    },
+    {
+      "name": "transfer_file_selection_failed",
+      "value": "Could not open the file picker."
+    },
+    {
+      "name": "transfer_file_copy_failed",
+      "value": "Could not prepare the selected files."
+    },
+    {
       "name": "module_desc",
       "value": "Tailscale for HarmonyOS NEXT"
     },

@@ -1109,6 +1109,20 @@ export struct BridgeStatus {
     };
   }
 
+  private taildropFailureMessage(reason: string): ResourceStr {
+    switch (reason) {
+      case 'target_unavailable':
+      case 'target_offline':
+        return $r('app.string.transfer_send_target_unavailable');
+      case 'admin_disabled':
+        return $r('app.string.transfer_admin_disabled_title');
+      case 'disconnected':
+        return $r('app.string.transfer_send_disconnected');
+      default:
+        return $r('app.string.transfer_send_failed');
+    }
+  }
+
   private applyTaildropTransfer(transfer: TaildropTransferSummary): void {
     if (!this.validTaildropTransfer(transfer)) {
       return;
