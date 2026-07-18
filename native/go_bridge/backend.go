@@ -267,7 +267,7 @@ func (b *backendController) startWithDevice(stateDir, deviceModel, controlURL st
 	// namespace bypass. Use the ordinary system dialer for control traffic.
 	netns.SetEnabled(false)
 	hostinfo.SetOSVersion(harmonyOSVersion)
-	trimmedModel := strings.TrimSpace(deviceModel)
+	trimmedModel := stripHuaweiBrand(deviceModel)
 	hostinfoModelOnce.Do(func() {
 		hostinfo.RegisterHostinfoNewHook(func(info *tailcfg.Hostinfo) {
 			info.OS = "harmonyos"
@@ -363,11 +363,27 @@ func controlServerStateDir(baseDir, controlURL string) string {
 }
 
 func harmonyHostname(deviceModel string) string {
-	hostname := dnsname.SanitizeHostname(strings.TrimSpace(deviceModel))
+	hostname := dnsname.SanitizeHostname(stripHuaweiBrand(deviceModel))
 	if hostname == "" || hostname == "default" {
 		return "harmonyos-next"
 	}
 	return hostname
+}
+
+func stripHuaweiBrand(deviceName string) string {
+	trimmed := strings.TrimSpace(deviceName)
+	const brand = "huawei"
+	if strings.EqualFold(trimmed, brand) {
+		return ""
+	}
+	if len(trimmed) <= len(brand) || !strings.EqualFold(trimmed[:len(brand)], brand) {
+		return trimmed
+	}
+	remainder := strings.TrimLeft(trimmed[len(brand):], " _-")
+	if remainder == trimmed[len(brand):] || remainder == "" {
+		return trimmed
+	}
+	return remainder
 }
 
 // vpnConfig returns the assigned node addresses and currently selected routes
@@ -1084,9 +1100,9 @@ func buildAccountSummary(status *ipnstate.Status) accountSummary {
 		account.LoginName = strings.TrimSpace(profile.LoginName)
 		account.ProfilePicURL = strings.TrimSpace(profile.ProfilePicURL)
 	}
-	account.DeviceName = strings.TrimSuffix(status.Self.DNSName, ".")
+	account.DeviceName = stripHuaweiBrand(strings.TrimSuffix(status.Self.DNSName, "."))
 	if account.DeviceName == "" {
-		account.DeviceName = strings.TrimSpace(status.Self.HostName)
+		account.DeviceName = stripHuaweiBrand(status.Self.HostName)
 	}
 	account.Addresses = displayAddresses(status.TailscaleIPs)
 	if status.CurrentTailnet != nil {
