@@ -1,5 +1,25 @@
 $ErrorActionPreference = 'Stop'
 
+function Test-GitPatchApplied {
+  param(
+    [Parameter(Mandatory = $true)][string]$Repository,
+    [Parameter(Mandatory = $true)][string]$SafeRepository,
+    [Parameter(Mandatory = $true)][string]$Patch
+  )
+
+  # A failed reverse check is the expected result for a clean checkout. Windows
+  # PowerShell otherwise promotes git's stderr to a terminating error while the
+  # script is running with ErrorActionPreference=Stop.
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    & git -c "safe.directory=$SafeRepository" -C $Repository apply --reverse --check $Patch 2>$null
+    return $LASTEXITCODE -eq 0
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+}
+
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $goRoot = Join-Path $projectRoot 'third_party\ohos-go'
 $go = Join-Path $goRoot 'bin\go.exe'
@@ -39,8 +59,8 @@ if (-not (Test-Path $goResourcePatch)) {
   throw "The OpenHarmony Go resource-safety patch is missing at $goResourcePatch"
 }
 $safeGoRoot = $goRoot.Replace('\', '/')
-& git -c "safe.directory=$safeGoRoot" -C $goRoot apply --reverse --check $goResourcePatch 2>$null
-$patchAlreadyApplied = $LASTEXITCODE -eq 0
+$patchAlreadyApplied = Test-GitPatchApplied `
+  -Repository $goRoot -SafeRepository $safeGoRoot -Patch $goResourcePatch
 if (-not $patchAlreadyApplied) {
   & git -c "safe.directory=$safeGoRoot" -C $goRoot apply --check $goResourcePatch
   if ($LASTEXITCODE -ne 0) {
@@ -49,6 +69,25 @@ if (-not $patchAlreadyApplied) {
   & git -c "safe.directory=$safeGoRoot" -C $goRoot apply $goResourcePatch
   if ($LASTEXITCODE -ne 0) {
     throw 'Applying the OpenHarmony Go resource-safety patch failed.'
+	}
+}
+
+$tailscaleRoot = Join-Path $projectRoot 'third_party\tailscale'
+$tailscalePatch = Join-Path $projectRoot 'patches\tailscale-ohos.patch'
+if (-not (Test-Path $tailscalePatch)) {
+  throw "The HarmonyOS Tailscale integration patch is missing at $tailscalePatch"
+}
+$safeTailscaleRoot = $tailscaleRoot.Replace('\', '/')
+$tailscalePatchAlreadyApplied = Test-GitPatchApplied `
+  -Repository $tailscaleRoot -SafeRepository $safeTailscaleRoot -Patch $tailscalePatch
+if (-not $tailscalePatchAlreadyApplied) {
+  & git -c "safe.directory=$safeTailscaleRoot" -C $tailscaleRoot apply --check $tailscalePatch
+  if ($LASTEXITCODE -ne 0) {
+    throw 'The HarmonyOS Tailscale integration patch does not apply cleanly.'
+  }
+  & git -c "safe.directory=$safeTailscaleRoot" -C $tailscaleRoot apply $tailscalePatch
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Applying the HarmonyOS Tailscale integration patch failed.'
   }
 }
 

@@ -1,6 +1,10 @@
 {
   "string": [
     {
+      "name": "transfer_send_interrupted",
+      "value": "The network transfer was interrupted after automatic resume attempts. Try again."
+    },
+    {
       "name": "transfer_detecting_title",
       "value": "Finding transfer devices"
     },
@@ -30,7 +34,7 @@
     },
     {
       "name": "transfer_targets_ready_description",
-      "value": "Device discovery is ready. File selection and send progress come next."
+      "value": "Tap an online device to send files, or save files waiting in your inbox."
     },
     {
       "name": "transfer_targets_title",
@@ -63,6 +67,110 @@
     {
       "name": "transfer_file_copy_failed",
       "value": "Could not prepare the selected files."
+    },
+    {
+      "name": "transfer_send_action",
+      "value": "Send"
+    },
+    {
+      "name": "transfer_cancel_failed",
+      "value": "Could not cancel the transfer."
+    },
+    {
+      "name": "transfer_send_cancelled",
+      "value": "File transfer cancelled."
+    },
+    {
+      "name": "transfer_preparing",
+      "value": "Preparing files"
+    },
+    {
+      "name": "transfer_sending_to",
+      "value": "Sending to %s"
+    },
+    {
+      "name": "transfer_receive_picker_failed",
+      "value": "Could not choose where to save the file."
+    },
+    {
+      "name": "transfer_receive_completed",
+      "value": "File saved"
+    },
+    {
+      "name": "transfer_receive_unavailable",
+      "value": "The received file is no longer available."
+    },
+    {
+      "name": "transfer_receive_no_space",
+      "value": "There is not enough storage space to save this file."
+    },
+    {
+      "name": "transfer_receive_delete_failed",
+      "value": "The file was saved, but its inbox copy could not be removed."
+    },
+    {
+      "name": "transfer_receive_failed",
+      "value": "Could not save the received file. Try again."
+    },
+    {
+      "name": "transfer_receiving_file",
+      "value": "Saving received file"
+    },
+    {
+      "name": "transfer_save_action",
+      "value": "Save"
+    },
+    {
+      "name": "transfer_retry_action",
+      "value": "Retry"
+    },
+    {
+      "name": "transfer_sent_status",
+      "value": "Sent"
+    },
+    {
+      "name": "transfer_received_status",
+      "value": "Received"
+    },
+    {
+      "name": "transfer_failed_status",
+      "value": "Failed"
+    },
+    {
+      "name": "transfer_inbox_title",
+      "value": "Received files"
+    },
+    {
+      "name": "transfer_inbox_unavailable",
+      "value": "The Taildrop inbox is temporarily unavailable."
+    },
+    {
+      "name": "transfer_inbox_empty",
+      "value": "Files sent to this device will appear here."
+    },
+    {
+      "name": "transfer_clear_cache_action",
+      "value": "Clear cache"
+    },
+    {
+      "name": "transfer_clear_cache_confirm_title",
+      "value": "Clear received file cache?"
+    },
+    {
+      "name": "transfer_clear_cache_confirm_message",
+      "value": "This permanently deletes all received files stored in the app's private directory."
+    },
+    {
+      "name": "transfer_clearing_cache",
+      "value": "Clearing received file cache"
+    },
+    {
+      "name": "transfer_cache_cleared",
+      "value": "Received file cache cleared"
+    },
+    {
+      "name": "transfer_clear_cache_failed",
+      "value": "Could not clear all received file cache. Try again."
     },
     {
       "name": "module_desc",
@@ -114,7 +222,7 @@
     },
     {
       "name": "transfer_connected_description",
-      "value": "File sending will be connected first, followed by receiving and export."
+      "value": "Send files to online devices and save files received by this device."
     },
     {
       "name": "transfer_connect_first_title",
@@ -127,6 +235,14 @@
     {
       "name": "transfer_history_title",
       "value": "Transfers"
+    },
+    {
+      "name": "transfer_clear_history_action",
+      "value": "Clear history"
+    },
+    {
+      "name": "transfer_history_cleared",
+      "value": "Transfer history cleared"
     },
     {
       "name": "transfer_empty_title",

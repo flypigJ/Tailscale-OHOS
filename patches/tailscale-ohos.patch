@@ -1,0 +1,297 @@
+diff --git a/ipn/ipnlocal/local.go b/ipn/ipnlocal/local.go
+index 7154b94..e01d6c6 100644
+--- a/ipn/ipnlocal/local.go
++++ b/ipn/ipnlocal/local.go
+@@ -1335,6 +1335,7 @@ func (b *LocalBackend) populatePeerStatusLocked(sb *ipnstate.StatusBuilder) {
+ 			HostName:        p.Hostinfo().Hostname(),
+ 			DNSName:         p.Name(),
+ 			OS:              p.Hostinfo().OS(),
++			DeviceModel:     p.Hostinfo().DeviceModel(),
+ 			LastSeen:        p.LastSeen().Get(),
+ 			Online:          p.Online().Get(),
+ 			ShareeNode:      p.Hostinfo().ShareeNode(),
+diff --git a/ipn/ipnstate/ipnstate.go b/ipn/ipnstate/ipnstate.go
+index e7ae2d6..7a8a596 100644
+--- a/ipn/ipnstate/ipnstate.go
++++ b/ipn/ipnstate/ipnstate.go
+@@ -228,9 +228,10 @@ type PeerStatus struct {
+ 
+ 	// DNSName is the Peer's FQDN. It ends with a dot.
+ 	// It has the form "host.<MagicDNSSuffix>."
+-	DNSName string
+-	OS      string // HostInfo.OS
+-	UserID  tailcfg.UserID
++	DNSName     string
++	OS          string // HostInfo.OS
++	DeviceModel string // HostInfo.DeviceModel, when the peer reports one
++	UserID      tailcfg.UserID
+ 
+ 	// AltSharerUserID is the user who shared this node
+ 	// if it's different than UserID. Otherwise it's zero.
+@@ -476,6 +477,9 @@ func (sb *StatusBuilder) AddPeer(peer key.NodePublic, st *PeerStatus) {
+ 	if v := st.OS; v != "" {
+ 		e.OS = st.OS
+ 	}
++	if v := st.DeviceModel; v != "" {
++		e.DeviceModel = v
++	}
+ 	if v := st.SSH_HostKeys; v != nil {
+ 		e.SSH_HostKeys = v
+ 	}
+diff --git a/tsnet/tsnet.go b/tsnet/tsnet.go
+index 65367f2..a9815de 100644
+--- a/tsnet/tsnet.go
++++ b/tsnet/tsnet.go
+@@ -26,6 +26,7 @@
+ 	"sync"
+ 	"time"
+ 
++	"github.com/tailscale/wireguard-go/tun"
+ 	"tailscale.com/client/local"
+ 	"tailscale.com/client/tailscale"
+ 	"tailscale.com/control/controlclient"
+@@ -46,6 +47,7 @@
+ 	"tailscale.com/net/netmon"
+ 	"tailscale.com/net/proxymux"
+ 	"tailscale.com/net/socks5"
++	"tailscale.com/net/tsaddr"
+ 	"tailscale.com/net/tsdial"
+ 	"tailscale.com/tsd"
+ 	"tailscale.com/types/bools"
+@@ -64,6 +66,20 @@
+ //
+ // Its exported fields may be changed until the first method call.
+ type Server struct {
++	// Tun optionally supplies an OS-managed TUN device. When set, tsnet sends
++	// tailnet packets to that device instead of consuming them in netstack.
++	// This is used by HarmonyOS VpnExtensionAbility, which owns interface and
++	// route creation and returns only a raw packet file descriptor.
++	Tun tun.Device
++
++	// UseNetstackForPeerDial keeps peer and PeerAPI TCP/UDP dials inside
++	// tsnet's userspace netstack even when Tun is externally supplied.
++	// Platforms that exclude their own VPN bundle from system VPN routing need
++	// this: ordinary system dials to Tailscale IPs would otherwise bypass the
++	// VPN and time out, while control and DERP sockets must still use the
++	// physical system network.
++	UseNetstackForPeerDial bool
++
+ 	// Dir specifies the name of the directory to use for
+ 	// state. If empty, a directory is selected automatically
+ 	// under os.UserConfigDir (https://golang.org/pkg/os/#UserConfigDir).
+@@ -570,7 +586,9 @@ func (s *Server) start() (reterr error) {
+ 	closePool.add(s.netMon)
+ 
+ 	s.dialer = &tsdial.Dialer{Logf: tsLogf} // mutated below (before used)
++	externalTun := s.Tun != nil
+ 	eng, err := wgengine.NewUserspaceEngine(tsLogf, wgengine.Config{
++		Tun:           s.Tun,
+ 		EventBus:      sys.Bus.Get(),
+ 		ListenPort:    s.Port,
+ 		NetMon:        s.netMon,
+@@ -594,14 +612,20 @@ func (s *Server) start() (reterr error) {
+ 	}
+ 	sys.Tun.Get().Start()
+ 	sys.Set(ns)
+-	ns.ProcessLocalIPs = true
+-	ns.ProcessSubnets = true
++	ns.ProcessLocalIPs = !externalTun
++	ns.ProcessSubnets = !externalTun
+ 	ns.GetTCPHandlerForFlow = s.getTCPHandlerForFlow
+ 	ns.GetUDPHandlerForFlow = s.getUDPHandlerForFlow
+ 	s.netstack = ns
+-	s.dialer.UseNetstackForIP = func(ip netip.Addr) bool {
+-		_, ok := eng.PeerForIP(ip)
+-		return ok
++	if !externalTun {
++		s.dialer.UseNetstackForIP = func(ip netip.Addr) bool {
++			_, ok := eng.PeerForIP(ip)
++			return ok
++		}
++	} else if s.UseNetstackForPeerDial {
++		// The bundle is excluded from its own system VPN route, so all
++		// canonical tailnet destinations must use the embedded netstack.
++		s.dialer.UseNetstackForIP = tsaddr.IsTailscaleIP
+ 	}
+ 	s.dialer.NetstackDialTCP = func(ctx context.Context, dst netip.AddrPort) (net.Conn, error) {
+ 		// Note: don't just return ns.DialContextTCP or we'll return
+@@ -609,6 +633,9 @@ func (s *Server) start() (reterr error) {
+ 		// callers.
+ 		v4, v6 := s.TailscaleIPs()
+ 		src := bools.IfElse(dst.Addr().Is6(), v6, v4)
++		if externalTun && s.UseNetstackForPeerDial {
++			return ns.DialContextTCPWithTrackedBind(ctx, src, dst)
++		}
+ 		tcpConn, err := ns.DialContextTCPWithBind(ctx, src, dst)
+ 		if err != nil {
+ 			return nil, err
+diff --git a/wgengine/netstack/netstack.go b/wgengine/netstack/netstack.go
+index d97c669..6b7248f 100644
+--- a/wgengine/netstack/netstack.go
++++ b/wgengine/netstack/netstack.go
+@@ -228,6 +228,12 @@ type Impl struct {
+ 	// global limit, preventing a misbehaving client from starving the
+ 	// global limit.
+ 	connsInFlightByClient map[netip.Addr]int
++	// dialedTCPPorts contains the local address/port pairs reserved by
++	// DialContextTCPWithTrackedBind. In external-TUN mode, only replies for
++	// these userspace-originated connections should be intercepted; all other
++	// packets for the local Tailscale IP must continue to the system TUN.
++	dialedTCPPorts  map[netip.AddrPort]struct{}
++	nextDialTCPPort uint16
+ 	// packetsInFlight tracks whether we're already handling a packet by
+ 	// the given endpoint ID; clients can send repeated SYN packets while
+ 	// trying to establish a connection (and while we're dialing the
+@@ -390,6 +396,8 @@ func Create(logf logger.Logf, tundev *tstun.Wrapper, e wgengine.Engine, mc *magi
+ 		dialer:                dialer,
+ 		connsOpenBySubnetIP:   make(map[netip.Addr]int),
+ 		connsInFlightByClient: make(map[netip.Addr]int),
++		dialedTCPPorts:        make(map[netip.AddrPort]struct{}),
++		nextDialTCPPort:       56000,
+ 		packetsInFlight:       make(map[stack.TransportEndpointID]struct{}),
+ 		dns:                   dns,
+ 	}
+@@ -870,6 +878,89 @@ func (ns *Impl) DialContextTCPWithBind(ctx context.Context, localAddr netip.Addr
+ 	return gonet.DialTCPWithBind(ctx, ns.ipstack, localAddress, remoteAddress, ipType)
+ }
+ 
++const (
++	firstTrackedDialTCPPort = uint16(56000)
++	lastTrackedDialTCPPort  = uint16(60999)
++)
++
++type trackedDialTCPConn struct {
++	*gonet.TCPConn
++	closeOnce sync.Once
++	release   func()
++}
++
++func (c *trackedDialTCPConn) Close() error {
++	err := c.TCPConn.Close()
++	c.closeOnce.Do(c.release)
++	return err
++}
++
++func (ns *Impl) reserveDialTCPPort(localAddr netip.Addr) (netip.AddrPort, bool) {
++	ns.mu.Lock()
++	defer ns.mu.Unlock()
++	portCount := int(lastTrackedDialTCPPort-firstTrackedDialTCPPort) + 1
++	for range portCount {
++		port := ns.nextDialTCPPort
++		ns.nextDialTCPPort++
++		if ns.nextDialTCPPort > lastTrackedDialTCPPort {
++			ns.nextDialTCPPort = firstTrackedDialTCPPort
++		}
++		address := netip.AddrPortFrom(localAddr, port)
++		if _, exists := ns.dialedTCPPorts[address]; exists {
++			continue
++		}
++		ns.dialedTCPPorts[address] = struct{}{}
++		return address, true
++	}
++	return netip.AddrPort{}, false
++}
++
++func (ns *Impl) releaseDialTCPPort(address netip.AddrPort) {
++	ns.mu.Lock()
++	delete(ns.dialedTCPPorts, address)
++	ns.mu.Unlock()
++}
++
++func (ns *Impl) isDialedTCPPort(address netip.AddrPort) bool {
++	ns.mu.Lock()
++	_, ok := ns.dialedTCPPorts[address]
++	ns.mu.Unlock()
++	return ok
++}
++
++// DialContextTCPWithTrackedBind dials from a reserved userspace-netstack
++// source port. The inbound hook can then return only this connection's
++// packets to netstack while preserving external-TUN traffic for other apps.
++func (ns *Impl) DialContextTCPWithTrackedBind(ctx context.Context, localAddr netip.Addr, remoteAddr netip.AddrPort) (net.Conn, error) {
++	localAddress, ok := ns.reserveDialTCPPort(localAddr)
++	if !ok {
++		return nil, errors.New("no tracked netstack TCP ports available")
++	}
++	release := func() { ns.releaseDialTCPPort(localAddress) }
++	remoteAddress := tcpip.FullAddress{
++		NIC:  nicID,
++		Addr: tcpip.AddrFromSlice(remoteAddr.Addr().AsSlice()),
++		Port: remoteAddr.Port(),
++	}
++	boundAddress := tcpip.FullAddress{
++		NIC:  nicID,
++		Addr: tcpip.AddrFromSlice(localAddr.AsSlice()),
++		Port: localAddress.Port(),
++	}
++	var ipType tcpip.NetworkProtocolNumber
++	if remoteAddr.Addr().Is4() {
++		ipType = ipv4.ProtocolNumber
++	} else {
++		ipType = ipv6.ProtocolNumber
++	}
++	connection, err := gonet.DialTCPWithBind(ctx, ns.ipstack, boundAddress, remoteAddress, ipType)
++	if err != nil {
++		release()
++		return nil, err
++	}
++	return &trackedDialTCPConn{TCPConn: connection, release: release}, nil
++}
++
+ func (ns *Impl) DialContextUDP(ctx context.Context, ipp netip.AddrPort) (*gonet.UDPConn, error) {
+ 	remoteAddress := &tcpip.FullAddress{
+ 		NIC:  nicID,
+@@ -1052,6 +1143,9 @@ func (ns *Impl) shouldProcessInbound(p *packet.Parsed, t *tstun.Wrapper) bool {
+ 	dstIP := p.Dst.Addr()
+ 	isLocal := ns.isLocalIP(dstIP)
+ 	isService := ns.isVIPServiceIP(dstIP)
++	if p.IPProto == ipproto.TCP && isLocal && ns.isDialedTCPPort(p.Dst) {
++		return true
++	}
+ 
+ 	// Handle TCP connection to the Tailscale IP(s) in some cases:
+ 	if ns.lb != nil && p.IPProto == ipproto.TCP && isLocal {
+diff --git a/wgengine/netstack/netstack_test.go b/wgengine/netstack/netstack_test.go
+index 584b3ba..f6f053d 100644
+--- a/wgengine/netstack/netstack_test.go
++++ b/wgengine/netstack/netstack_test.go
+@@ -513,6 +513,39 @@ func tcp4syn(tb testing.TB, src, dst netip.Addr, sport, dport uint16) []byte {
+ 	return ip
+ }
+ 
++func TestTrackedDialTCPPortLifecycle(t *testing.T) {
++	localAddr := netip.MustParseAddr("100.64.0.1")
++	impl := &Impl{
++		dialedTCPPorts:  make(map[netip.AddrPort]struct{}),
++		nextDialTCPPort: firstTrackedDialTCPPort,
++	}
++
++	reserved, ok := impl.reserveDialTCPPort(localAddr)
++	if !ok {
++		t.Fatal("reserveDialTCPPort unexpectedly failed")
++	}
++	if got, want := reserved.Port(), firstTrackedDialTCPPort; got != want {
++		t.Fatalf("reserved port = %d, want %d", got, want)
++	}
++	if !impl.isDialedTCPPort(reserved) {
++		t.Fatal("reserved port is not tracked")
++	}
++	impl.releaseDialTCPPort(reserved)
++	if impl.isDialedTCPPort(reserved) {
++		t.Fatal("released port remains tracked")
++	}
++
++	impl.nextDialTCPPort = lastTrackedDialTCPPort
++	last, ok := impl.reserveDialTCPPort(localAddr)
++	if !ok || last.Port() != lastTrackedDialTCPPort {
++		t.Fatalf("last reservation = %v, %v", last, ok)
++	}
++	wrapped, ok := impl.reserveDialTCPPort(localAddr)
++	if !ok || wrapped.Port() != firstTrackedDialTCPPort {
++		t.Fatalf("wrapped reservation = %v, %v", wrapped, ok)
++	}
++}
++
+ // makeHangDialer returns a dialer that notifies the returned channel when a
+ // connection is dialed and then hangs until the test finishes.
+ func makeHangDialer(tb testing.TB) (netx.DialFunc, chan struct{}) {

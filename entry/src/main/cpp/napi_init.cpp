@@ -20,7 +20,8 @@ enum class AsyncInputOperation {
     SetExitNode,
     SetNetworkSetting,
     PeerConnectivity,
-    TaildropSend
+    TaildropSend,
+    TaildropReceive
 };
 
 struct AsyncInputWork {
@@ -100,8 +101,10 @@ void ExecuteAsyncInput(napi_env env, void* data)
         message = TSBackendSetNetworkSetting(const_cast<char*>(work->input.c_str()), work->enabled ? 1 : 0);
     } else if (work->operation == AsyncInputOperation::PeerConnectivity) {
         message = TSBackendPeerConnectivity(const_cast<char*>(work->input.c_str()));
-    } else {
+    } else if (work->operation == AsyncInputOperation::TaildropSend) {
         message = TSBackendTaildropSend(const_cast<char*>(work->input.c_str()));
+    } else {
+        message = TSBackendTaildropReceive(const_cast<char*>(work->input.c_str()));
     }
     if (message == nullptr) {
         work->succeeded = false;
@@ -245,6 +248,34 @@ napi_value BackendTaildropSendAsync(napi_env env, napi_callback_info info)
     }
     return CreateAsyncInputPromise(
         env, AsyncInputOperation::TaildropSend, request.data(), false, "TailscaleBackendTaildropSend");
+}
+
+napi_value BackendTaildropReceiveAsync(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "backendTaildropReceiveAsync requires one request");
+        return nullptr;
+    }
+    size_t length = 0;
+    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "Taildrop receive request must be a string");
+        return nullptr;
+    }
+    std::vector<char> request(length + 1, '\0');
+    if (napi_get_value_string_utf8(env, args[0], request.data(), request.size(), &length) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to read the Taildrop receive request");
+        return nullptr;
+    }
+    return CreateAsyncInputPromise(
+        env, AsyncInputOperation::TaildropReceive, request.data(), false, "TailscaleBackendTaildropReceive");
+}
+
+napi_value BackendTaildropCancelAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendTaildropCancel, "TailscaleBackendTaildropCancel");
 }
 
 napi_value BackendSnapshotAsync(napi_env env, napi_callback_info info)
@@ -838,6 +869,10 @@ static napi_value Init(napi_env env, napi_value exports)
         {"backendPeerConnectivityAsync", nullptr, BackendPeerConnectivityAsync, nullptr, nullptr, nullptr,
             napi_default, nullptr},
         {"backendTaildropSendAsync", nullptr, BackendTaildropSendAsync, nullptr, nullptr, nullptr,
+            napi_default, nullptr},
+        {"backendTaildropCancelAsync", nullptr, BackendTaildropCancelAsync, nullptr, nullptr, nullptr,
+            napi_default, nullptr},
+        {"backendTaildropReceiveAsync", nullptr, BackendTaildropReceiveAsync, nullptr, nullptr, nullptr,
             napi_default, nullptr},
         {"backendMagicDNSProbeURL", nullptr, BackendMagicDNSProbeURL, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendMagicDNSProbeURLAsync", nullptr, BackendMagicDNSProbeURLAsync, nullptr, nullptr, nullptr,

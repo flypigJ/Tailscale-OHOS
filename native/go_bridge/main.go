@@ -166,6 +166,19 @@ func TSBackendTaildropSend(request *C.char) *C.char {
 	return C.CString(harmonyBackend.taildropSend(C.GoString(request)))
 }
 
+//export TSBackendTaildropCancel
+func TSBackendTaildropCancel() *C.char {
+	return C.CString(harmonyBackend.taildropCancel())
+}
+
+//export TSBackendTaildropReceive
+func TSBackendTaildropReceive(request *C.char) *C.char {
+	if request == nil {
+		return C.CString(`{"state":"failed","reason":"invalid_request"}`)
+	}
+	return C.CString(harmonyBackend.taildropReceive(C.GoString(request)))
+}
+
 //export TSBackendMagicDNSProbeURL
 func TSBackendMagicDNSProbeURL() *C.char {
 	return C.CString(harmonyBackend.magicDNSProbeURL())

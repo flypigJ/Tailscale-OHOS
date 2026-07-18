@@ -25,50 +25,56 @@ Relevant upstream code:
 
 ## Current `main` status
 
-Last audited on 2026-07-18. The transfer page is visible in both compact and wide navigation on the development branch. It remains an engineering surface rather than a complete Taildrop release.
+Last audited on 2026-07-18. The transfer page is visible in both compact and wide navigation on the development branch. Sending and inbox export are reachable. A HarmonyOS-to-Windows real-device send has passed; background, interruption, and large-file coverage remain release gates.
 
 | Area | Status | Evidence and remaining gap |
 |---|---|---|
 | Taildrop registration | Implemented | The Go bridge blank-imports `tailscale.com/feature/taildrop`, so LocalAPI and PeerAPI handlers are registered in the live VPN Extension backend. |
 | Target discovery | Implemented | `local.Client.FileTargets` is queried from the VPN Extension process. Stable peer keys, display names, OS/model, online state, admin-disabled state, and query failures are persisted for the UI. |
 | Picker and staging | Implemented | The UI can select up to 10 documents, sanitize base names, copy them into an app-private per-request outbox, verify copied sizes, and publish the request by temporary-file rename. |
-| Send engine | Implemented but not reachable from the current UI | The Go bridge revalidates the outbox path and file metadata, re-resolves target eligibility, sends files sequentially with `local.Client.PushFile`, and records per-file and aggregate byte progress. `startTaildropSelection()` exists, but no target row or button calls it. |
-| Progress and completion state | Partially implemented | The Go bridge updates progress and the VPN Extension persists a one-second snapshot. The transfer page does not render queued/sending progress or terminal records; it always renders the empty-history panel. |
-| History | Scaffold only | Completed/failed records are collected in an in-memory array capped at 20, but they are neither rendered nor persisted and can be reconstructed inconsistently after UI recreation. |
-| Cancellation and retry | Backend cancellation only | Disconnecting or destroying the backend cancels the active Go context. There is no user cancel action, retry action, explicit resume workflow, speed, or ETA. |
+| Send engine | Implemented and real-device verified | Tapping an online target opens the document Picker. The Go bridge revalidates the outbox path and file metadata, re-resolves target eligibility, warms the target PeerAPI path, and sends up to 10 files sequentially with `local.Client.PushFile`. In external-TUN mode, peer/PeerAPI TCP dials use the embedded netstack while ordinary control/DERP sockets remain on the physical network. |
+| Progress and completion state | Implemented for the first usable flow | Queued/sending state, aggregate byte progress, current filename, completion, failure, and cancellation are rendered from the VPN Extension snapshot. Speed and ETA are not yet shown. |
+| History | Implemented | A bounded 20-record send/receive history is rendered and atomically persisted. Restoring the UI also restores the last handled send request ID to avoid duplicate terminal records. |
+| Cancellation and retry | Implemented | The user can cancel an active outgoing transfer. Transient PUT failures are retried up to three times from the retained staged file; upstream Taildrop partial hashing resumes at the receiver's confirmed offset. A terminal failed send can still reopen the Picker for the same target. |
 | Cleanup | Implemented with a recovery fallback | Staged files are removed after success/failure and stale outbox entries are cleaned when the VPN Extension starts. Free-space checks and a staging quota are still absent. |
-| Receive inbox | Missing | No HarmonyOS bridge or UI exists for `WaitingFiles`, `GetWaitingFile`, `DeleteWaitingFile`, Save Picker export, or received-file deletion. |
+| Receive inbox | Implemented for Save/export | The snapshot exposes `WaitingFiles`. Save uses `DocumentViewPicker.save()`, asks the VPN Extension/Go backend to copy `GetWaitingFile` into a validated private staging path, exports it to the Picker URI, and calls `DeleteWaitingFile` only after the copy is verified. An explicit discard-without-save action is not yet exposed. |
 | Background/user feedback | Missing validation | No completion notification or real-device proof covers screen-off, UI-process recreation, VPN Extension lifetime, or long/large transfers. |
-| Automated coverage | Missing | The repository has no Taildrop-specific Go, ArkTS, NAPI, or end-to-end tests. |
+| Automated coverage | Partial | Go tests cover receive-request path validation, exact-size staging, short-stream rejection, transient send-error classification, retry cancellation, and tracked netstack source-port lifecycle. A 619,844-byte HarmonyOS-to-Windows device probe completed on 2026-07-18. Device-level ArkTS/NAPI, DERP, interruption, background, and large-file coverage are still incomplete. |
 
 The UI process still stops its own backend before starting `TailscaleVpnExtensionAbility`. Active Taildrop I/O must therefore remain in the VPN Extension process, where the live `tsnet.Server` and `local.Client` exist. Calling a UI-process NAPI function directly would address a different, stopped Go runtime.
 
+### 288 KiB send-failure incident
+
+The fixed 294,912-byte progress value was HTTP request buffering, not a file-size limit. `PushFile` entered LocalAPI correctly, but its PeerAPI request used an ordinary system TCP dial when `tsnet.Server` had an externally supplied HarmonyOS TUN. Because the VPN bundle is intentionally listed in `blockedApplications`, that dial bypassed the VPN route and timed out before reaching the Windows receiver. Each failure therefore sat at 294,912 bytes for roughly 40 seconds and ended as a 502-style send error.
+
+The fix keeps canonical Tailscale peer destinations in userspace netstack when the external TUN is active. A reserved source-port range tracks only TCP connections created by those embedded PeerAPI dials, and the inbound hook returns replies for those ports to gVisor. All other traffic for the local Tailscale address still flows to the HarmonyOS TUN, preserving VPN service for other applications. The project stores this vendor integration in `patches/tailscale-ohos.patch`, and `scripts/build-go.ps1` checks/applies it before every Go build.
+
+The post-fix real-device probe sent 619,844 bytes from HarmonyOS to Tailscale 1.98.8 on Windows and reached `completed` with `fileBytes == fileSize`. This crossed the former 294,912-byte boundary and produced the exact-size destination file.
+
 ## Remaining implementation plan
 
-### 1. Finish the outgoing-transfer experience
+### 1. Harden the outgoing-transfer experience
 
-- Wire each eligible target row to the existing Picker/staging/send path and add an explicit send affordance.
-- Render queued, active, completed, and failed transfers with per-file and aggregate progress.
-- Add user cancellation, retry, speed, ETA, and clear handling for busy, timeout, permission, offline, disconnected, and admin-disabled failures.
-- Persist a bounded history and enough request metadata to recover state after UI-process recreation without duplicating terminal records.
-- Keep staged data available for an explicit retry when safe, then remove it after completion or expiry.
+- Add transfer speed and ETA and distinguish permission, low-space, offline, disconnected, and admin-disabled failures in the active panel. Timeout/network interruption now has a dedicated terminal message.
+- Decide whether failed staged sends should be retained for zero-copy retry or continue reopening the Picker for least-privilege access.
+- Add an explicit busy message instead of only disabling target and inbox rows.
 
 ### 2. Harden the cross-process command channel
 
 Extend the existing app-sandbox request/response pattern already used by peer connectivity tests:
 
 - The UI already writes `taildrop-send-request.json` atomically and the VPN Extension polls it before invoking NAPI.
-- Change snapshot persistence from truncate-and-write to temporary-file plus atomic rename; the UI currently tolerates partial reads by retrying.
+- Snapshot persistence now uses temporary-file plus atomic rename; extend the same generation discipline to every request and response.
 - Add a connection generation to requests and snapshots so stale work cannot be accepted after reconnect.
 - Keep one active outgoing request at a time, but expose the busy state rather than silently rejecting a second action.
 
 This is simpler and safer than introducing a new service IPC layer for the first version.
 
-### 3. Add receiving and export
+### 3. Harden receiving and export
 
 Sending already uses `DocumentViewPicker.select()` and copies Picker URIs into an app-private outbox because Picker grants and file descriptors should not be assumed transferable to the VPN Extension process.
 
-For receiving, let the upstream Taildrop manager stage incoming files under the Tailscale state directory. The UI shows `WaitingFiles`; after the user chooses Save, use `DocumentViewPicker.save()` and stream the waiting file to the returned URI. Delete the Taildrop inbox copy only after the export is closed successfully.
+The first Save/export flow is implemented. Remaining work is an explicit discard action, low-space preflight, staging quota/expiry, user-visible cleanup failures, and recovery UI for a process restart between staging and export.
 
 Staging costs temporary extra disk space but gives reliable cross-process access, deterministic resume, and protection from expiring Picker grants. A later optimization can pass duplicated file descriptors through a proper IPC channel to avoid the extra copy for very large sends.
 
