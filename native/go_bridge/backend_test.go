@@ -1,11 +1,49 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"tailscale.com/tailcfg"
 )
+
+func TestClassifyTaildropSendError(t *testing.T) {
+	tests := []struct {
+		message string
+		want    string
+	}{
+		{message: "context deadline exceeded", want: "timeout"},
+		{message: "HTTP 502 Bad Gateway", want: "network_interrupted"},
+		{message: "write: broken pipe", want: "network_interrupted"},
+		{message: "connection reset by peer", want: "target_offline"},
+		{message: "file sharing not enabled", want: "admin_disabled"},
+	}
+	for _, test := range tests {
+		if got := classifyTaildropSendError(errors.New(test.message)); got != test.want {
+			t.Fatalf("classifyTaildropSendError(%q) = %q, want %q", test.message, got, test.want)
+		}
+	}
+	if !isTransientTaildropSendError(errors.New("HTTP 502 Bad Gateway")) {
+		t.Fatal("Bad Gateway should be retried")
+	}
+	if isTransientTaildropSendError(errors.New("file sharing not enabled")) {
+		t.Fatal("admin-disabled Taildrop should not be retried")
+	}
+}
+
+func TestWaitForTaildropRetryHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if waitForTaildropRetry(ctx, time.Second) {
+		t.Fatal("cancelled retry wait reported success")
+	}
+}
 
 func TestPeerStableKeyIsDeterministicAndOpaque(t *testing.T) {
 	id := tailcfg.StableNodeID("node-1234567890")
@@ -19,6 +57,59 @@ func TestPeerStableKeyIsDeterministicAndOpaque(t *testing.T) {
 	}
 	if first == peerStableKey(tailcfg.StableNodeID("node-other")) {
 		t.Fatalf("different node IDs produced the same test key: %q", first)
+	}
+}
+
+func TestValidateTaildropReceiveRequest(t *testing.T) {
+	root := t.TempDir()
+	request := taildropReceiveRequest{
+		RequestID: 42,
+		Action:    "stage",
+		Name:      "report.pdf",
+		InboxRoot: root,
+		Path:      filepath.Join(root, "42.taildrop"),
+	}
+	if err := validateTaildropReceiveRequest(request); err != nil {
+		t.Fatalf("valid receive request rejected: %v", err)
+	}
+	request.Path = filepath.Join(root, "..", "outside.taildrop")
+	if err := validateTaildropReceiveRequest(request); err == nil {
+		t.Fatal("receive request outside the inbox was accepted")
+	}
+	request.Action = "delete"
+	request.InboxRoot = ""
+	request.Path = ""
+	if err := validateTaildropReceiveRequest(request); err != nil {
+		t.Fatalf("valid delete request rejected: %v", err)
+	}
+	request.Action = "clear"
+	request.Name = ""
+	if err := validateTaildropReceiveRequest(request); err != nil {
+		t.Fatalf("valid clear request rejected: %v", err)
+	}
+	request.Name = "report.pdf"
+	if err := validateTaildropReceiveRequest(request); err == nil {
+		t.Fatal("clear request with file metadata was accepted")
+	}
+}
+
+func TestStageTaildropWaitingFile(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "7.taildrop")
+	content := "taildrop receive payload"
+	if err := stageTaildropWaitingFile(strings.NewReader(content), int64(len(content)), root, destination); err != nil {
+		t.Fatalf("stageTaildropWaitingFile failed: %v", err)
+	}
+	staged, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatalf("read staged file: %v", err)
+	}
+	if string(staged) != content {
+		t.Fatalf("staged content = %q, want %q", staged, content)
+	}
+	if err := stageTaildropWaitingFile(io.LimitReader(strings.NewReader(content), 3),
+		int64(len(content)), root, filepath.Join(root, "8.taildrop")); err == nil {
+		t.Fatal("short receive stream was accepted")
 	}
 }
 

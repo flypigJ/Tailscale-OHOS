@@ -134,14 +134,22 @@ type taildropTargetSummary struct {
 	Name        string `json:"name"`
 	OS          string `json:"os"`
 	DeviceModel string `json:"deviceModel"`
+	DeviceType  string `json:"deviceType"`
 	Online      bool   `json:"online"`
 }
 
 type taildropSnapshot struct {
-	State    string                   `json:"state"`
-	Reason   string                   `json:"reason"`
-	Targets  []taildropTargetSummary  `json:"targets"`
-	Transfer taildropTransferSnapshot `json:"transfer"`
+	State        string                       `json:"state"`
+	Reason       string                       `json:"reason"`
+	Targets      []taildropTargetSummary      `json:"targets"`
+	WaitingFiles []taildropWaitingFileSummary `json:"waitingFiles"`
+	InboxReason  string                       `json:"inboxReason"`
+	Transfer     taildropTransferSnapshot     `json:"transfer"`
+}
+
+type taildropWaitingFileSummary struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
 }
 
 type taildropTransferSnapshot struct {
@@ -173,11 +181,31 @@ type taildropSendRequest struct {
 	Files      []taildropSendFile `json:"files"`
 }
 
+type taildropReceiveRequest struct {
+	RequestID int64  `json:"requestId"`
+	Action    string `json:"action"`
+	Name      string `json:"name"`
+	InboxRoot string `json:"inboxRoot"`
+	Path      string `json:"path"`
+}
+
+type taildropReceiveResult struct {
+	RequestID int64  `json:"requestId"`
+	Action    string `json:"action"`
+	State     string `json:"state"`
+	Reason    string `json:"reason"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	Path      string `json:"path"`
+}
+
 type validatedTaildropFile struct {
 	Path string
 	Name string
 	Size int64
 }
+
+const taildropSendMaxAttempts = 3
 
 type taildropProgressReader struct {
 	reader io.Reader
@@ -281,12 +309,13 @@ func (b *backendController) startWithDevice(stateDir, deviceModel, controlURL st
 	generation := b.generation
 	startContext, cancelStart := context.WithCancel(context.Background())
 	server := &tsnet.Server{
-		Dir:        profileStateDir,
-		Hostname:   harmonyHostname(trimmedModel),
-		ControlURL: normalizedControlURL,
-		Ephemeral:  false,
-		UserLogf:   b.userLogf,
-		Logf:       b.backendLogf,
+		Dir:                    profileStateDir,
+		Hostname:               harmonyHostname(trimmedModel),
+		ControlURL:             normalizedControlURL,
+		Ephemeral:              false,
+		UserLogf:               b.userLogf,
+		Logf:                   b.backendLogf,
+		UseNetstackForPeerDial: device != nil,
 	}
 	// Assigning a nil *harmonyTunDevice directly to the tun.Device interface
 	// creates a non-nil interface containing a nil pointer. wireguard-go then
@@ -647,7 +676,8 @@ func (b *backendController) snapshot() string {
 		NetworkSettings: settings,
 		Account:         accountSummary{Addresses: []string{}},
 		Taildrop: taildropSnapshot{
-			State: "loading", Targets: []taildropTargetSummary{}, Transfer: b.taildropTransferSnapshot(),
+			State: "loading", Targets: []taildropTargetSummary{},
+			WaitingFiles: []taildropWaitingFileSummary{}, Transfer: b.taildropTransferSnapshot(),
 		},
 	}
 	switch {
@@ -693,10 +723,13 @@ func (b *backendController) snapshot() string {
 }
 
 func buildTaildropSnapshot(client *local.Client, transfer taildropTransferSnapshot) taildropSnapshot {
-	snapshot := taildropSnapshot{State: "ready", Targets: []taildropTargetSummary{}, Transfer: transfer}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	targets, err := client.FileTargets(ctx)
+	snapshot := taildropSnapshot{
+		State: "ready", Targets: []taildropTargetSummary{},
+		WaitingFiles: []taildropWaitingFileSummary{}, Transfer: transfer,
+	}
+	targetCtx, targetCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	targets, err := client.FileTargets(targetCtx)
+	targetCancel()
 	if err != nil {
 		snapshot.State = "unavailable"
 		if strings.Contains(strings.ToLower(err.Error()), "file sharing not enabled") {
@@ -708,7 +741,29 @@ func buildTaildropSnapshot(client *local.Client, transfer taildropTransferSnapsh
 		return snapshot
 	}
 	snapshot.Targets = summarizeTaildropTargets(targets)
+	inboxCtx, inboxCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	waitingFiles, err := client.WaitingFiles(inboxCtx)
+	inboxCancel()
+	if err != nil {
+		snapshot.InboxReason = "query_failed"
+		return snapshot
+	}
+	snapshot.WaitingFiles = summarizeTaildropWaitingFiles(waitingFiles)
 	return snapshot
+}
+
+func summarizeTaildropWaitingFiles(files []apitype.WaitingFile) []taildropWaitingFileSummary {
+	summaries := make([]taildropWaitingFileSummary, 0, len(files))
+	for _, file := range files {
+		if !validTaildropBaseName(file.Name) || file.Size < 0 {
+			continue
+		}
+		summaries = append(summaries, taildropWaitingFileSummary{Name: file.Name, Size: file.Size})
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		return strings.ToLower(summaries[i].Name) < strings.ToLower(summaries[j].Name)
+	})
+	return summaries
 }
 
 func summarizeTaildropTargets(targets []apitype.FileTarget) []taildropTargetSummary {
@@ -730,6 +785,7 @@ func summarizeTaildropTargets(targets []apitype.FileTarget) []taildropTargetSumm
 			Name:        name,
 			OS:          target.Node.Hostinfo.OS(),
 			DeviceModel: target.Node.Hostinfo.DeviceModel(),
+			DeviceType:  classifyPeerDevice(target.Node.Hostinfo.OS(), target.Node.Hostinfo.DeviceModel()),
 			Online:      online,
 		})
 	}
@@ -800,7 +856,7 @@ func (b *backendController) taildropSend(requestText string) string {
 	b.taildropMu.Unlock()
 
 	lookupCtx, lookupCancel := context.WithTimeout(ctx, 5*time.Second)
-	targetID, targetName, lookupErr := resolveTaildropTarget(lookupCtx, client, request.TargetKey)
+	targetID, targetName, targetIP, lookupErr := resolveTaildropTarget(lookupCtx, client, request.TargetKey)
 	lookupCancel()
 	if lookupErr != nil {
 		return marshalTaildropTransfer(b.finishTaildropTransfer(
@@ -809,6 +865,10 @@ func (b *backendController) taildropSend(requestText string) string {
 	b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
 		snapshot.TargetName = targetName
 	})
+	// A PeerAPI HEAD request exercises the same path used by Taildrop and gives
+	// magicsock a chance to establish a direct route before the large PUT starts.
+	// Failure is intentionally non-fatal: the subsequent PUT can still use DERP.
+	warmTaildropPeer(ctx, client, targetIP)
 
 	var completedBytes int64
 	for index, file := range files {
@@ -816,41 +876,57 @@ func (b *backendController) taildropSend(requestText string) string {
 			return marshalTaildropTransfer(b.finishTaildropTransfer(
 				request.RequestID, "failed", classifyTaildropSendError(err)))
 		}
-		handle, openErr := os.Open(file.Path)
-		if openErr != nil {
-			return marshalTaildropTransfer(b.finishTaildropTransfer(request.RequestID, "failed", "file_unavailable"))
-		}
-		info, statErr := handle.Stat()
-		if statErr != nil || !info.Mode().IsRegular() || info.Size() != file.Size {
-			handle.Close()
-			return marshalTaildropTransfer(b.finishTaildropTransfer(request.RequestID, "failed", "file_changed"))
-		}
+		var pushErr error
+		for attempt := 1; attempt <= taildropSendMaxAttempts; attempt++ {
+			if attempt > 1 {
+				if !waitForTaildropRetry(ctx, time.Duration(attempt-1)*500*time.Millisecond) {
+					pushErr = ctx.Err()
+					break
+				}
+				warmTaildropPeer(ctx, client, targetIP)
+			}
 
-		b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
-			snapshot.State = "sending"
-			snapshot.FileName = file.Name
-			snapshot.FileIndex = index + 1
-			snapshot.FileBytes = 0
-			snapshot.FileSize = file.Size
-			snapshot.BytesSent = completedBytes
-		})
-		progressReader := &taildropProgressReader{
-			reader: handle,
-			onRead: func(read int) {
-				b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
-					snapshot.FileBytes += int64(read)
-					snapshot.BytesSent = completedBytes + snapshot.FileBytes
-				})
-			},
+			handle, openErr := os.Open(file.Path)
+			if openErr != nil {
+				return marshalTaildropTransfer(b.finishTaildropTransfer(
+					request.RequestID, "failed", "file_unavailable"))
+			}
+			info, statErr := handle.Stat()
+			if statErr != nil || !info.Mode().IsRegular() || info.Size() != file.Size {
+				handle.Close()
+				return marshalTaildropTransfer(b.finishTaildropTransfer(
+					request.RequestID, "failed", "file_changed"))
+			}
+
+			b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
+				snapshot.State = "sending"
+				snapshot.FileName = file.Name
+				snapshot.FileIndex = index + 1
+				snapshot.FileBytes = 0
+				snapshot.FileSize = file.Size
+				snapshot.BytesSent = completedBytes
+			})
+			progressReader := &taildropProgressReader{
+				reader: handle,
+				onRead: func(read int) {
+					b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
+						snapshot.FileBytes += int64(read)
+						snapshot.BytesSent = completedBytes + snapshot.FileBytes
+					})
+				},
+			}
+			pushErr = client.PushFile(ctx, targetID, file.Size, file.Name, progressReader)
+			closeErr := handle.Close()
+			if pushErr == nil && closeErr != nil {
+				pushErr = closeErr
+			}
+			if pushErr == nil || !isTransientTaildropSendError(pushErr) {
+				break
+			}
 		}
-		pushErr := client.PushFile(ctx, targetID, file.Size, file.Name, progressReader)
-		closeErr := handle.Close()
 		if pushErr != nil {
 			return marshalTaildropTransfer(b.finishTaildropTransfer(
 				request.RequestID, "failed", classifyTaildropSendError(pushErr)))
-		}
-		if closeErr != nil {
-			return marshalTaildropTransfer(b.finishTaildropTransfer(request.RequestID, "failed", "file_unavailable"))
 		}
 		completedBytes += file.Size
 		b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
@@ -860,6 +936,176 @@ func (b *backendController) taildropSend(requestText string) string {
 	}
 
 	return marshalTaildropTransfer(b.finishTaildropTransfer(request.RequestID, "completed", ""))
+}
+
+func (b *backendController) taildropCancel() string {
+	b.cancelTaildropTransfer("cancelled")
+	return marshalTaildropTransfer(b.taildropTransferSnapshot())
+}
+
+func (b *backendController) taildropReceive(requestText string) string {
+	var request taildropReceiveRequest
+	if err := json.Unmarshal([]byte(requestText), &request); err != nil {
+		return marshalTaildropReceive(taildropReceiveResult{State: "failed", Reason: "invalid_request"})
+	}
+	result := taildropReceiveResult{
+		RequestID: request.RequestID, Action: request.Action, State: "failed", Name: request.Name,
+	}
+	if err := validateTaildropReceiveRequest(request); err != nil {
+		result.Reason = "invalid_request"
+		return marshalTaildropReceive(result)
+	}
+
+	b.mu.Lock()
+	client := b.client
+	starting := b.starting
+	b.mu.Unlock()
+	if client == nil || starting {
+		result.Reason = "backend_unavailable"
+		return marshalTaildropReceive(result)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if request.Action == "clear" {
+		listCtx, listCancel := context.WithTimeout(ctx, 10*time.Second)
+		waitingFiles, err := client.WaitingFiles(listCtx)
+		listCancel()
+		if err != nil {
+			result.Reason = classifyTaildropReceiveError(err)
+			return marshalTaildropReceive(result)
+		}
+		for _, file := range waitingFiles {
+			deleteCtx, deleteCancel := context.WithTimeout(ctx, 10*time.Second)
+			err = client.DeleteWaitingFile(deleteCtx, file.Name)
+			deleteCancel()
+			if err != nil {
+				result.Reason = classifyTaildropReceiveError(err)
+				return marshalTaildropReceive(result)
+			}
+		}
+		result.State = "completed"
+		result.Size = int64(len(waitingFiles))
+		return marshalTaildropReceive(result)
+	}
+	if request.Action == "delete" {
+		deleteCtx, deleteCancel := context.WithTimeout(ctx, 10*time.Second)
+		err := client.DeleteWaitingFile(deleteCtx, request.Name)
+		deleteCancel()
+		if err != nil {
+			result.Reason = classifyTaildropReceiveError(err)
+			return marshalTaildropReceive(result)
+		}
+		result.State = "completed"
+		return marshalTaildropReceive(result)
+	}
+
+	reader, size, err := client.GetWaitingFile(ctx, request.Name)
+	if err != nil {
+		result.Reason = classifyTaildropReceiveError(err)
+		return marshalTaildropReceive(result)
+	}
+	defer reader.Close()
+	if size < 0 {
+		result.Reason = "invalid_result"
+		return marshalTaildropReceive(result)
+	}
+	if err := stageTaildropWaitingFile(reader, size, request.InboxRoot, request.Path); err != nil {
+		result.Reason = classifyTaildropReceiveError(err)
+		return marshalTaildropReceive(result)
+	}
+	result.State = "staged"
+	result.Size = size
+	result.Path = request.Path
+	return marshalTaildropReceive(result)
+}
+
+func validateTaildropReceiveRequest(request taildropReceiveRequest) error {
+	if request.RequestID <= 0 ||
+		(request.Action != "stage" && request.Action != "delete" && request.Action != "clear") {
+		return errors.New("invalid receive request metadata")
+	}
+	if request.Action == "clear" {
+		if request.Name != "" || request.InboxRoot != "" || request.Path != "" {
+			return errors.New("clear request contains file metadata")
+		}
+		return nil
+	}
+	if !validTaildropBaseName(request.Name) {
+		return errors.New("invalid receive file name")
+	}
+	if request.Action == "delete" {
+		if request.InboxRoot != "" || request.Path != "" {
+			return errors.New("delete request contains a staging path")
+		}
+		return nil
+	}
+	if !filepath.IsAbs(request.InboxRoot) || !filepath.IsAbs(request.Path) {
+		return errors.New("staging path is not absolute")
+	}
+	wantPath := filepath.Join(filepath.Clean(request.InboxRoot), fmt.Sprintf("%d.taildrop", request.RequestID))
+	if filepath.Clean(request.Path) != wantPath {
+		return errors.New("unexpected staging path")
+	}
+	return nil
+}
+
+func validTaildropBaseName(name string) bool {
+	return name != "" && len(name) <= 255 && name == filepath.Base(name) && name != "." && name != ".." &&
+		!strings.ContainsAny(name, "/\\") && !strings.ContainsRune(name, '\x00')
+}
+
+func stageTaildropWaitingFile(reader io.Reader, size int64, rootPath, destinationPath string) (returnErr error) {
+	root, err := filepath.EvalSymlinks(filepath.Clean(rootPath))
+	if err != nil {
+		return err
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(filepath.Clean(destinationPath)))
+	if err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(root, parent)
+	if err != nil || (relative != "." && (relative == ".." ||
+		strings.HasPrefix(relative, ".."+string(filepath.Separator)))) {
+		return errors.New("staging file outside inbox")
+	}
+	if _, err := os.Lstat(destinationPath); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return errors.New("staging file already exists")
+	}
+	temporaryPath := destinationPath + ".tmp"
+	file, err := os.OpenFile(temporaryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			if closeErr := file.Close(); returnErr == nil && closeErr != nil {
+				returnErr = closeErr
+			}
+		}
+		if returnErr != nil {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	written, err := io.Copy(file, reader)
+	if err != nil {
+		return err
+	}
+	if written != size {
+		return fmt.Errorf("received size mismatch: got %d, want %d", written, size)
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	closed = true
+	if err := os.Rename(temporaryPath, destinationPath); err != nil {
+		return err
+	}
+	return nil
 }
 
 func validateTaildropSendRequest(request taildropSendRequest) ([]validatedTaildropFile, int64, error) {
@@ -917,10 +1163,10 @@ func validPeerKey(key string) bool {
 
 func resolveTaildropTarget(
 	ctx context.Context, client *local.Client, targetKey string,
-) (tailcfg.StableNodeID, string, error) {
+) (tailcfg.StableNodeID, string, netip.Addr, error) {
 	targets, err := client.FileTargets(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", netip.Addr{}, err
 	}
 	for _, target := range targets {
 		if target.Node == nil || target.Node.StableID.IsZero() || peerStableKey(target.Node.StableID) != targetKey {
@@ -930,9 +1176,52 @@ func resolveTaildropTarget(
 		if name == "" {
 			name = strings.TrimSuffix(target.Node.Name, ".")
 		}
-		return target.Node.StableID, name, nil
+		var targetIP netip.Addr
+		for _, prefix := range target.Node.Addresses {
+			if address := prefix.Addr(); address.IsValid() {
+				targetIP = address
+				if address.Is4() {
+					break
+				}
+			}
+		}
+		return target.Node.StableID, name, targetIP, nil
 	}
-	return "", "", errors.New("target not found")
+	return "", "", netip.Addr{}, errors.New("target not found")
+}
+
+func warmTaildropPeer(ctx context.Context, client *local.Client, targetIP netip.Addr) {
+	if client == nil || !targetIP.IsValid() || ctx.Err() != nil {
+		return
+	}
+	// A disco ping is the path-discovery primitive used by `tailscale ping`.
+	// Repeat briefly so a LAN endpoint learned through DERP can be selected
+	// before the PeerAPI TCP connection is opened.
+	for attempt := 0; attempt < 3 && ctx.Err() == nil; attempt++ {
+		discoCtx, discoCancel := context.WithTimeout(ctx, 3*time.Second)
+		result, _ := client.Ping(discoCtx, targetIP, tailcfg.PingDisco)
+		discoCancel()
+		if result != nil && result.Err == "" && (result.Endpoint != "" || result.PeerRelay != "") {
+			break
+		}
+		if !waitForTaildropRetry(ctx, 250*time.Millisecond) {
+			return
+		}
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	client.Ping(pingCtx, targetIP, tailcfg.PingPeerAPI)
+}
+
+func waitForTaildropRetry(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (b *backendController) replaceTaildropTransfer(snapshot taildropTransferSnapshot) {
@@ -995,6 +1284,9 @@ func classifyTaildropSendError(err error) string {
 	}
 	message := strings.ToLower(err.Error())
 	switch {
+	case strings.Contains(message, "deadline exceeded"), strings.Contains(message, "i/o timeout"),
+		strings.Contains(message, "timed out"):
+		return "timeout"
 	case strings.Contains(message, "target not found"), strings.Contains(message, "node not found"):
 		return "target_unavailable"
 	case strings.Contains(message, "file sharing not enabled"):
@@ -1004,13 +1296,58 @@ func classifyTaildropSendError(err error) string {
 	case strings.Contains(message, "offline"), strings.Contains(message, "no route"),
 		strings.Contains(message, "connection refused"), strings.Contains(message, "connection reset"):
 		return "target_offline"
+	case strings.Contains(message, "unexpected eof"), strings.Contains(message, "broken pipe"),
+		strings.Contains(message, "closed network connection"), strings.Contains(message, "connection closed"),
+		strings.Contains(message, "bad gateway"), strings.Contains(message, "stream error"):
+		return "network_interrupted"
 	default:
 		return "send_failed"
 	}
 }
 
+func isTransientTaildropSendError(err error) bool {
+	switch classifyTaildropSendError(err) {
+	case "timeout", "target_offline", "network_interrupted", "send_failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func classifyTaildropReceiveError(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, os.ErrNotExist):
+		return "file_unavailable"
+	case errors.Is(err, os.ErrPermission):
+		return "permission_denied"
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "not found"), strings.Contains(message, "no such file"):
+		return "file_unavailable"
+	case strings.Contains(message, "no space"):
+		return "no_space"
+	case strings.Contains(message, "permission denied"):
+		return "permission_denied"
+	default:
+		return "receive_failed"
+	}
+}
+
 func marshalTaildropTransfer(snapshot taildropTransferSnapshot) string {
 	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return `{"state":"failed","reason":"invalid_result"}`
+	}
+	return string(encoded)
+}
+
+func marshalTaildropReceive(result taildropReceiveResult) string {
+	encoded, err := json.Marshal(result)
 	if err != nil {
 		return `{"state":"failed","reason":"invalid_result"}`
 	}
