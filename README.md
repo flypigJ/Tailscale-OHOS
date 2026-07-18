@@ -1,8 +1,9 @@
 # Tailscale for HarmonyOS NEXT
 
 This repository is a working native HarmonyOS NEXT port of the Tailscale
-userspace client. It is currently an engineering MVP, not a release-ready
-consumer application.
+userspace client. Release `0.7.10` packages the current connection, device,
+exit-node, self-hosted control-server, account, and diagnostics experience for
+AppGallery distribution.
 
 ## Current milestone
 
@@ -62,7 +63,10 @@ positive DNS answer and successful peer traffic are both observed. Until then,
 do not claim complete MagicDNS compatibility in the user interface.
 
 The bilingual Chinese/English UI uses the SDK 23 HDS floating bottom navigation
-with immersive system material. Home owns connection state, the single
+with immersive system material. The `0.7.10` release exposes Home and Settings;
+the in-progress Taildrop transfer tab remains hidden until its send workflow,
+cleanup behavior, history UI, and device coverage meet the release gate. Home
+owns connection state, the single
 `Connect` / `Disconnect` action, exit-node selection, the read-only peer view,
 Settings owns persistent disconnected-state controls for subnet-route acceptance,
 Tailscale DNS, and LAN access while using an exit node, the four-level
@@ -73,6 +77,11 @@ available only while disconnected. Lower-level probes remain behind a
 collapsed engineering-diagnostics control on the Settings page.
 The destructive logout action is intentionally not exercised by automated
 real-device regression checks.
+
+On first launch, the app does not start the Tailscale backend until the user
+confirms a control-server URL in Settings. The official Tailscale login server
+is provided as the default, and compatible self-hosted control servers can be
+entered explicitly.
 
 This project intentionally does not request or implement application
 auto-start. After a device reboot, the app rejects the previous session's stale

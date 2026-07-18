@@ -14,20 +14,24 @@ export interface DiagnosticEvent {
 
 export class DiagnosticEventStore {
   static record(filesDir: string, source: string, event: string, phase: string, code: number = 0): void {
-    const safeSource: string = DiagnosticEventStore.safeToken(source, 'unknown');
-    const item: DiagnosticEvent = {
-      timestampMs: Date.now(),
-      source: safeSource,
-      event: DiagnosticEventStore.safeToken(event, 'unknown'),
-      phase: DiagnosticEventStore.safeToken(phase, 'unknown'),
-      code: Number.isFinite(code) ? code : 0
-    };
-    const path: string = DiagnosticEventStore.eventFilePath(filesDir, safeSource);
-    const events: DiagnosticEvent[] = DiagnosticEventStore.readFile(path);
-    events.push(item);
-    const retained: DiagnosticEvent[] = events.length > MAX_EVENTS_PER_PROCESS ?
-      events.slice(events.length - MAX_EVENTS_PER_PROCESS) : events;
-    DiagnosticEventStore.writeFile(path, retained);
+    try {
+      const safeSource: string = DiagnosticEventStore.safeToken(source, 'unknown');
+      const item: DiagnosticEvent = {
+        timestampMs: Date.now(),
+        source: safeSource,
+        event: DiagnosticEventStore.safeToken(event, 'unknown'),
+        phase: DiagnosticEventStore.safeToken(phase, 'unknown'),
+        code: Number.isFinite(code) ? code : 0
+      };
+      const path: string = DiagnosticEventStore.eventFilePath(filesDir, safeSource);
+      const events: DiagnosticEvent[] = DiagnosticEventStore.readFile(path);
+      events.push(item);
+      const retained: DiagnosticEvent[] = events.length > MAX_EVENTS_PER_PROCESS ?
+        events.slice(events.length - MAX_EVENTS_PER_PROCESS) : events;
+      DiagnosticEventStore.writeFile(path, retained);
+    } catch (_error) {
+      // Diagnostics are best-effort and must never affect the VPN lifecycle.
+    }
   }
 
   static load(filesDir: string): DiagnosticEvent[] {
@@ -54,10 +58,10 @@ export class DiagnosticEventStore {
   }
 
   private static readFile(path: string): DiagnosticEvent[] {
-    if (!fileIo.accessSync(path)) {
-      return [];
-    }
     try {
+      if (!fileIo.accessSync(path)) {
+        return [];
+      }
       const text: string = fileIo.readTextSync(path);
       if (text.trim().length === 0) {
         return [];

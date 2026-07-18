@@ -4,7 +4,7 @@
 
 Taildrop is feasible in this app with the bundled Tailscale 1.86.5 code. The network protocol, PeerAPI receiver, target filtering, retry/resume logic, staging-file manager, and LocalAPI client methods are already present upstream. The main work is platform integration: register the Taildrop extension in the Go binary, bridge requests into the VPN Extension process, and move files between HarmonyOS Picker URIs and the app sandbox.
 
-The recommended first release is an in-app send/receive experience. System share-sheet integration can follow after the transfer core is stable.
+The recommended Taildrop release is an in-app send/receive experience. System share-sheet integration can follow after the transfer core is stable. Taildrop is not exposed in the `0.7.10` AppGallery build.
 
 ## What already exists upstream
 
@@ -23,9 +23,9 @@ Relevant upstream code:
 - [Target eligibility and receive inbox](https://github.com/tailscale/tailscale/blob/v1.86.5/feature/taildrop/ext.go#L277-L410)
 - [Partial-file receive and atomic finalize](https://github.com/tailscale/tailscale/blob/v1.86.5/feature/taildrop/send.go#L61-L164)
 
-## Current repository gap
+## Current repository status
 
-The app uses `tsnet.Server`, but the Go binary does not currently blank-import `tailscale.com/feature/taildrop` (or `feature/condregister`). Therefore the Taildrop extension and its LocalAPI/PeerAPI handlers are not registered in the current binary even though their source is bundled.
+The Go binary now blank-imports `tailscale.com/feature/taildrop`, and the VPN Extension contains the initial target-discovery, staged-send, and transfer-snapshot bridge. This remains development code: the device-row send action, failure-safe staging cleanup, transfer-history UI, receiving flow, and full device validation are not complete. For that reason the `0.7.10` release removes the transfer page from both compact and wide navigation while retaining the implementation for continued development.
 
 The UI process also stops its own backend before starting `TailscaleVpnExtensionAbility`. Taildrop must therefore execute in the VPN Extension process, where the live `tsnet.Server` and its `local.Client` exist. Calling a UI-process NAPI function directly would address a different, stopped Go runtime.
 

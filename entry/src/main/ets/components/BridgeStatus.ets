@@ -253,7 +253,7 @@ export struct BridgeStatus {
     keyExpiryUnixMs: 0
   };
   @State avatarLoadFailed: boolean = false;
-  @State appVersion: string = '0.8.31';
+  @State appVersion: string = '0.7.10';
   @State tailscaleVersion: string = '—';
   @State exitNodeStatus: string = '未使用出口节点';
   @State logoutStatus: string = '';
@@ -437,7 +437,7 @@ export struct BridgeStatus {
 
   private openControlServerSettings(): void {
     this.controlServerTipVisible = false;
-    this.navigateToTab(2);
+    this.navigateToTab(1);
     this.showToast($r('app.string.control_server_required_to_connect'));
   }
 
@@ -4249,16 +4249,36 @@ export struct BridgeStatus {
   }
 
   @Builder
+  private HomeTabBar() {
+    Column({ space: 2 }) {
+      Image($r('app.media.tab_home'))
+        .width(24)
+        .height(24)
+        .fillColor(this.currentTab === 0 ? $r('sys.color.icon_emphasize') :
+          $r('sys.color.icon_secondary'))
+      Text($r('app.string.tab_home'))
+        .fontSize(10)
+        .fontColor(this.currentTab === 0 ? $r('sys.color.font_emphasize') :
+          $r('sys.color.font_secondary'))
+        .maxLines(1)
+    }
+    .id('tab-home')
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
   private SettingsTabBar() {
     Column({ space: 2 }) {
       Image($r('app.media.tab_settings'))
         .width(24)
         .height(24)
-        .fillColor(this.currentTab === 2 ? $r('sys.color.icon_emphasize') :
+        .fillColor(this.currentTab === 1 ? $r('sys.color.icon_emphasize') :
           $r('sys.color.icon_secondary'))
       Text($r('app.string.tab_settings'))
         .fontSize(10)
-        .fontColor(this.currentTab === 2 ? $r('sys.color.font_emphasize') :
+        .fontColor(this.currentTab === 1 ? $r('sys.color.font_emphasize') :
           $r('sys.color.font_secondary'))
         .maxLines(1)
     }
@@ -4294,30 +4314,7 @@ export struct BridgeStatus {
       TabContent() {
         this.HomePage()
       }
-      .tabBar(new BottomTabBarStyle($r('app.media.tab_home'), $r('app.string.tab_home'))
-        .id('tab-home')
-        .labelStyle({
-          unselectedColor: $r('sys.color.font_secondary'),
-          selectedColor: $r('sys.color.font_emphasize')
-        })
-        .iconStyle({
-          unselectedColor: $r('sys.color.icon_secondary'),
-          selectedColor: $r('sys.color.icon_emphasize')
-        }))
-
-      TabContent() {
-        this.TransferPage()
-      }
-      .tabBar(new BottomTabBarStyle($r('app.media.tab_transfer'), $r('app.string.tab_transfer'))
-        .id('tab-transfer')
-        .labelStyle({
-          unselectedColor: $r('sys.color.font_secondary'),
-          selectedColor: $r('sys.color.font_emphasize')
-        })
-        .iconStyle({
-          unselectedColor: $r('sys.color.icon_secondary'),
-          selectedColor: $r('sys.color.icon_emphasize')
-        }))
+      .tabBar(this.HomeTabBar())
 
       TabContent() {
         this.SettingsPage()
@@ -4327,6 +4324,7 @@ export struct BridgeStatus {
     .vertical(false)
     .scrollable(true)
     .animationDuration(320)
+    .cachedMaxCount(2, TabsCacheMode.CACHE_BOTH_SIDE)
     .barMode(BarMode.Fixed)
     .barHeight(56)
     .barOverlap(true)
@@ -4349,7 +4347,7 @@ export struct BridgeStatus {
     .divider({ mode: DividerMode.NONE })
     .onSelected((index: number) => {
       this.currentTab = index;
-      if (index === 2 && this.controlServerTipVisible) {
+      if (index === 1 && this.controlServerTipVisible) {
         this.controlServerTipVisible = false;
         this.recordDiagnosticEvent('control_server_tip_dismissed', 'settings_opened');
       }
@@ -4480,20 +4478,6 @@ export struct BridgeStatus {
       }
       .tabBar(new BottomTabBarStyle($r('app.media.tab_home'), $r('app.string.tab_home'))
         .id('tab-home')
-        .labelStyle({
-          unselectedColor: $r('sys.color.font_secondary'),
-          selectedColor: $r('sys.color.font_emphasize')
-        })
-        .iconStyle({
-          unselectedColor: $r('sys.color.icon_secondary'),
-          selectedColor: $r('sys.color.icon_emphasize')
-        }))
-
-      TabContent() {
-        this.TransferPage()
-      }
-      .tabBar(new BottomTabBarStyle($r('app.media.tab_transfer'), $r('app.string.tab_transfer'))
-        .id('tab-transfer')
         .labelStyle({
           unselectedColor: $r('sys.color.font_secondary'),
           selectedColor: $r('sys.color.font_emphasize')
