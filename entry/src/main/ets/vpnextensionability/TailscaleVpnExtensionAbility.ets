@@ -1,10 +1,12 @@
 import { Want } from '@kit.AbilityKit';
 import { vpnExtension, VpnExtensionAbility } from '@kit.NetworkKit';
-import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileIo } from '@kit.CoreFileKit';
 import nativeBridge from 'libtailscale_ohos.so';
 import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
+import { ControlServerConfig, ControlServerSettings } from '../services/ControlServerConfig';
+import { DeviceNameService } from '../services/DeviceNameService';
 
 const DOMAIN = 0x0000;
 const TAG = 'TailscaleVpn';
@@ -162,6 +164,12 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     if (this.vpnConnection === undefined) {
       return;
     }
+    const controlSettings: ControlServerSettings = ControlServerConfig.load(this.context.filesDir);
+    if (!controlSettings.confirmed) {
+      this.writeStatus('FAILED | VPN backend | control server not configured');
+      this.recordDiagnosticEvent('vpn_control_server_missing', 'preflight');
+      return;
+    }
 
     // Until login is complete, use a documentation-only route that cannot
     // intercept normal device traffic. Once the persistent backend is Running,
@@ -285,7 +293,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       const probeStatus: string = nativeBridge.tunFdProbe(this.tunFd);
       if (backendReady && probeStatus.startsWith('OK')) {
         const restartStatus: string = nativeBridge.backendRestartWithTun(
-          `${this.context.filesDir}/tailscale`, this.deviceModel(), this.tunFd);
+          `${this.context.filesDir}/tailscale`, this.deviceModel(), controlSettings.controlURL, this.tunFd);
         const finalStatus: string = await this.waitForVpnBackend(restartStatus);
         this.writeStatus(finalStatus);
         if (finalStatus.includes('state=Running')) {
@@ -356,7 +364,11 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
 
   private async restoreBackendVpnConfig(): Promise<string> {
     const stateDir: string = `${this.context.filesDir}/tailscale`;
-    nativeBridge.backendStart(stateDir, this.deviceModel());
+    const controlSettings: ControlServerSettings = ControlServerConfig.load(this.context.filesDir);
+    if (!controlSettings.confirmed) {
+      return 'FAILED | VPN config | control server not configured';
+    }
+    nativeBridge.backendStart(stateDir, this.deviceModel(), controlSettings.controlURL);
     let configStatus: string = 'FAILED | VPN config | backend restore timeout';
     for (let attempt: number = 0; attempt < 60; attempt++) {
       configStatus = nativeBridge.backendVpnConfig();
@@ -371,11 +383,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   }
 
   private deviceModel(): string {
-    const marketName: string = deviceInfo.marketName.trim();
-    if (marketName.length > 0 && marketName !== 'default') {
-      return marketName;
-    }
-    return deviceInfo.productModel.trim();
+    return DeviceNameService.model();
   }
 
   private async waitForVpnBackend(initialStatus: string): Promise<string> {
