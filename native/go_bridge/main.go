@@ -65,11 +65,11 @@ func TSProbeEngine() (result *C.char) {
 }
 
 //export TSBackendStart
-func TSBackendStart(stateDir *C.char, deviceModel *C.char) *C.char {
-	if stateDir == nil || deviceModel == nil {
+func TSBackendStart(stateDir *C.char, deviceModel *C.char, controlURL *C.char) *C.char {
+	if stateDir == nil || deviceModel == nil || controlURL == nil {
 		return C.CString("FAILED | backend start | missing startup metadata")
 	}
-	return C.CString(harmonyBackend.start(C.GoString(stateDir), C.GoString(deviceModel)))
+	return C.CString(harmonyBackend.start(C.GoString(stateDir), C.GoString(deviceModel), C.GoString(controlURL)))
 }
 
 //export TSBackendStop
@@ -158,6 +158,14 @@ func TSBackendPeerConnectivity(peerKey *C.char) *C.char {
 	return C.CString(harmonyBackend.peerConnectivity(C.GoString(peerKey)))
 }
 
+//export TSBackendTaildropSend
+func TSBackendTaildropSend(request *C.char) *C.char {
+	if request == nil {
+		return C.CString(`{"state":"failed","reason":"invalid_request"}`)
+	}
+	return C.CString(harmonyBackend.taildropSend(C.GoString(request)))
+}
+
 //export TSBackendMagicDNSProbeURL
 func TSBackendMagicDNSProbeURL() *C.char {
 	return C.CString(harmonyBackend.magicDNSProbeURL())
@@ -169,11 +177,12 @@ func TSBackendArmMagicDNSProbe() *C.char {
 }
 
 //export TSBackendRestartWithTun
-func TSBackendRestartWithTun(stateDir *C.char, deviceModel *C.char, fd C.int) *C.char {
-	if stateDir == nil || deviceModel == nil {
+func TSBackendRestartWithTun(stateDir *C.char, deviceModel *C.char, controlURL *C.char, fd C.int) *C.char {
+	if stateDir == nil || deviceModel == nil || controlURL == nil {
 		return C.CString("FAILED | VPN backend | missing startup metadata")
 	}
-	return C.CString(harmonyBackend.restartWithTun(C.GoString(stateDir), C.GoString(deviceModel), int(fd)))
+	return C.CString(harmonyBackend.restartWithTun(
+		C.GoString(stateDir), C.GoString(deviceModel), C.GoString(controlURL), int(fd)))
 }
 
 //export TSControlProbe

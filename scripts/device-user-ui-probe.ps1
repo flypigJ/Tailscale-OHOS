@@ -90,13 +90,24 @@ try {
   $connected = $homeLayout.Contains('vpn-stop')
   $authenticated = $homeLayout.Contains('peer-summary')
   $homeTabVisible = $homeLayout.Contains('tab-home')
+  $transferTabVisible = $homeLayout.Contains('tab-transfer')
   $settingsTabVisible = $homeLayout.Contains('tab-settings')
   $exitNodeOnHome = $homeLayout.Contains('exit-node-status')
   $routeToggleOnHome = $homeLayout.Contains('route-all-toggle')
   $dnsToggleOnHome = $homeLayout.Contains('tailscale-dns-toggle')
   $lanToggleOnHome = $homeLayout.Contains('exit-node-lan-toggle')
 
-  $settingsTab = Get-NodeCenter $homeLayout 'tab-settings'
+  $transferTab = Get-NodeCenter $homeLayout 'tab-transfer'
+  & $hdc -t $target shell uitest uiInput click $transferTab.X $transferTab.Y | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Transfer tab tap failed.'
+  }
+  Start-Sleep -Milliseconds 700
+  $transferLayout = Receive-Layout
+  $transferStatusVisible = $transferLayout.Contains('taildrop-status-title')
+  $transferTargetsVisible = $transferLayout.Contains('taildrop-targets-panel')
+
+  $settingsTab = Get-NodeCenter $transferLayout 'tab-settings'
   & $hdc -t $target shell uitest uiInput click $settingsTab.X $settingsTab.Y | Out-Null
   if ($LASTEXITCODE -ne 0) {
     throw 'Settings tab tap failed.'
@@ -140,7 +151,8 @@ try {
   }
 
   [pscustomobject]@{
-    Result = if ($appVisible -and $homeTabVisible -and $settingsTabVisible -and
+    Result = if ($appVisible -and $homeTabVisible -and $transferTabVisible -and
+      $settingsTabVisible -and $transferStatusVisible -and
       $settingsVisible -and $glowSettingsVisible -and $engineeringMenuVisible -and
       $exitNodeOnHome -and $safeAccountState -and $networkControlsAbsentFromHome -and
       $networkPanelOnSettings -and $safeSettingsConnectionState -and $appVersionVisible -and
@@ -161,6 +173,9 @@ try {
     NetworkPanelOnSettings = $networkPanelOnSettings
     SettingsSafeForConnectionState = $safeSettingsConnectionState
     HomeTabVisible = $homeTabVisible
+    TransferTabVisible = $transferTabVisible
+    TransferStatusVisible = $transferStatusVisible
+    TransferTargetsVisible = $transferTargetsVisible
     SettingsTabVisible = $settingsTabVisible
     GlowSettingsVisible = $glowSettingsVisible
     AppVersionVisible = $appVersionVisible

@@ -19,7 +19,8 @@ struct AsyncStringWork {
 enum class AsyncInputOperation {
     SetExitNode,
     SetNetworkSetting,
-    PeerConnectivity
+    PeerConnectivity,
+    TaildropSend
 };
 
 struct AsyncInputWork {
@@ -97,8 +98,10 @@ void ExecuteAsyncInput(napi_env env, void* data)
         message = TSBackendSetExitNode(const_cast<char*>(work->input.c_str()));
     } else if (work->operation == AsyncInputOperation::SetNetworkSetting) {
         message = TSBackendSetNetworkSetting(const_cast<char*>(work->input.c_str()), work->enabled ? 1 : 0);
-    } else {
+    } else if (work->operation == AsyncInputOperation::PeerConnectivity) {
         message = TSBackendPeerConnectivity(const_cast<char*>(work->input.c_str()));
+    } else {
+        message = TSBackendTaildropSend(const_cast<char*>(work->input.c_str()));
     }
     if (message == nullptr) {
         work->succeeded = false;
@@ -222,6 +225,28 @@ napi_value BackendPeerConnectivityAsync(napi_env env, napi_callback_info info)
         env, AsyncInputOperation::PeerConnectivity, key.data(), false, "TailscaleBackendPeerConnectivity");
 }
 
+napi_value BackendTaildropSendAsync(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "backendTaildropSendAsync requires one request");
+        return nullptr;
+    }
+    size_t length = 0;
+    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "Taildrop request must be a string");
+        return nullptr;
+    }
+    std::vector<char> request(length + 1, '\0');
+    if (napi_get_value_string_utf8(env, args[0], request.data(), request.size(), &length) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to read the Taildrop request");
+        return nullptr;
+    }
+    return CreateAsyncInputPromise(
+        env, AsyncInputOperation::TaildropSend, request.data(), false, "TailscaleBackendTaildropSend");
+}
+
 napi_value BackendSnapshotAsync(napi_env env, napi_callback_info info)
 {
     (void)info;
@@ -316,10 +341,10 @@ napi_value ProbeEngine(napi_env env, napi_callback_info info)
 
 napi_value BackendStart(napi_env env, napi_callback_info info)
 {
-    size_t argc = 2;
-    napi_value args[2] = {nullptr, nullptr};
-    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 2) {
-        napi_throw_type_error(env, nullptr, "backendStart requires state directory and device model");
+    size_t argc = 3;
+    napi_value args[3] = {nullptr, nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
+        napi_throw_type_error(env, nullptr, "backendStart requires state directory, device model and control server");
         return nullptr;
     }
     size_t length = 0;
@@ -342,8 +367,18 @@ napi_value BackendStart(napi_env env, napi_callback_info info)
         napi_throw_error(env, nullptr, "Failed to read the backend device model");
         return nullptr;
     }
+    size_t controlLength = 0;
+    if (napi_get_value_string_utf8(env, args[2], nullptr, 0, &controlLength) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "backendStart control server must be a string");
+        return nullptr;
+    }
+    std::vector<char> controlURL(controlLength + 1, '\0');
+    if (napi_get_value_string_utf8(env, args[2], controlURL.data(), controlURL.size(), &controlLength) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to read the backend control server");
+        return nullptr;
+    }
     OH_LOG_INFO(LOG_APP, "Starting the persistent Tailscale LocalBackend");
-    char* message = TSBackendStart(stateDir.data(), deviceModel.data());
+    char* message = TSBackendStart(stateDir.data(), deviceModel.data(), controlURL.data());
     if (message == nullptr) {
         napi_throw_error(env, nullptr, "Tailscale backend start returned a null status string");
         return nullptr;
@@ -665,10 +700,11 @@ napi_value BackendArmMagicDNSProbe(napi_env env, napi_callback_info info)
 
 napi_value BackendRestartWithTun(napi_env env, napi_callback_info info)
 {
-    size_t argc = 3;
-    napi_value args[3] = {nullptr, nullptr, nullptr};
-    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
-        napi_throw_type_error(env, nullptr, "backendRestartWithTun requires state directory, device model and TUN descriptor");
+    size_t argc = 4;
+    napi_value args[4] = {nullptr, nullptr, nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 4) {
+        napi_throw_type_error(env, nullptr,
+            "backendRestartWithTun requires state directory, device model, control server and TUN descriptor");
         return nullptr;
     }
     size_t length = 0;
@@ -691,12 +727,23 @@ napi_value BackendRestartWithTun(napi_env env, napi_callback_info info)
         napi_throw_error(env, nullptr, "Failed to read the VPN backend device model");
         return nullptr;
     }
+    size_t controlLength = 0;
+    if (napi_get_value_string_utf8(env, args[2], nullptr, 0, &controlLength) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "VPN backend control server must be a string");
+        return nullptr;
+    }
+    std::vector<char> controlURL(controlLength + 1, '\0');
+    if (napi_get_value_string_utf8(env, args[2], controlURL.data(), controlURL.size(), &controlLength) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to read the VPN backend control server");
+        return nullptr;
+    }
     int32_t fd = -1;
-    if (napi_get_value_int32(env, args[2], &fd) != napi_ok) {
+    if (napi_get_value_int32(env, args[3], &fd) != napi_ok) {
         napi_throw_type_error(env, nullptr, "VPN TUN descriptor must be an integer");
         return nullptr;
     }
-    char* message = TSBackendRestartWithTun(stateDir.data(), deviceModel.data(), fd);
+    char* message = TSBackendRestartWithTun(
+        stateDir.data(), deviceModel.data(), controlURL.data(), fd);
     if (message == nullptr) {
         napi_throw_error(env, nullptr, "VPN backend restart returned a null status");
         return nullptr;
@@ -789,6 +836,8 @@ static napi_value Init(napi_env env, napi_value exports)
         {"backendPeerProbe", nullptr, BackendPeerProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendPeerProbeAsync", nullptr, BackendPeerProbeAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendPeerConnectivityAsync", nullptr, BackendPeerConnectivityAsync, nullptr, nullptr, nullptr,
+            napi_default, nullptr},
+        {"backendTaildropSendAsync", nullptr, BackendTaildropSendAsync, nullptr, nullptr, nullptr,
             napi_default, nullptr},
         {"backendMagicDNSProbeURL", nullptr, BackendMagicDNSProbeURL, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendMagicDNSProbeURLAsync", nullptr, BackendMagicDNSProbeURLAsync, nullptr, nullptr, nullptr,

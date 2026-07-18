@@ -2,7 +2,7 @@ import nativeBridge from 'libtailscale_ohos.so';
 import { bundleManager, common, Want } from '@kit.AbilityKit';
 import { vpnExtension } from '@kit.NetworkKit';
 import { BusinessError, deviceInfo, pasteboard } from '@kit.BasicServicesKit';
-import { fileIo } from '@kit.CoreFileKit';
+import { fileIo, picker } from '@kit.CoreFileKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
 import {
@@ -10,21 +10,34 @@ import {
   DiagnosticReportResult,
   DiagnosticReportService
 } from '../services/DiagnosticReportService';
+import { DeviceNameService } from '../services/DeviceNameService';
 import {
   BlurStrategy,
   DividerMode,
   HdsNavigation,
   HdsNavigationTitleMode,
   HdsTabs,
+  HdsTabsController,
   ScrollEffectType,
   hdsEffect,
   hdsMaterial
 } from '@kit.UIDesignKit';
+import {
+  ControlServerConfig,
+  ControlServerSettings,
+  DEFAULT_CONTROL_SERVER_URL
+} from '../services/ControlServerConfig';
 
 const MIN_CONNECTION_LOADING_MS: number = 1400;
 const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
 const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
+const TAILDROP_OUTBOX_DIR_NAME: string = 'taildrop-outbox';
+const TAILDROP_SEND_REQUEST_FILE_NAME: string = 'taildrop-send-request.json';
+const TAILDROP_TARGETS_FILE_NAME: string = 'taildrop-targets.json';
+const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
+const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
+const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
 
 interface ExitNodeChoice {
   id: string;
@@ -90,12 +103,94 @@ interface AccountSummary {
   keyExpiryUnixMs: number;
 }
 
+interface TaildropTargetSummary {
+  key: string;
+  name: string;
+  os: string;
+  deviceModel: string;
+  online: boolean;
+}
+
+interface TaildropSnapshot {
+  state: string;
+  reason: string;
+  targets: TaildropTargetSummary[];
+  transfer: TaildropTransferSummary;
+  updatedAtMs: number;
+}
+
+interface TaildropTransferSummary {
+  requestId: number;
+  state: string;
+  reason: string;
+  targetKey: string;
+  targetName: string;
+  fileName: string;
+  fileIndex: number;
+  fileCount: number;
+  fileBytes: number;
+  fileSize: number;
+  bytesSent: number;
+  totalBytes: number;
+  completedAtMs: number;
+}
+
+interface TaildropSendFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
+interface TaildropSendRequest {
+  requestId: number;
+  targetKey: string;
+  outboxRoot: string;
+  files: TaildropSendFile[];
+}
+
+interface TaildropTransferRecord {
+  requestId: number;
+  state: string;
+  reason: string;
+  targetName: string;
+  fileCount: number;
+  totalBytes: number;
+  completedAtMs: number;
+}
+
+interface PersistedPeerSnapshot {
+  peers: PeerSummary[];
+  updatedAtMs: number;
+}
+
+interface VpnStopRequest {
+  requestId: number;
+}
+
+interface VpnStopResponse {
+  requestId: number;
+  status: string;
+}
+
+interface ControlServerTipStateChange {
+  isVisible: boolean;
+}
+
 interface BackendSnapshot {
   status: string;
   exitNodes: ExitNodeChoice[];
   peers: PeerSummary[];
   networkSettings: NetworkSettings;
   account: AccountSummary;
+  taildrop: TaildropSnapshot;
+}
+
+function emptyTaildropTransfer(): TaildropTransferSummary {
+  return {
+    requestId: 0, state: 'idle', reason: '', targetKey: '', targetName: '', fileName: '',
+    fileIndex: 0, fileCount: 0, fileBytes: 0, fileSize: 0, bytesSent: 0, totalBytes: 0,
+    completedAtMs: 0
+  };
 }
 
 class PeerDataSource implements IDataSource {
@@ -177,13 +272,29 @@ export struct BridgeStatus {
     state: '', reason: '', sent: 0, received: 0, lossPercent: 0,
     minLatencyMs: 0, avgLatencyMs: 0, maxLatencyMs: 0
   };
+  @State taildropState: string = 'disconnected';
+  @State taildropReason: string = '';
+  @State taildropTargets: TaildropTargetSummary[] = [];
+  @State taildropTransfer: TaildropTransferSummary = emptyTaildropTransfer();
+  @State taildropHistory: TaildropTransferRecord[] = [];
+  @State taildropPreparing: boolean = false;
   @State loginInProgress: boolean = false;
   @State connectInProgress: boolean = false;
+  @State disconnectInProgress: boolean = false;
   @State backendReady: boolean = false;
   @State backendInitializationVisible: boolean = false;
   @State devicesLoading: boolean = true;
   @State hasAuthenticatedSession: boolean = false;
   @State currentTab: number = 0;
+  @State controlServerURL: string = DEFAULT_CONTROL_SERVER_URL;
+  @State controlServerInput: string = DEFAULT_CONTROL_SERVER_URL;
+  @State controlServerConfirmed: boolean = false;
+  @State controlServerStatus: string = '';
+  @State controlServerEditorVisible: boolean = true;
+  @State controlServerTipVisible: boolean = false;
+  @State controlServerTipMessage: string = '';
+  @State diagnosticActionStatus: string = '';
+  @State diagnosticActionInProgress: boolean = false;
   @State glowLevel: number = 3;
   @State layoutWidth: number = 360;
   @State expandedPeerKeys: string[] = [];
@@ -193,7 +304,9 @@ export struct BridgeStatus {
   private healthPollTimer: number = -1;
   private loginPollTimer: number = -1;
   private magicDNSProbeUrl: string = '';
+  private transferScroller: Scroller = new Scroller();
   private settingsScroller: Scroller = new Scroller();
+  private tabsController: HdsTabsController = new HdsTabsController();
   private diagnosticsTapCount: number = 0;
   private diagnosticsLastTapMs: number = 0;
   private lifecycleTimers: number[] = [];
@@ -206,6 +319,11 @@ export struct BridgeStatus {
   private trafficLastUploadBytes: number = 0;
   private peerConnectivityPollTimer: number = -1;
   private peerConnectivityRequestId: number = 0;
+  private vpnStopPollTimer: number = -1;
+  private vpnStopRequestId: number = 0;
+  private peerSnapshotSignature: string = '';
+  private lastHandledTaildropRequestId: number = 0;
+  private taildropRequestSubmittedAtMs: number = 0;
   private peerDataSource: PeerDataSource = new PeerDataSource();
 
   private applyPeers(peers: PeerSummary[]): void {
@@ -221,9 +339,21 @@ export struct BridgeStatus {
     this.devicesLoading = true;
     this.verifyNativeBridge();
     this.loadAppVersion();
+    this.loadControlServerSettings();
     this.recordDiagnosticEvent('ui_opened', 'lifecycle');
     const vpnIsLive: boolean = this.refreshVpnProbeStatus();
-    if (!vpnIsLive) {
+    if (!this.controlServerConfirmed) {
+      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
+      this.backendReady = true;
+      this.backendInitializationVisible = false;
+      this.devicesLoading = false;
+      if (vpnIsLive) {
+        vpnExtension.stopVpnExtensionAbility(this.vpnWant()).catch(() => {
+          // The extension also refuses to restore its backend without a confirmed server.
+        });
+      }
+      this.scheduleLifecycleTask(() => this.showControlServerTip(), 800);
+    } else if (!vpnIsLive) {
       this.startBackend();
       this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
     } else {
@@ -236,7 +366,7 @@ export struct BridgeStatus {
     // process that was killed just before the UI appeared (for example during
     // an application update) while its last heartbeat still looked current.
     this.scheduleLifecycleTask(() => {
-      if (!this.refreshVpnProbeStatus()) {
+      if (this.controlServerConfirmed && !this.refreshVpnProbeStatus()) {
         this.startBackend();
         this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
       }
@@ -247,11 +377,13 @@ export struct BridgeStatus {
   aboutToDisappear(): void {
     this.lifecycleGeneration++;
     this.vpnConflictDialogVisible = false;
+    this.controlServerTipVisible = false;
     this.stopConnectionPolling();
     this.clearConnectionCompletionTimer();
     this.stopHealthPolling();
     this.stopLoginPolling();
     this.stopPeerConnectivityPolling();
+    this.stopVpnStopPolling();
     this.peerConnectivityInProgress = false;
     this.clearLifecycleTimers();
     this.resetDiagnosticsMode();
@@ -283,6 +415,105 @@ export struct BridgeStatus {
       });
   }
 
+  private loadControlServerSettings(): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const settings: ControlServerSettings = ControlServerConfig.load(context.filesDir);
+    this.controlServerURL = settings.controlURL;
+    this.controlServerInput = settings.controlURL;
+    this.controlServerConfirmed = settings.confirmed;
+    this.controlServerEditorVisible = !settings.confirmed;
+    this.controlServerTipMessage = context.resourceManager.getStringSync(
+      $r('app.string.control_server_first_run_tip').id);
+    this.controlServerStatus = '';
+  }
+
+  private showControlServerTip(): void {
+    if (this.controlServerConfirmed || this.controlServerTipVisible) {
+      return;
+    }
+    this.controlServerTipVisible = true;
+    this.recordDiagnosticEvent('control_server_tip_shown', 'first_run');
+  }
+
+  private openControlServerSettings(): void {
+    this.controlServerTipVisible = false;
+    this.navigateToTab(2);
+    this.showToast($r('app.string.control_server_required_to_connect'));
+  }
+
+  private navigateToTab(index: number): void {
+    if (this.currentTab === index) {
+      return;
+    }
+    this.tabsController.changeIndex(index);
+  }
+
+  private toggleControlServerEditor(): void {
+    const visible: boolean = !this.controlServerEditorVisible;
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseInOut }, () => {
+      this.controlServerEditorVisible = visible;
+    });
+    this.recordDiagnosticEvent(visible ? 'control_server_editor_opened' :
+      'control_server_editor_closed', 'account');
+  }
+
+  private saveControlServer(): void {
+    if (this.isConnected() || this.isConnecting()) {
+      this.controlServerStatus = 'disconnect';
+      this.recordDiagnosticEvent('control_server_confirm_blocked', 'connected');
+      return;
+    }
+    const normalized: string = ControlServerConfig.normalize(this.controlServerInput);
+    if (normalized.length === 0) {
+      this.controlServerStatus = 'invalid';
+      this.recordDiagnosticEvent('control_server_confirm_failed', 'invalid');
+      return;
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const settings: ControlServerSettings | undefined =
+      ControlServerConfig.save(context.filesDir, normalized);
+    if (settings === undefined) {
+      this.controlServerStatus = 'failed';
+      this.recordDiagnosticEvent('control_server_confirm_failed', 'storage');
+      return;
+    }
+    const changed: boolean = !this.controlServerConfirmed || this.controlServerURL !== settings.controlURL;
+    this.controlServerURL = settings.controlURL;
+    this.controlServerInput = settings.controlURL;
+    this.controlServerConfirmed = true;
+    this.controlServerStatus = 'saved';
+    this.controlServerTipVisible = false;
+    this.recordDiagnosticEvent('control_server_confirmed',
+      settings.controlURL === DEFAULT_CONTROL_SERVER_URL ? 'official' : 'custom');
+    this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseInOut }, () => {
+      this.controlServerEditorVisible = false;
+    });
+    if (changed) {
+      this.backendReady = false;
+      this.backendInitializationVisible = true;
+      this.devicesLoading = true;
+      nativeBridge.backendStopAsync()
+        .catch(() => 'FAILED | backend stop')
+        .finally(() => {
+          this.startBackend();
+          this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
+        });
+    }
+  }
+
+  private controlServerStatusText(): ResourceStr {
+    switch (this.controlServerStatus) {
+      case 'saved':
+        return $r('app.string.control_server_saved');
+      case 'disconnect':
+        return $r('app.string.control_server_disconnect_first');
+      case 'failed':
+        return $r('app.string.control_server_save_failed');
+      default:
+        return $r('app.string.control_server_invalid');
+    }
+  }
+
   private verifyNativeBridge(): void {
     try {
       this.nativeStatus = nativeBridge.hello();
@@ -301,13 +532,22 @@ export struct BridgeStatus {
   }
 
   private startBackend(showInitialization: boolean = true): void {
+    if (!this.controlServerConfirmed) {
+      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
+      this.backendReady = true;
+      this.backendInitializationVisible = false;
+      this.devicesLoading = false;
+      return;
+    }
+    this.peerSnapshotSignature = '';
     this.backendReady = false;
     this.backendInitializationVisible = showInitialization;
     this.devicesLoading = true;
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       this.recordDiagnosticEvent('backend_start_requested', showInitialization ? 'visible' : 'silent');
-      this.backendStatus = nativeBridge.backendStart(`${context.filesDir}/tailscale`, this.deviceModel());
+      this.backendStatus = nativeBridge.backendStart(
+        `${context.filesDir}/tailscale`, this.deviceModel(), this.controlServerURL);
     } catch (error) {
       this.recordDiagnosticEvent('backend_start_failed', 'start');
       this.backendStatus = `Tailscale Backend Failed: ${JSON.stringify(error)}`;
@@ -318,14 +558,17 @@ export struct BridgeStatus {
   }
 
   private deviceModel(): string {
-    const marketName: string = deviceInfo.marketName.trim();
-    if (marketName.length > 0 && marketName !== 'default') {
-      return marketName;
-    }
-    return deviceInfo.productModel.trim();
+    return DeviceNameService.model();
   }
 
   private async refreshBackendStatus(): Promise<void> {
+    if (!this.controlServerConfirmed) {
+      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
+      this.backendReady = true;
+      this.backendInitializationVisible = false;
+      this.devicesLoading = false;
+      return;
+    }
     if (this.refreshInFlight) {
       return;
     }
@@ -424,7 +667,8 @@ export struct BridgeStatus {
         loginName: backendAccount.loginName,
         profilePicURL: backendAccount.profilePicURL,
         tailnetName: backendAccount.tailnetName,
-        deviceName: backendAccount.deviceName.length > 0 ? backendAccount.deviceName : this.deviceModel(),
+        deviceName: DeviceNameService.withoutHuaweiBrand(
+          backendAccount.deviceName.length > 0 ? backendAccount.deviceName : this.deviceModel()),
         addresses: backendAccount.addresses,
         needsApproval: backendAccount.needsApproval,
         keyExpired: backendAccount.keyExpired,
@@ -461,7 +705,10 @@ export struct BridgeStatus {
   }
 
   private openSecureLogin(): void {
-    if (this.loginInProgress) {
+    if (this.loginInProgress || !this.controlServerConfirmed) {
+      if (!this.controlServerConfirmed) {
+        this.openControlServerSettings();
+      }
       return;
     }
     this.loginInProgress = true;
@@ -484,7 +731,7 @@ export struct BridgeStatus {
         this.loginPollTimer = setTimeout(() => this.pollSecureLogin(attempt + 1), 400);
         return;
       }
-      if (!authUrl.startsWith('https://login.tailscale.com/')) {
+      if (!authUrl.startsWith('https://') && !authUrl.startsWith('http://')) {
         this.loginHandoffStatus = authUrl.startsWith('FAILED') ? authUrl :
           'FAILED | login URL | rejected unexpected origin';
         this.loginInProgress = false;
@@ -515,6 +762,11 @@ export struct BridgeStatus {
   }
 
   private runControlProbe(): void {
+    if (!this.controlServerConfirmed || this.controlServerURL !== DEFAULT_CONTROL_SERVER_URL) {
+      this.controlProbeStatus = 'SKIPPED | Control TLS probe | official backend not selected';
+      this.recordDiagnosticEvent('control_probe_skipped', 'backend_selection');
+      return;
+    }
     try {
       this.controlProbeStatus = nativeBridge.controlProbe();
     } catch (error) {
@@ -530,6 +782,10 @@ export struct BridgeStatus {
   }
 
   private beginVpnConnection(): void {
+    if (!this.controlServerConfirmed) {
+      this.openControlServerSettings();
+      return;
+    }
     if (this.connectInProgress || this.isConnecting()) {
       return;
     }
@@ -567,7 +823,8 @@ export struct BridgeStatus {
       loginName: account.loginName,
       profilePicURL: account.profilePicURL,
       tailnetName: account.tailnetName,
-      deviceName: account.deviceName.length > 0 ? account.deviceName : this.deviceModel(),
+      deviceName: DeviceNameService.withoutHuaweiBrand(
+        account.deviceName.length > 0 ? account.deviceName : this.deviceModel()),
       addresses: account.addresses,
       needsApproval: account.needsApproval,
       keyExpired: account.keyExpired,
@@ -609,13 +866,77 @@ export struct BridgeStatus {
   }
 
   private stopVpnProbe(): void {
+    if (this.disconnectInProgress) {
+      return;
+    }
     this.clearConnectionCompletionTimer();
     this.setConnectInProgress(false);
+    this.disconnectInProgress = true;
     this.recordDiagnosticEvent('disconnect_requested', 'user');
+    this.stopVpnStopPolling();
+    this.vpnStopRequestId = Date.now();
+    const responsePath: string = this.vpnStopFilePath(VPN_STOP_RESPONSE_FILE_NAME);
+    this.writePrivateTextFile(responsePath, '');
+    const request: VpnStopRequest = { requestId: this.vpnStopRequestId };
+    const requestPath: string = this.vpnStopFilePath(VPN_STOP_REQUEST_FILE_NAME);
+    if (!this.writePrivateTextFile(requestPath, JSON.stringify(request))) {
+      this.finishVpnExtensionStop();
+      return;
+    }
+    this.pollVpnStopResponse(0);
+  }
+
+  private vpnStopFilePath(fileName: string): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${fileName}`;
+  }
+
+  private pollVpnStopResponse(attempt: number): void {
+    if (!this.disconnectInProgress) {
+      return;
+    }
+    if (attempt >= 50) {
+      this.recordDiagnosticEvent('vpn_backend_stop_timeout', 'disconnect');
+      this.finishVpnExtensionStop();
+      return;
+    }
+    const responsePath: string = this.vpnStopFilePath(VPN_STOP_RESPONSE_FILE_NAME);
+    try {
+      if (fileIo.accessSync(responsePath)) {
+        const responseText: string = fileIo.readTextSync(responsePath).trim();
+        if (responseText.length > 0) {
+          const response: VpnStopResponse = JSON.parse(responseText) as VpnStopResponse;
+          if (response.requestId === this.vpnStopRequestId) {
+            this.writePrivateTextFile(responsePath, '');
+            this.backendStatus = response.status;
+            this.finishVpnExtensionStop();
+            return;
+          }
+        }
+      }
+    } catch (_error) {
+      // The Extension may be replacing the response file. Retry briefly before
+      // falling back to the lifecycle stop, whose onDestroy path also closes it.
+    }
+    this.vpnStopPollTimer = setTimeout(() => {
+      this.pollVpnStopResponse(attempt + 1);
+    }, 150);
+  }
+
+  private stopVpnStopPolling(): void {
+    if (this.vpnStopPollTimer >= 0) {
+      clearTimeout(this.vpnStopPollTimer);
+      this.vpnStopPollTimer = -1;
+    }
+  }
+
+  private finishVpnExtensionStop(): void {
+    this.stopVpnStopPolling();
     vpnExtension.stopVpnExtensionAbility(this.vpnWant())
       .then(() => {
         this.recordDiagnosticEvent('disconnect_completed', 'system');
         this.vpnStatus = 'HarmonyOS VPN Extension stopped';
+        this.disconnectInProgress = false;
         this.stopConnectionPolling();
         this.startBackend(false);
         this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
@@ -623,6 +944,7 @@ export struct BridgeStatus {
       .catch((error: BusinessError) => {
         this.recordDiagnosticEvent('disconnect_failed', 'system', error.code);
         this.vpnStatus = `FAILED | VPN stop | code=${error.code}`;
+        this.disconnectInProgress = false;
       });
   }
 
@@ -789,8 +1111,13 @@ export struct BridgeStatus {
       const extensionIsLive: boolean = heartbeatIsFresh && !visibleStatus.includes('destroyed');
       if (extensionIsLive) {
         this.updateTrafficMetrics(visibleStatus, heartbeatMs);
+        if (visibleStatus.includes('state=Running')) {
+          this.refreshPeerSnapshot();
+        }
+        this.refreshTaildropSnapshot();
       } else {
         this.resetTrafficMetrics();
+        this.resetTaildropSnapshot();
       }
       const shouldPromptVpnConflict: boolean = this.connectInProgress &&
         visibleStatus.includes(`code=2203002`);
@@ -853,11 +1180,175 @@ export struct BridgeStatus {
     this.clearConnectionCompletionTimer();
     // Keep every completion path in one explicit transaction. The traffic panel
     // also animates height, opacity, and position so the expansion stays visible.
-    this.getUIContext().animateTo({ duration: 700, curve: Curve.EaseInOut }, () => {
+    this.getUIContext().animateTo({ duration: 500, curve: Curve.EaseInOut }, () => {
       this.vpnStatus = status;
       this.setConnectInProgress(false);
     });
     this.stopConnectionPolling();
+  }
+
+  private taildropSnapshotFilePath(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${TAILDROP_TARGETS_FILE_NAME}`;
+  }
+
+  private peerSnapshotFilePath(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${VPN_PEERS_FILE_NAME}`;
+  }
+
+  private refreshPeerSnapshot(): void {
+    try {
+      const path: string = this.peerSnapshotFilePath();
+      if (!fileIo.accessSync(path)) {
+        return;
+      }
+      const snapshot: PersistedPeerSnapshot = JSON.parse(
+        fileIo.readTextSync(path)) as PersistedPeerSnapshot;
+      const ageMs: number = Date.now() - snapshot.updatedAtMs;
+      if (snapshot.updatedAtMs <= 0 || ageMs < 0 || ageMs > 5000) {
+        return;
+      }
+      const validPeers: PeerSummary[] = snapshot.peers.filter(
+        (peer: PeerSummary) => /^peer-[a-f0-9]{16}$/.test(peer.key) && peer.name.length > 0);
+      const signature: string = JSON.stringify(validPeers);
+      if (signature === this.peerSnapshotSignature) {
+        return;
+      }
+      this.peerSnapshotSignature = signature;
+      this.applyPeers(validPeers);
+      this.devicesLoading = false;
+    } catch (_error) {
+      // The Extension may be replacing the snapshot file. Retry on the next
+      // one-second health poll without discarding the last valid device list.
+    }
+  }
+
+  private resetTaildropSnapshot(): void {
+    this.taildropState = 'disconnected';
+    this.taildropReason = '';
+    this.taildropTargets = [];
+    if (this.taildropTransfer.state === 'queued' || this.taildropTransfer.state === 'sending') {
+      const failed: TaildropTransferSummary = this.taildropTransfer;
+      failed.state = 'failed';
+      failed.reason = 'disconnected';
+      failed.completedAtMs = Date.now();
+      this.applyTaildropTransfer(failed);
+    }
+  }
+
+  private validTaildropTransfer(transfer: TaildropTransferSummary): boolean {
+    if (transfer.state !== 'idle' && transfer.state !== 'queued' && transfer.state !== 'sending' &&
+      transfer.state !== 'completed' && transfer.state !== 'failed') {
+      return false;
+    }
+    return transfer.requestId >= 0 && transfer.fileIndex >= 0 && transfer.fileCount >= 0 &&
+      transfer.fileBytes >= 0 && transfer.fileSize >= 0 && transfer.bytesSent >= 0 &&
+      transfer.totalBytes >= 0;
+  }
+
+  private taildropTransferFailure(
+    transfer: TaildropTransferSummary, reason: string
+  ): TaildropTransferSummary {
+    return {
+      requestId: transfer.requestId,
+      state: 'failed',
+      reason: reason,
+      targetKey: transfer.targetKey,
+      targetName: transfer.targetName,
+      fileName: transfer.fileName,
+      fileIndex: transfer.fileIndex,
+      fileCount: transfer.fileCount,
+      fileBytes: transfer.fileBytes,
+      fileSize: transfer.fileSize,
+      bytesSent: transfer.bytesSent,
+      totalBytes: transfer.totalBytes,
+      completedAtMs: Date.now()
+    };
+  }
+
+  private taildropFailureMessage(reason: string): ResourceStr {
+    switch (reason) {
+      case 'target_unavailable':
+      case 'target_offline':
+        return $r('app.string.transfer_send_target_unavailable');
+      case 'admin_disabled':
+        return $r('app.string.transfer_admin_disabled_title');
+      case 'disconnected':
+        return $r('app.string.transfer_send_disconnected');
+      default:
+        return $r('app.string.transfer_send_failed');
+    }
+  }
+
+  private applyTaildropTransfer(transfer: TaildropTransferSummary): void {
+    if (!this.validTaildropTransfer(transfer)) {
+      return;
+    }
+    if (transfer.state === 'idle' &&
+      (this.taildropTransfer.state === 'queued' || this.taildropTransfer.state === 'sending') &&
+      Date.now() - this.taildropRequestSubmittedAtMs < 5000) {
+      return;
+    }
+    if (transfer.state === 'idle' && this.taildropTransfer.state === 'queued' &&
+      Date.now() - this.taildropRequestSubmittedAtMs >= 5000) {
+      this.applyTaildropTransfer(this.taildropTransferFailure(
+        this.taildropTransfer, 'extension_error'));
+      return;
+    }
+    this.taildropTransfer = transfer;
+    if ((transfer.state === 'completed' || transfer.state === 'failed') && transfer.requestId > 0 &&
+      transfer.requestId !== this.lastHandledTaildropRequestId) {
+      this.lastHandledTaildropRequestId = transfer.requestId;
+      const target: TaildropTargetSummary | undefined = this.taildropTargets.find(
+        (item: TaildropTargetSummary) => item.key === transfer.targetKey);
+      const targetName: string = transfer.targetName.length > 0 ? transfer.targetName :
+        (target === undefined ? 'Tailscale' : target.name);
+      const record: TaildropTransferRecord = {
+        requestId: transfer.requestId,
+        state: transfer.state,
+        reason: transfer.reason,
+        targetName: targetName,
+        fileCount: transfer.fileCount,
+        totalBytes: transfer.totalBytes,
+        completedAtMs: transfer.completedAtMs > 0 ? transfer.completedAtMs : Date.now()
+      };
+      this.taildropHistory = [record].concat(this.taildropHistory).slice(0, 20);
+      this.showToast(transfer.state === 'completed' ?
+        $r('app.string.transfer_send_completed') : this.taildropFailureMessage(transfer.reason));
+    }
+  }
+
+  private refreshTaildropSnapshot(): void {
+    try {
+      const path: string = this.taildropSnapshotFilePath();
+      if (!fileIo.accessSync(path)) {
+        this.taildropState = 'loading';
+        return;
+      }
+      const snapshot: TaildropSnapshot = JSON.parse(fileIo.readTextSync(path)) as TaildropSnapshot;
+      const ageMs: number = Date.now() - snapshot.updatedAtMs;
+      if (snapshot.updatedAtMs <= 0 || ageMs < 0 || ageMs > 5000) {
+        this.taildropState = 'loading';
+        return;
+      }
+      if (snapshot.state !== 'ready' && snapshot.state !== 'disabled' &&
+        snapshot.state !== 'unavailable' && snapshot.state !== 'loading') {
+        this.taildropState = 'unavailable';
+        this.taildropReason = 'invalid_snapshot';
+        this.taildropTargets = [];
+        return;
+      }
+      const validTargets: TaildropTargetSummary[] = snapshot.targets.filter(
+        (target: TaildropTargetSummary) => /^peer-[a-f0-9]{16}$/.test(target.key) && target.name.length > 0);
+      this.taildropState = snapshot.state;
+      this.taildropReason = snapshot.reason;
+      this.taildropTargets = validTargets;
+      this.applyTaildropTransfer(snapshot.transfer);
+    } catch (_error) {
+      // The Extension may be replacing the snapshot file. Keep the previous
+      // valid result and retry on the next one-second health poll.
+    }
   }
 
   private startHealthPolling(): void {
@@ -1133,6 +1624,55 @@ export struct BridgeStatus {
     return peer.os.length > 0 ? this.displayOsName(peer.os) : peer.deviceModel;
   }
 
+  private taildropOnlineTargetCount(): number {
+    return this.taildropTargets.filter((target: TaildropTargetSummary) => target.online).length;
+  }
+
+  private taildropTargetDescription(target: TaildropTargetSummary): string {
+    if (target.os.length > 0) {
+      return this.displayOsName(target.os);
+    }
+    if (target.deviceModel.length > 0) {
+      return target.deviceModel;
+    }
+    return 'Tailscale';
+  }
+
+  private taildropStatusTitle(): ResourceStr {
+    if (!this.isConnected()) {
+      return $r('app.string.transfer_connect_first_title');
+    }
+    if (this.taildropState === 'loading') {
+      return $r('app.string.transfer_detecting_title');
+    }
+    if (this.taildropState === 'disabled') {
+      return $r('app.string.transfer_admin_disabled_title');
+    }
+    if (this.taildropState !== 'ready') {
+      return $r('app.string.transfer_unavailable_title');
+    }
+    return $r('app.string.transfer_targets_ready_title', this.taildropOnlineTargetCount());
+  }
+
+  private taildropStatusDescription(): ResourceStr {
+    if (!this.isConnected()) {
+      return $r('app.string.transfer_connect_first_description');
+    }
+    if (this.taildropState === 'loading') {
+      return $r('app.string.transfer_detecting_description');
+    }
+    if (this.taildropState === 'disabled') {
+      return $r('app.string.transfer_admin_disabled_description');
+    }
+    if (this.taildropState !== 'ready') {
+      return $r('app.string.transfer_unavailable_description');
+    }
+    if (this.taildropTargets.length === 0) {
+      return $r('app.string.transfer_no_targets_description');
+    }
+    return $r('app.string.transfer_targets_ready_description');
+  }
+
   private primaryTailscaleAddress(addresses: string[]): string {
     const ipv4Address: string | undefined = addresses.find((address: string) =>
       !address.includes(':'));
@@ -1203,6 +1743,9 @@ export struct BridgeStatus {
   }
 
   private connectionTitle(): ResourceStr {
+    if (!this.controlServerConfirmed) {
+      return $r('app.string.connection_server_required');
+    }
     if (this.isBackendLoading()) {
       return $r('app.string.connection_starting');
     }
@@ -1228,6 +1771,9 @@ export struct BridgeStatus {
   }
 
   private connectionDescription(): ResourceStr {
+    if (!this.controlServerConfirmed) {
+      return $r('app.string.description_server_required');
+    }
     if (this.isBackendLoading()) {
       return $r('app.string.description_starting');
     }
@@ -1496,6 +2042,166 @@ export struct BridgeStatus {
           // The descriptor may already be closed after a platform write failure.
         }
       }
+    }
+  }
+
+  private taildropOutboxRoot(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${TAILDROP_OUTBOX_DIR_NAME}`;
+  }
+
+  private taildropSendRequestPath(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${TAILDROP_SEND_REQUEST_FILE_NAME}`;
+  }
+
+  private taildropSendActive(): boolean {
+    return this.taildropPreparing || this.taildropTransfer.state === 'queued' ||
+      this.taildropTransfer.state === 'sending';
+  }
+
+  private writeTaildropSendRequest(request: TaildropSendRequest): boolean {
+    const requestPath: string = this.taildropSendRequestPath();
+    const temporaryPath: string = `${requestPath}.${request.requestId}.tmp`;
+    if (!this.writePrivateTextFile(temporaryPath, JSON.stringify(request))) {
+      return false;
+    }
+    try {
+      fileIo.renameSync(temporaryPath, requestPath);
+      return true;
+    } catch (_error) {
+      try {
+        if (fileIo.accessSync(temporaryPath)) {
+          fileIo.unlinkSync(temporaryPath);
+        }
+      } catch (_cleanupError) {
+        // The Extension startup cleanup removes any remaining temporary file.
+      }
+      return false;
+    }
+  }
+
+  private sanitizeTaildropFileName(name: string, index: number): string {
+    let sanitized: string = name.replace(/[\\/\u0000]/g, '_').trim();
+    if (sanitized.length === 0 || sanitized === '.' || sanitized === '..') {
+      sanitized = `file-${index + 1}`;
+    }
+    if (sanitized.length > 180) {
+      sanitized = sanitized.substring(0, 180);
+    }
+    return sanitized;
+  }
+
+  private async prepareTaildropFiles(uris: string[], requestId: number): Promise<TaildropSendFile[]> {
+    const root: string = this.taildropOutboxRoot();
+    const requestDir: string = `${root}/${requestId}`;
+    fileIo.mkdirSync(requestDir, true);
+    const prepared: TaildropSendFile[] = [];
+    for (let index: number = 0; index < uris.length; index++) {
+      let source: fileIo.File | undefined = undefined;
+      try {
+        source = fileIo.openSync(uris[index], fileIo.OpenMode.READ_ONLY);
+        const stat: fileIo.Stat = fileIo.statSync(source.fd);
+        if (!stat.isFile() || stat.size < 0) {
+          throw new Error('Selected item is not a regular file.');
+        }
+        const name: string = this.sanitizeTaildropFileName(source.name, index);
+        const destination: string = `${requestDir}/${index}.taildrop`;
+        await fileIo.copyFile(source.fd, destination);
+        const copiedStat: fileIo.Stat = fileIo.statSync(destination);
+        if (!copiedStat.isFile() || copiedStat.size !== stat.size) {
+          throw new Error('Copied Taildrop file failed verification.');
+        }
+        prepared.push({ path: destination, name: name, size: copiedStat.size });
+      } finally {
+        if (source !== undefined) {
+          try {
+            fileIo.closeSync(source);
+          } catch (_error) {
+            // The picker descriptor may already be closed after a copy failure.
+          }
+        }
+      }
+    }
+    return prepared;
+  }
+
+  private cleanupPreparedTaildropFiles(files: TaildropSendFile[]): void {
+    files.forEach((file: TaildropSendFile) => {
+      try {
+        if (fileIo.accessSync(file.path)) {
+          fileIo.unlinkSync(file.path);
+        }
+      } catch (_error) {
+        // Extension startup cleanup handles any remaining outbox file.
+      }
+    });
+    if (files.length > 0) {
+      const requestDir: string = files[0].path.substring(0, files[0].path.lastIndexOf('/'));
+      try {
+        fileIo.rmdirSync(requestDir);
+      } catch (_error) {
+        // The directory may still contain a file whose cleanup failed.
+      }
+    }
+  }
+
+  private startTaildropSelection(target: TaildropTargetSummary): void {
+    this.selectTaildropFiles(target).catch(() => {
+      this.taildropPreparing = false;
+      this.showToast($r('app.string.transfer_file_selection_failed'));
+    });
+  }
+
+  private async selectTaildropFiles(target: TaildropTargetSummary): Promise<void> {
+    if (!target.online || !this.isConnected() || this.taildropState !== 'ready' ||
+      this.taildropSendActive()) {
+      return;
+    }
+    this.taildropPreparing = true;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const documentPicker = new picker.DocumentViewPicker(context);
+    const options = new picker.DocumentSelectOptions();
+    options.maxSelectNumber = 10;
+    const uris: string[] = await documentPicker.select(options);
+    if (uris.length === 0) {
+      this.taildropPreparing = false;
+      return;
+    }
+    const requestId: number = Date.now();
+    let files: TaildropSendFile[] = [];
+    try {
+      files = await this.prepareTaildropFiles(uris.slice(0, 10), requestId);
+      let totalBytes: number = 0;
+      files.forEach((file: TaildropSendFile) => {
+        totalBytes += file.size;
+      });
+      const request: TaildropSendRequest = {
+        requestId: requestId,
+        targetKey: target.key,
+        outboxRoot: this.taildropOutboxRoot(),
+        files: files
+      };
+      this.taildropTransfer = {
+        requestId: requestId, state: 'queued', reason: '', targetKey: target.key,
+        targetName: target.name, fileName: '', fileIndex: 0, fileCount: files.length,
+        fileBytes: 0, fileSize: 0, bytesSent: 0, totalBytes: totalBytes, completedAtMs: 0
+      };
+      this.taildropRequestSubmittedAtMs = Date.now();
+      if (!this.writeTaildropSendRequest(request)) {
+        this.cleanupPreparedTaildropFiles(files);
+        const failed: TaildropTransferSummary = this.taildropTransferFailure(
+          this.taildropTransfer, 'extension_error');
+        this.taildropPreparing = false;
+        this.applyTaildropTransfer(failed);
+        return;
+      }
+      this.recordDiagnosticEvent('taildrop_send_queued', 'transfer');
+      this.taildropPreparing = false;
+    } catch (_error) {
+      this.cleanupPreparedTaildropFiles(files);
+      this.taildropPreparing = false;
+      this.showToast($r('app.string.transfer_file_copy_failed'));
     }
   }
 
@@ -1830,6 +2536,9 @@ export struct BridgeStatus {
   }
 
   private connectionActionNodeId(): string {
+    if (!this.controlServerConfirmed) {
+      return 'control-server-setup';
+    }
     if (this.isConnected()) {
       return 'vpn-stop';
     }
@@ -1843,7 +2552,8 @@ export struct BridgeStatus {
   }
 
   private connectionActionLoading(): boolean {
-    return this.isBackendLoading() || this.isConnecting() || this.loginInProgress;
+    return this.isBackendLoading() || this.isConnecting() || this.loginInProgress ||
+      this.disconnectInProgress;
   }
 
   private connectionActionEnabled(): boolean {
@@ -1865,7 +2575,9 @@ export struct BridgeStatus {
   }
 
   private runConnectionAction(): void {
-    if (this.isConnected()) {
+    if (!this.controlServerConfirmed) {
+      this.openControlServerSettings();
+    } else if (this.isConnected()) {
       this.stopVpnProbe();
     } else if (this.needsLogin()) {
       this.openSecureLogin();
@@ -1985,7 +2697,7 @@ export struct BridgeStatus {
     .opacity(this.isConnected() ? 1 : 0)
     .translate({ y: this.isConnected() ? 0 : -10 })
     .clip(true)
-    .animation({ duration: 700, curve: Curve.EaseInOut })
+    .animation({ duration: 500, curve: Curve.EaseInOut })
   }
 
   @Builder
@@ -2020,7 +2732,7 @@ export struct BridgeStatus {
     .padding(14)
     .backgroundColor(this.groupBackground())
     .borderRadius(16)
-    .animation({ duration: 700, curve: Curve.EaseInOut })
+    .animation({ duration: 500, curve: Curve.EaseInOut })
   }
 
   @Builder
@@ -2581,7 +3293,10 @@ export struct BridgeStatus {
           ListItem() {
             this.PeerDeviceRow(peer)
           }
-        }, (peer: PeerSummary) => peer.key)
+        // onDataReloaded reuses the original child whenever its key is unchanged.
+        // Include the rendered peer snapshot so live online/key/route changes
+        // replace only the affected row instead of leaving its old object cached.
+        }, (peer: PeerSummary) => JSON.stringify(peer))
       }
       .width('100%')
       .layoutWeight(1)
@@ -2636,6 +3351,62 @@ export struct BridgeStatus {
   @Builder
   private AccountPanel() {
     Column({ space: 8 }) {
+      Column({ space: 6 }) {
+        Row({ space: 8 }) {
+          Text($r('app.string.control_server_title'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1)
+          Text(this.controlServerConfirmed ? $r('app.string.control_server_confirmed') :
+            $r('app.string.control_server_not_confirmed'))
+            .fontSize(11)
+            .fontColor(this.controlServerConfirmed ? $r('app.color.status_success') :
+              $r('app.color.status_warning'))
+        }
+        Text($r('app.string.control_server_description'))
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .lineHeight(17)
+          .width('100%')
+        TextInput({
+          text: this.controlServerInput,
+          placeholder: DEFAULT_CONTROL_SERVER_URL
+        })
+          .id('control-server-input')
+          .width('100%')
+          .height(42)
+          .fontSize(13)
+          .enabled(!this.isConnected() && !this.isConnecting())
+          .onChange((value: string) => {
+            this.controlServerInput = value;
+            this.controlServerStatus = '';
+          })
+        Button($r('app.string.control_server_save'), {
+          type: ButtonType.ROUNDED_RECTANGLE,
+          stateEffect: true,
+          buttonStyle: ButtonStyleMode.NORMAL,
+          controlSize: ControlSize.NORMAL
+        })
+          .id('control-server-save')
+          .width('100%')
+          .enabled(!this.isConnected() && !this.isConnecting())
+          .onClick(() => this.saveControlServer())
+        if (this.controlServerStatus.length > 0) {
+          Text(this.controlServerStatusText())
+            .fontSize(12)
+            .fontColor(this.controlServerStatus === 'saved' ? $r('app.color.status_success') :
+              $r('app.color.status_error'))
+            .width('100%')
+        }
+        Divider().color($r('sys.color.comp_divider'))
+      }
+      .width('100%')
+      .constraintSize({ maxHeight: this.controlServerEditorVisible ? 360 : 0 })
+      .opacity(this.controlServerEditorVisible ? 1 : 0)
+      .clip(true)
+      .animation({ duration: 320, curve: Curve.EaseInOut })
+
       if (!this.isAuthenticated()) {
         Row({ space: 12 }) {
           Stack() {
@@ -2654,8 +3425,44 @@ export struct BridgeStatus {
             .layoutWeight(1)
         }
         .width('100%')
-        this.StandardActionButton($r('app.string.action_login'), 'account-login', true,
-          !this.loginInProgress, () => this.openSecureLogin(), this.loginInProgress)
+        Row({ space: 8 }) {
+          Button({
+            type: ButtonType.Capsule,
+            stateEffect: true,
+            buttonStyle: ButtonStyleMode.EMPHASIZED,
+            controlSize: ControlSize.NORMAL
+          }) {
+            this.ButtonContent($r('app.string.action_login'), true, this.loginInProgress)
+          }
+            .id('account-login')
+            .height(48)
+            .layoutWeight(1)
+            .opacity(this.controlServerConfirmed && !this.loginInProgress ? 1 : 0.4)
+            .enabled(this.controlServerConfirmed && !this.loginInProgress)
+            .onClick(() => this.openSecureLogin())
+
+          if (this.controlServerConfirmed) {
+            Button({
+              type: ButtonType.Circle,
+              stateEffect: true,
+              buttonStyle: ButtonStyleMode.NORMAL,
+              controlSize: ControlSize.NORMAL
+            }) {
+              Image($r('app.media.edit'))
+                .width(20)
+                .height(20)
+                .fillColor($r('sys.color.icon_primary'))
+            }
+              .id('control-server-edit')
+              .width(48)
+              .height(48)
+              .visualEffect(new hdsEffect.HdsEffectBuilder()
+                .pressShadow(hdsEffect.PressShadowType.BLEND_WHITE)
+                .buildEffect())
+              .onClick(() => this.toggleControlServerEditor())
+          }
+        }
+        .width('100%')
       } else {
         Row({ space: 12 }) {
           Stack() {
@@ -2853,10 +3660,27 @@ export struct BridgeStatus {
       })
       this.StandardActionButton('Probe engine', 'engine-probe', false, true,
         () => this.probeUserspaceEngine())
-      this.StandardActionButton('Probe control TLS', 'control-probe', false, true,
+      this.StandardActionButton('Probe control TLS', 'control-probe', false,
+        this.controlServerConfirmed && this.controlServerURL === DEFAULT_CONTROL_SERVER_URL,
         () => this.runControlProbe())
       this.StandardActionButton('Open MagicDNS probe', 'magicdns-probe', false,
         this.magicDNSProbeUrl.startsWith('http://'), () => this.runMagicDNSProbe())
+      Divider().color($r('sys.color.comp_divider'))
+      Text($r('app.string.diagnostic_first_run_tools_description'))
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .lineHeight(18)
+        .width('100%')
+      this.StandardActionButton($r('app.string.diagnostic_reset_first_run_action'),
+        'diagnostic-reset-first-run', false, !this.diagnosticActionInProgress,
+        () => this.confirmResetFirstRun())
+      this.StandardActionButton($r('app.string.diagnostic_force_vpn_stop_action'),
+        'diagnostic-force-vpn-stop', false, !this.diagnosticActionInProgress,
+        () => this.forceStopSystemVpn())
+      if (this.diagnosticActionStatus.length > 0) {
+        this.DiagnosticStatus($r('app.string.diagnostic_action_status'),
+          this.diagnosticActionStatus, 'diagnostic-action-status')
+      }
       Divider().color($r('sys.color.comp_divider'))
       Text($r('app.string.diagnostic_report_description'))
         .fontSize(12)
@@ -2955,6 +3779,227 @@ export struct BridgeStatus {
     })
     .alignItems(HorizontalAlign.Center)
     .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  @Builder
+  private TransferOverviewPanel() {
+    Column({ space: 12 }) {
+      Row({ space: 12 }) {
+        Stack() {
+          SymbolGlyph($r('sys.symbol.doc'))
+            .fontSize(26)
+            .fontColor([$r('sys.color.icon_emphasize')])
+        }
+        .width(44)
+        .height(44)
+        .borderRadius(14)
+        .backgroundColor($r('sys.color.comp_background_tertiary'))
+
+        Column({ space: 3 }) {
+          Text($r('app.string.transfer_taildrop_title'))
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+          Text($r('app.string.transfer_taildrop_description'))
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .lineHeight(18)
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+
+      Divider()
+        .color($r('sys.color.comp_divider'))
+
+      Row({ space: 10 }) {
+        if (this.isConnected() && this.taildropState === 'ready') {
+          SymbolGlyph($r('sys.symbol.checkmark'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.icon_emphasize')])
+        } else {
+          SymbolGlyph($r('sys.symbol.clock'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.icon_secondary')])
+        }
+        Column({ space: 2 }) {
+          Text(this.taildropStatusTitle())
+            .id('taildrop-status-title')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+          Text(this.taildropStatusDescription())
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .lineHeight(18)
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(16)
+    .backgroundColor(this.groupBackground())
+    .borderRadius(16)
+  }
+
+  @Builder
+  private TaildropTargetRow(target: TaildropTargetSummary) {
+    Row({ space: 12 }) {
+      Stack() {
+        SymbolGlyph($r('sys.symbol.doc'))
+          .fontSize(22)
+          .fontColor([target.online ? $r('sys.color.icon_emphasize') :
+            $r('sys.color.icon_secondary')])
+      }
+      .width(38)
+      .height(38)
+      .borderRadius(12)
+      .backgroundColor(this.secondaryBackground())
+
+      Column({ space: 2 }) {
+        Text(target.name)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        Text(this.taildropTargetDescription(target))
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      Text(target.online ? $r('app.string.peer_online') : $r('app.string.peer_offline'))
+        .fontSize(11)
+        .fontColor(target.online ? $r('app.color.status_success') :
+          $r('sys.color.font_secondary'))
+    }
+    .id('taildrop-target-' + target.key)
+    .width('100%')
+    .constraintSize({ minHeight: 54 })
+    .padding({ left: 12, right: 12 })
+  }
+
+  @Builder
+  private TaildropTargetsPanel() {
+    Column({ space: 0 }) {
+      ForEach(this.taildropTargets, (target: TaildropTargetSummary, index: number) => {
+        if (index > 0) {
+          Divider()
+            .color($r('sys.color.comp_divider'))
+            .margin({ left: 62 })
+        }
+        this.TaildropTargetRow(target)
+      // ForEach also retains children with stable keys. A target's stable peer
+      // key alone therefore cannot reflect a live online/offline transition.
+      }, (target: TaildropTargetSummary) => JSON.stringify(target))
+    }
+    .id('taildrop-targets-panel')
+    .width('100%')
+    .padding({ top: 4, bottom: 4 })
+    .backgroundColor(this.groupBackground())
+    .borderRadius(16)
+  }
+
+  @Builder
+  private TaildropTargetsEmptyPanel() {
+    Text(this.taildropState === 'disabled' ?
+      $r('app.string.transfer_admin_disabled_description') :
+      $r('app.string.transfer_no_targets_description'))
+      .fontSize(12)
+      .fontColor($r('sys.color.font_secondary'))
+      .lineHeight(18)
+      .textAlign(TextAlign.Center)
+      .width('100%')
+      .padding({ left: 20, right: 20, top: 20, bottom: 20 })
+      .backgroundColor(this.groupBackground())
+      .borderRadius(16)
+  }
+
+  @Builder
+  private TransferEmptyPanel() {
+    Column({ space: 10 }) {
+      SymbolGlyph($r('sys.symbol.doc'))
+        .fontSize(30)
+        .fontColor([$r('sys.color.icon_secondary')])
+      Text($r('app.string.transfer_empty_title'))
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('sys.color.font_primary'))
+      Text($r('app.string.transfer_empty_description'))
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .textAlign(TextAlign.Center)
+        .lineHeight(18)
+        .constraintSize({ maxWidth: 360 })
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 28, bottom: 28 })
+    .backgroundColor(this.groupBackground())
+    .borderRadius(16)
+  }
+
+  @Builder
+  private TransferContent() {
+    Scroll(this.transferScroller) {
+      Column({ space: 14 }) {
+        this.TransferOverviewPanel()
+        if (this.isConnected() && (this.taildropState === 'ready' || this.taildropState === 'disabled')) {
+          Column({ space: 8 }) {
+            Text($r('app.string.transfer_targets_title'))
+              .id('transfer-page-title')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .padding({ left: 4 })
+            if (this.taildropTargets.length > 0) {
+              this.TaildropTargetsPanel()
+            } else {
+              this.TaildropTargetsEmptyPanel()
+            }
+          }
+          .width('100%')
+        }
+        Column({ space: 8 }) {
+          Text($r('app.string.transfer_history_title'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .padding({ left: 4 })
+          this.TransferEmptyPanel()
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: 1200 })
+      .padding({
+        left: this.contentMargin(),
+        right: this.contentMargin(),
+        top: 8,
+        bottom: this.pageBottomInset()
+      })
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_secondary'))
+    .edgeEffect(EdgeEffect.Spring)
+    .scrollBar(BarState.Auto)
+    .scrollBarWidth(4)
   }
 
   @Builder
@@ -3141,8 +4186,111 @@ export struct BridgeStatus {
   }
 
   @Builder
+  private TransferPage() {
+    HdsNavigation() {
+      this.TransferContent()
+    }
+    .titleBar({
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: true,
+      padding: {
+        start: LengthMetrics.vp(this.contentMargin()),
+        end: LengthMetrics.vp(this.contentMargin())
+      },
+      style: {
+        blurStrategy: BlurStrategy.ENABLE,
+        thermoCtrl: true,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(20)
+        },
+        originalStyle: {
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('sys.color.font_primary'),
+              subTitleColor: $r('sys.color.font_secondary')
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: {
+            backgroundColor: $r('sys.color.background_secondary'),
+            blurRadius: 24,
+            maskExtraHeight: 40.0
+          },
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('sys.color.font_primary'),
+              subTitleColor: $r('sys.color.font_secondary')
+            }
+          }
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: this.glowMaterialLevel()
+        }
+      },
+      content: {
+        title: {
+          mainTitle: $r('app.string.tab_transfer'),
+          subTitle: $r('app.string.transfer_subtitle')
+        }
+      }
+    })
+    .titleMode(HdsNavigationTitleMode.FREE)
+    .bindToScrollable([this.transferScroller])
+    .hideBackButton(true)
+    .mode(NavigationMode.Stack)
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_secondary'))
+  }
+
+  @Builder
+  private SettingsTabBar() {
+    Column({ space: 2 }) {
+      Image($r('app.media.tab_settings'))
+        .width(24)
+        .height(24)
+        .fillColor(this.currentTab === 2 ? $r('sys.color.icon_emphasize') :
+          $r('sys.color.icon_secondary'))
+      Text($r('app.string.tab_settings'))
+        .fontSize(10)
+        .fontColor(this.currentTab === 2 ? $r('sys.color.font_emphasize') :
+          $r('sys.color.font_secondary'))
+        .maxLines(1)
+    }
+    .id('tab-settings')
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .bindPopup(this.controlServerTipVisible, {
+      message: this.controlServerTipMessage,
+      placement: Placement.Top,
+      enableArrow: true,
+      autoCancel: true,
+      mask: false,
+      width: 252,
+      popupColor: this.glowSurface(),
+      backgroundBlurStyle: BlurStyle.COMPONENT_REGULAR,
+      onStateChange: (event: ControlServerTipStateChange) => {
+        if (!event.isVisible && this.controlServerTipVisible) {
+          this.controlServerTipVisible = false;
+          this.recordDiagnosticEvent('control_server_tip_dismissed', 'message');
+        }
+      }
+    })
+  }
+
+  @Builder
   private MobileTabs() {
-    HdsTabs({ barPosition: BarPosition.End, index: this.currentTab }) {
+    HdsTabs({
+      barPosition: BarPosition.End,
+      index: this.currentTab,
+      controller: this.tabsController
+    }) {
       TabContent() {
         this.HomePage()
       }
@@ -3158,10 +4306,10 @@ export struct BridgeStatus {
         }))
 
       TabContent() {
-        this.SettingsPage()
+        this.TransferPage()
       }
-      .tabBar(new BottomTabBarStyle($r('app.media.tab_settings'), $r('app.string.tab_settings'))
-        .id('tab-settings')
+      .tabBar(new BottomTabBarStyle($r('app.media.tab_transfer'), $r('app.string.tab_transfer'))
+        .id('tab-transfer')
         .labelStyle({
           unselectedColor: $r('sys.color.font_secondary'),
           selectedColor: $r('sys.color.font_emphasize')
@@ -3170,6 +4318,11 @@ export struct BridgeStatus {
           unselectedColor: $r('sys.color.icon_secondary'),
           selectedColor: $r('sys.color.icon_emphasize')
         }))
+
+      TabContent() {
+        this.SettingsPage()
+      }
+      .tabBar(this.SettingsTabBar())
     }
     .vertical(false)
     .scrollable(true)
@@ -3194,6 +4347,13 @@ export struct BridgeStatus {
       }
     })
     .divider({ mode: DividerMode.NONE })
+    .onSelected((index: number) => {
+      this.currentTab = index;
+      if (index === 2 && this.controlServerTipVisible) {
+        this.controlServerTipVisible = false;
+        this.recordDiagnosticEvent('control_server_tip_dismissed', 'settings_opened');
+      }
+    })
     .onChange((index: number) => {
       this.currentTab = index;
     })
@@ -3201,14 +4361,139 @@ export struct BridgeStatus {
     .height('100%')
   }
 
+  private confirmResetFirstRun(): void {
+    this.getUIContext().showAlertDialog({
+      title: $r('app.string.diagnostic_reset_first_run_confirm_title'),
+      message: $r('app.string.diagnostic_reset_first_run_confirm_message'),
+      autoCancel: true,
+      primaryButton: {
+        value: $r('app.string.cancel_action'),
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.diagnostic_reset_first_run_action'),
+        fontColor: $r('app.color.status_error'),
+        action: () => this.resetFirstRunState()
+      }
+    });
+  }
+
+  private async resetFirstRunState(): Promise<void> {
+    if (this.diagnosticActionInProgress) {
+      return;
+    }
+    this.diagnosticActionInProgress = true;
+    this.diagnosticActionStatus = '';
+    this.recordDiagnosticEvent('diagnostic_first_run_reset_requested', 'diagnostics');
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      try {
+        await vpnExtension.stopVpnExtensionAbility(this.vpnWant());
+      } catch (_vpnError) {
+        // A stopped extension is already in the desired state.
+      }
+      try {
+        await nativeBridge.backendStopAsync();
+      } catch (_backendError) {
+        // Continue with cleanup when no in-process backend exists.
+      }
+      await new Promise<void>((resolve: () => void) => setTimeout(resolve, 300));
+      if (!ControlServerConfig.reset(context.filesDir)) {
+        throw new Error('first-run reset failed');
+      }
+      this.controlServerURL = DEFAULT_CONTROL_SERVER_URL;
+      this.controlServerInput = DEFAULT_CONTROL_SERVER_URL;
+      this.controlServerConfirmed = false;
+      this.controlServerStatus = '';
+      this.controlServerEditorVisible = true;
+      this.controlServerTipVisible = false;
+      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
+      this.vpnStatus = 'HarmonyOS VPN Extension stopped';
+      this.backendReady = true;
+      this.backendInitializationVisible = false;
+      this.devicesLoading = false;
+      this.hasAuthenticatedSession = false;
+      this.applyPeers([]);
+      this.exitNodes = [];
+      this.applyAccountSummary({
+        displayName: '', loginName: '', profilePicURL: '', tailnetName: '', deviceName: '', addresses: [],
+        needsApproval: false, keyExpired: false, keyExpiryUnixMs: 0
+      });
+      this.diagnosticActionStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_reset_first_run_completed').id);
+      this.recordDiagnosticEvent('diagnostic_first_run_reset_completed', 'diagnostics');
+      this.navigateToTab(0);
+      this.scheduleLifecycleTask(() => this.showControlServerTip(), 700);
+    } catch (_error) {
+      this.diagnosticActionStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_reset_first_run_failed').id);
+      this.recordDiagnosticEvent('diagnostic_first_run_reset_failed', 'diagnostics');
+    } finally {
+      this.diagnosticActionInProgress = false;
+    }
+  }
+
+  private async forceStopSystemVpn(): Promise<void> {
+    if (this.diagnosticActionInProgress) {
+      return;
+    }
+    this.diagnosticActionInProgress = true;
+    this.diagnosticActionStatus = '';
+    this.recordDiagnosticEvent('diagnostic_vpn_cut_requested', 'diagnostics');
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      await vpnExtension.stopVpnExtensionAbility(this.vpnWant());
+      this.stopConnectionPolling();
+      this.clearConnectionCompletionTimer();
+      this.connectInProgress = false;
+      this.disconnectInProgress = false;
+      this.vpnStatus = 'HarmonyOS VPN Extension stopped manually';
+      this.diagnosticActionStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_force_vpn_stop_completed').id);
+      this.recordDiagnosticEvent('diagnostic_vpn_cut_completed', 'diagnostics');
+      if (this.controlServerConfirmed) {
+        this.scheduleLifecycleTask(() => {
+          this.startBackend(false);
+          this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
+        }, 500);
+      }
+    } catch (error) {
+      const businessError = error as BusinessError;
+      this.diagnosticActionStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_force_vpn_stop_failed').id);
+      this.recordDiagnosticEvent('diagnostic_vpn_cut_failed', 'diagnostics', businessError.code ?? -1);
+    } finally {
+      this.diagnosticActionInProgress = false;
+    }
+  }
+
   @Builder
   private WideTabs() {
-    HdsTabs({ barPosition: BarPosition.Start, index: this.currentTab }) {
+    HdsTabs({
+      barPosition: BarPosition.Start,
+      index: this.currentTab,
+      controller: this.tabsController
+    }) {
       TabContent() {
         this.HomePage()
       }
       .tabBar(new BottomTabBarStyle($r('app.media.tab_home'), $r('app.string.tab_home'))
         .id('tab-home')
+        .labelStyle({
+          unselectedColor: $r('sys.color.font_secondary'),
+          selectedColor: $r('sys.color.font_emphasize')
+        })
+        .iconStyle({
+          unselectedColor: $r('sys.color.icon_secondary'),
+          selectedColor: $r('sys.color.icon_emphasize')
+        }))
+
+      TabContent() {
+        this.TransferPage()
+      }
+      .tabBar(new BottomTabBarStyle($r('app.media.tab_transfer'), $r('app.string.tab_transfer'))
+        .id('tab-transfer')
         .labelStyle({
           unselectedColor: $r('sys.color.font_secondary'),
           selectedColor: $r('sys.color.font_emphasize')
@@ -3240,6 +4525,9 @@ export struct BridgeStatus {
     .barOverlap(false)
     .barBackgroundColor($r('sys.color.comp_background_primary'))
     .divider({ mode: DividerMode.NONE })
+    .onSelected((index: number) => {
+      this.currentTab = index;
+    })
     .onChange((index: number) => {
       this.currentTab = index;
     })
