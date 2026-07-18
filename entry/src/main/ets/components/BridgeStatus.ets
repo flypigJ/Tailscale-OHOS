@@ -4348,12 +4348,15 @@ export struct BridgeStatus {
       }
     })
     .divider({ mode: DividerMode.NONE })
-    .onChange((index: number) => {
+    .onSelected((index: number) => {
       this.currentTab = index;
       if (index === 2 && this.controlServerTipVisible) {
         this.controlServerTipVisible = false;
         this.recordDiagnosticEvent('control_server_tip_dismissed', 'settings_opened');
       }
+    })
+    .onChange((index: number) => {
+      this.currentTab = index;
     })
     .width('100%')
     .height('100%')
@@ -4523,6 +4526,9 @@ export struct BridgeStatus {
     .barOverlap(false)
     .barBackgroundColor($r('sys.color.comp_background_primary'))
     .divider({ mode: DividerMode.NONE })
+    .onSelected((index: number) => {
+      this.currentTab = index;
+    })
     .onChange((index: number) => {
       this.currentTab = index;
     })
