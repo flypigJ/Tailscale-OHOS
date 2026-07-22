@@ -1,6 +1,6 @@
 import { Want } from '@kit.AbilityKit';
 import { vpnExtension, VpnExtensionAbility } from '@kit.NetworkKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { fileIo } from '@kit.CoreFileKit';
 import nativeBridge from 'libtailscale_ohos.so';
@@ -429,7 +429,8 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       return handedOffConfig;
     }
     this.recordDiagnosticEvent('vpn_config_handoff_fallback', 'backend_restore');
-    nativeBridge.backendStart(stateDir, this.deviceModel(), controlSettings.controlURL);
+    nativeBridge.backendStart(
+      stateDir, this.deviceModel(), this.harmonyOSVersion(), controlSettings.controlURL);
     let configStatus: string = 'FAILED | VPN config | backend restore timeout';
     for (let attempt: number = 0; attempt < 60; attempt++) {
       configStatus = nativeBridge.backendVpnConfig();
@@ -469,6 +470,18 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
 
   private deviceModel(): string {
     return DeviceNameService.model();
+  }
+
+  private harmonyOSVersion(): string {
+    const displayVersion: string = deviceInfo.displayVersion.trim();
+    const versionMatch: RegExpMatchArray | null = displayVersion.match(/(\d+)\.(\d+)/);
+    if (versionMatch !== null) {
+      return `${versionMatch[1]}.${versionMatch[2]}`;
+    }
+    if (deviceInfo.majorVersion > 0) {
+      return `${deviceInfo.majorVersion}.${Math.max(0, deviceInfo.seniorVersion)}`;
+    }
+    return displayVersion.length > 0 ? displayVersion : '—';
   }
 
   private async waitForVpnBackend(initialStatus: string): Promise<string> {

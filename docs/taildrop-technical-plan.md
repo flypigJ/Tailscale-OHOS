@@ -33,11 +33,11 @@ Last audited on 2026-07-18. The transfer page is visible in both compact and wid
 | Target discovery | Implemented | `local.Client.FileTargets` is queried from the VPN Extension process. Stable peer keys, display names, OS/model, online state, admin-disabled state, and query failures are persisted for the UI. |
 | Picker and staging | Implemented | The UI can select up to 10 documents, sanitize base names, copy them into an app-private per-request outbox, verify copied sizes, and publish the request by temporary-file rename. |
 | Send engine | Implemented and real-device verified | Tapping an online target opens the document Picker. The Go bridge revalidates the outbox path and file metadata, re-resolves target eligibility, warms the target PeerAPI path, and sends up to 10 files sequentially with `local.Client.PushFile`. In external-TUN mode, peer/PeerAPI TCP dials use the embedded netstack while ordinary control/DERP sockets remain on the physical network. |
-| Progress and completion state | Implemented for the first usable flow | Queued/sending state, aggregate byte progress, current filename, completion, failure, and cancellation are rendered from the VPN Extension snapshot. Speed and ETA are not yet shown. |
+| Progress and completion state | Implemented for the first usable flow | Queued/sending state, aggregate byte progress, current filename, smoothed speed, ETA, completion, failure, and cancellation are rendered from the VPN Extension snapshot. |
 | History | Implemented | A bounded 20-record send/receive history is rendered and atomically persisted. Restoring the UI also restores the last handled send request ID to avoid duplicate terminal records. |
 | Cancellation and retry | Implemented | The user can cancel an active outgoing transfer. Transient PUT failures are retried up to three times from the retained staged file; upstream Taildrop partial hashing resumes at the receiver's confirmed offset. A terminal failed send can still reopen the Picker for the same target. |
 | Cleanup | Implemented with a recovery fallback | Staged files are removed after success/failure and stale outbox entries are cleaned when the VPN Extension starts. Free-space checks and a staging quota are still absent. |
-| Receive inbox | Implemented for Save/export | The snapshot exposes `WaitingFiles`. Save uses `DocumentViewPicker.save()`, asks the VPN Extension/Go backend to copy `GetWaitingFile` into a validated private staging path, exports it to the Picker URI, and calls `DeleteWaitingFile` only after the copy is verified. An explicit discard-without-save action is not yet exposed. |
+| Receive inbox | Implemented with content-aware handling | The snapshot exposes `WaitingFiles`. Images are staged and written to a user-authorized Photos URI, small text files are copied directly to the system clipboard, and other files use `DocumentViewPicker.save()`. `DeleteWaitingFile` runs only after the selected destination succeeds. The UI also exposes a confirmed discard action. |
 | Background/user feedback | Missing validation | No completion notification or real-device proof covers screen-off, UI-process recreation, VPN Extension lifetime, or long/large transfers. |
 | Automated coverage | Partial | Go tests cover receive-request path validation, exact-size staging, short-stream rejection, transient send-error classification, retry cancellation, and tracked netstack source-port lifecycle. A 619,844-byte HarmonyOS-to-Windows device probe completed on 2026-07-18. Device-level ArkTS/NAPI, DERP, interruption, background, and large-file coverage are still incomplete. |
 
@@ -55,7 +55,7 @@ The post-fix real-device probe sent 619,844 bytes from HarmonyOS to Tailscale 1.
 
 ### 1. Harden the outgoing-transfer experience
 
-- Add transfer speed and ETA and distinguish permission, low-space, offline, disconnected, and admin-disabled failures in the active panel. Timeout/network interruption now has a dedicated terminal message.
+- Continue refining failure presentation in the active panel. Speed/ETA are now shown during active sends, and terminal toasts distinguish permission, low-space, offline, disconnected, backend-unavailable, and admin-disabled failures.
 - Decide whether failed staged sends should be retained for zero-copy retry or continue reopening the Picker for least-privilege access.
 - Add an explicit busy message instead of only disabling target and inbox rows.
 
@@ -74,14 +74,14 @@ This is simpler and safer than introducing a new service IPC layer for the first
 
 Sending already uses `DocumentViewPicker.select()` and copies Picker URIs into an app-private outbox because Picker grants and file descriptors should not be assumed transferable to the VPN Extension process.
 
-The first Save/export flow is implemented. Remaining work is an explicit discard action, low-space preflight, staging quota/expiry, user-visible cleanup failures, and recovery UI for a process restart between staging and export.
+The content-aware receive flow and explicit discard action are implemented. Classification uses conservative filename extensions because the upstream waiting-file API exposes only name and size, not MIME type. Supported images use the system Photos creation dialog without requesting broad media-library permissions; text files up to 1 MiB go to the clipboard; all other content uses the document save Picker. Remaining work is low-space preflight, staging quota/expiry, user-visible cleanup failures, and recovery UI for a process restart between staging and export.
 
 Staging costs temporary extra disk space but gives reliable cross-process access, deterministic resume, and protection from expiring Picker grants. A later optimization can pass duplicated file descriptors through a proper IPC channel to avoid the extra copy for very large sends.
 
 ### 4. Release gate
 
 - Reachable outgoing send with progress, cancel, retry, and persistent terminal history.
-- Receive inbox with waiting-file count, Save, Delete, collision, and failed-export handling.
+- Receive inbox with waiting-file count, image-to-Photos, text-to-clipboard, file Picker save, Discard, collision, and failed-export handling.
 - Free-space checks, staging quota/expiry, atomic snapshots, and recovery after process recreation.
 - Direct-LAN and DERP interoperability with official clients, interruption/resume, duplicate names, zero-byte and large files, low disk, screen-off/background, reconnect, restart, and policy-disabled states on real devices.
 - Taildrop-specific unit/integration tests plus at least one end-to-end device test.

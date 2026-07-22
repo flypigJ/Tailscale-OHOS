@@ -2,11 +2,12 @@ diff --git a/ipn/ipnlocal/local.go b/ipn/ipnlocal/local.go
 index 7154b94..e01d6c6 100644
 --- a/ipn/ipnlocal/local.go
 +++ b/ipn/ipnlocal/local.go
-@@ -1335,6 +1335,7 @@ func (b *LocalBackend) populatePeerStatusLocked(sb *ipnstate.StatusBuilder) {
+@@ -1335,6 +1335,8 @@ func (b *LocalBackend) populatePeerStatusLocked(sb *ipnstate.StatusBuilder) {
  			HostName:        p.Hostinfo().Hostname(),
  			DNSName:         p.Name(),
  			OS:              p.Hostinfo().OS(),
 +			DeviceModel:     p.Hostinfo().DeviceModel(),
++			OSVersion:       p.Hostinfo().OSVersion(),
  			LastSeen:        p.LastSeen().Get(),
  			Online:          p.Online().Get(),
  			ShareeNode:      p.Hostinfo().ShareeNode(),
@@ -14,7 +15,7 @@ diff --git a/ipn/ipnstate/ipnstate.go b/ipn/ipnstate/ipnstate.go
 index e7ae2d6..7a8a596 100644
 --- a/ipn/ipnstate/ipnstate.go
 +++ b/ipn/ipnstate/ipnstate.go
-@@ -228,9 +228,10 @@ type PeerStatus struct {
+@@ -228,9 +228,11 @@ type PeerStatus struct {
  
  	// DNSName is the Peer's FQDN. It ends with a dot.
  	// It has the form "host.<MagicDNSSuffix>."
@@ -23,17 +24,21 @@ index e7ae2d6..7a8a596 100644
 -	UserID  tailcfg.UserID
 +	DNSName     string
 +	OS          string // HostInfo.OS
++	OSVersion   string // HostInfo.OSVersion, when the peer reports one
 +	DeviceModel string // HostInfo.DeviceModel, when the peer reports one
 +	UserID      tailcfg.UserID
  
  	// AltSharerUserID is the user who shared this node
  	// if it's different than UserID. Otherwise it's zero.
-@@ -476,6 +477,9 @@ func (sb *StatusBuilder) AddPeer(peer key.NodePublic, st *PeerStatus) {
+@@ -476,6 +478,12 @@ func (sb *StatusBuilder) AddPeer(peer key.NodePublic, st *PeerStatus) {
  	if v := st.OS; v != "" {
  		e.OS = st.OS
  	}
 +	if v := st.DeviceModel; v != "" {
 +		e.DeviceModel = v
++	}
++	if v := st.OSVersion; v != "" {
++		e.OSVersion = v
 +	}
  	if v := st.SSH_HostKeys; v != nil {
  		e.SSH_HostKeys = v

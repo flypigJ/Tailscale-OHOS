@@ -48,12 +48,11 @@ type backendController struct {
 	cancelStart  context.CancelFunc
 	taildropStop context.CancelFunc
 	taildropTask taildropTransferSnapshot
+	osVersion    string
 }
 
 var harmonyBackend backendController
 var hostinfoModelOnce sync.Once
-
-const harmonyOSVersion = "Linux HongMeng Kernel Build 1.12.0"
 
 type exitNodeChoice struct {
 	ID       string `json:"id"`
@@ -66,6 +65,7 @@ type peerSummary struct {
 	Key             string   `json:"key"`
 	Name            string   `json:"name"`
 	OS              string   `json:"os"`
+	OSVersion       string   `json:"osVersion"`
 	DeviceModel     string   `json:"deviceModel"`
 	DeviceType      string   `json:"deviceType"`
 	Addresses       []string `json:"addresses"`
@@ -221,7 +221,10 @@ func (r *taildropProgressReader) Read(buffer []byte) (int, error) {
 	return read, err
 }
 
-func (b *backendController) start(stateDir, deviceModel, controlURL string) string {
+func (b *backendController) start(stateDir, deviceModel, osVersion, controlURL string) string {
+	b.mu.Lock()
+	b.osVersion = strings.TrimSpace(osVersion)
+	b.mu.Unlock()
 	return b.startWithDevice(stateDir, deviceModel, controlURL, nil)
 }
 
@@ -295,7 +298,10 @@ func (b *backendController) startWithDevice(stateDir, deviceModel, controlURL st
 	// application process cannot use tailscaled's Linux socket marks/network
 	// namespace bypass. Use the ordinary system dialer for control traffic.
 	netns.SetEnabled(false)
-	hostinfo.SetOSVersion(harmonyOSVersion)
+	b.mu.Lock()
+	osVersion := b.osVersion
+	b.mu.Unlock()
+	hostinfo.SetOSVersion(osVersion)
 	trimmedModel := stripHuaweiBrand(deviceModel)
 	hostinfoModelOnce.Do(func() {
 		hostinfo.RegisterHostinfoNewHook(func(info *tailcfg.Hostinfo) {
@@ -549,6 +555,7 @@ func (b *backendController) peers() string {
 			Key:             peerStableKey(peer.ID),
 			Name:            name,
 			OS:              peer.OS,
+			OSVersion:       peer.OSVersion,
 			DeviceModel:     peer.DeviceModel,
 			DeviceType:      classifyPeerDevice(peer.OS, peer.DeviceModel),
 			Addresses:       displayAddresses(peer.TailscaleIPs),
@@ -1274,6 +1281,8 @@ func classifyTaildropSendError(err error) string {
 		return "admin_disabled"
 	case strings.Contains(message, "permission denied"):
 		return "permission_denied"
+	case strings.Contains(message, "no space"):
+		return "no_space"
 	case strings.Contains(message, "offline"), strings.Contains(message, "no route"),
 		strings.Contains(message, "connection refused"), strings.Contains(message, "connection reset"):
 		return "target_offline"

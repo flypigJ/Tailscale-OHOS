@@ -1,7 +1,8 @@
 export const hello: () => string;
 export const probeEngine: () => string;
 export const probeEngineAsync: () => Promise<string>;
-export const backendStart: (stateDir: string, deviceModel: string, controlURL: string) => string;
+export const backendStart: (stateDir: string, deviceModel: string,
+  osVersion: string, controlURL: string) => string;
 export const backendStop: () => string;
 export const backendLogout: () => string;
 export const backendStatus: () => string;
