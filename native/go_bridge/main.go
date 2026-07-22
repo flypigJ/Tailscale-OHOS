@@ -65,11 +65,12 @@ func TSProbeEngine() (result *C.char) {
 }
 
 //export TSBackendStart
-func TSBackendStart(stateDir *C.char, deviceModel *C.char, controlURL *C.char) *C.char {
-	if stateDir == nil || deviceModel == nil || controlURL == nil {
+func TSBackendStart(stateDir *C.char, deviceModel *C.char, osVersion *C.char, controlURL *C.char) *C.char {
+	if stateDir == nil || deviceModel == nil || osVersion == nil || controlURL == nil {
 		return C.CString("FAILED | backend start | missing startup metadata")
 	}
-	return C.CString(harmonyBackend.start(C.GoString(stateDir), C.GoString(deviceModel), C.GoString(controlURL)))
+	return C.CString(harmonyBackend.start(
+		C.GoString(stateDir), C.GoString(deviceModel), C.GoString(osVersion), C.GoString(controlURL)))
 }
 
 //export TSBackendStop

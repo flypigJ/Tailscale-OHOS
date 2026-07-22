@@ -372,10 +372,11 @@ napi_value ProbeEngine(napi_env env, napi_callback_info info)
 
 napi_value BackendStart(napi_env env, napi_callback_info info)
 {
-    size_t argc = 3;
-    napi_value args[3] = {nullptr, nullptr, nullptr};
-    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 3) {
-        napi_throw_type_error(env, nullptr, "backendStart requires state directory, device model and control server");
+    size_t argc = 4;
+    napi_value args[4] = {nullptr, nullptr, nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 4) {
+        napi_throw_type_error(env, nullptr,
+            "backendStart requires state directory, device model, OS version and control server");
         return nullptr;
     }
     size_t length = 0;
@@ -398,18 +399,29 @@ napi_value BackendStart(napi_env env, napi_callback_info info)
         napi_throw_error(env, nullptr, "Failed to read the backend device model");
         return nullptr;
     }
+    size_t osVersionLength = 0;
+    if (napi_get_value_string_utf8(env, args[2], nullptr, 0, &osVersionLength) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "backendStart OS version must be a string");
+        return nullptr;
+    }
+    std::vector<char> osVersion(osVersionLength + 1, '\0');
+    if (napi_get_value_string_utf8(env, args[2], osVersion.data(), osVersion.size(), &osVersionLength) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to read the backend OS version");
+        return nullptr;
+    }
     size_t controlLength = 0;
-    if (napi_get_value_string_utf8(env, args[2], nullptr, 0, &controlLength) != napi_ok) {
+    if (napi_get_value_string_utf8(env, args[3], nullptr, 0, &controlLength) != napi_ok) {
         napi_throw_type_error(env, nullptr, "backendStart control server must be a string");
         return nullptr;
     }
     std::vector<char> controlURL(controlLength + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[2], controlURL.data(), controlURL.size(), &controlLength) != napi_ok) {
+    if (napi_get_value_string_utf8(env, args[3], controlURL.data(), controlURL.size(), &controlLength) != napi_ok) {
         napi_throw_error(env, nullptr, "Failed to read the backend control server");
         return nullptr;
     }
     OH_LOG_INFO(LOG_APP, "Starting the persistent Tailscale LocalBackend");
-    char* message = TSBackendStart(stateDir.data(), deviceModel.data(), controlURL.data());
+    char* message = TSBackendStart(
+        stateDir.data(), deviceModel.data(), osVersion.data(), controlURL.data());
     if (message == nullptr) {
         napi_throw_error(env, nullptr, "Tailscale backend start returned a null status string");
         return nullptr;

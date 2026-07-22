@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "io.github.tailscaleohos",
     "vendor": "TailscaleOHOS contributors",
-    "versionCode": 8290010,
-    "versionName": "0.8.31",
+    "versionCode": 8400000,
+    "versionName": "0.8.40",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }
