@@ -29,6 +29,7 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 	"tailscale.com/util/dnsname"
+	"tailscaleohos.local/go_bridge/vpnroute"
 )
 
 type backendController struct {
@@ -422,6 +423,7 @@ func (b *backendController) vpnConfig() string {
 	b.mu.Lock()
 	client := b.client
 	starting := b.starting
+	stateDir := b.stateDir
 	b.mu.Unlock()
 	if client == nil || starting {
 		return "FAILED | VPN config | backend not ready"
@@ -435,6 +437,10 @@ func (b *backendController) vpnConfig() string {
 	prefs, err := client.GetPrefs(ctx)
 	if err != nil || prefs == nil {
 		return "FAILED | VPN config | preferences unavailable"
+	}
+	persistedExitNodeID, _ := readExitNodeChoice(stateDir)
+	if persistedExitNodeID != "" && prefs.ExitNodeID != tailcfg.StableNodeID(persistedExitNodeID) {
+		return "FAILED | VPN config | exit node restore pending"
 	}
 	var v4, v6 netip.Addr
 	for _, addr := range status.TailscaleIPs {
@@ -452,35 +458,10 @@ func (b *backendController) vpnConfig() string {
 		v6Text = v6.String()
 	}
 
-	// PrimaryRoutes contains control-plane-approved routes for the peers that
-	// currently own them. Exit routes are included only for the peer that this
-	// client has explicitly selected as its exit node.
-	routeSet := make(map[string]struct{})
-	for _, peer := range status.Peer {
-		if prefs.RouteAll && peer.PrimaryRoutes != nil {
-			for _, prefix := range peer.PrimaryRoutes.All() {
-				if prefix.IsValid() {
-					routeSet[prefix.Masked().String()] = struct{}{}
-				}
-			}
-		}
-		if peer.ExitNode && peer.AllowedIPs != nil {
-			for _, prefix := range peer.AllowedIPs.All() {
-				if prefix.IsValid() && prefix.Bits() == 0 {
-					routeSet[prefix.Masked().String()] = struct{}{}
-				}
-			}
-		}
+	routes, subnetRoutes := vpnroute.Build(status, prefs)
+	if persistedExitNodeID != "" && !vpnroute.Contains(routes, "0.0.0.0/0") {
+		return "FAILED | VPN config | exit route unavailable"
 	}
-	routes := make([]string, 0, len(routeSet))
-	subnetRoutes := 0
-	for route := range routeSet {
-		routes = append(routes, route)
-		if prefix, err := netip.ParsePrefix(route); err == nil && prefix.Bits() > 0 {
-			subnetRoutes++
-		}
-	}
-	sort.Strings(routes)
 	b.mu.Lock()
 	b.subnetRoutes = subnetRoutes
 	b.mu.Unlock()
@@ -1681,14 +1662,16 @@ func restoreExitNodeChoice(ctx context.Context, client *local.Client, stateDir s
 				continue
 			}
 			requestContext, cancel = context.WithTimeout(ctx, 3*time.Second)
-			_, _ = client.EditPrefs(requestContext, &ipn.MaskedPrefs{
+			updatedPrefs, prefsErr := client.EditPrefs(requestContext, &ipn.MaskedPrefs{
 				Prefs: ipn.Prefs{
 					ExitNodeID: selectedID,
 				},
 				ExitNodeIDSet: true,
 			})
 			cancel()
-			return
+			if prefsErr == nil && updatedPrefs != nil && updatedPrefs.ExitNodeID == selectedID {
+				return
+			}
 		}
 		if !waitForBackendRetry(ctx) {
 			return

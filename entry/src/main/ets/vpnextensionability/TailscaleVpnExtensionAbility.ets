@@ -13,7 +13,6 @@ const TAG = 'TailscaleVpn';
 const BUNDLE_NAME = 'io.github.tailscaleohos';
 const VPN_EXISTS_ERROR_CODE: number = 2203002;
 const VPN_DESTROY_SETTLE_MS: number = 300;
-const VPN_ID_FILE_NAME: string = 'tailscale-vpn-id';
 const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
 const VPN_REPLACE_APPROVAL_TTL_MS: number = 10000;
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
@@ -28,6 +27,7 @@ const TAILDROP_RECEIVE_RESPONSE_FILE_NAME: string = 'taildrop-receive-response.j
 const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
 const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
 const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
+const VPN_CONFIG_SUMMARY_FILE_NAME: string = 'vpn-config-summary.txt';
 
 interface PeerSummary {
   key: string;
@@ -162,7 +162,6 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   private tunFd: number = -1;
   private statusTimer: number = -1;
   private statusUpdateInFlight: boolean = false;
-  private activeVpnId: string = '';
   private peerConnectivityInFlight: boolean = false;
   private taildropSendInFlight: boolean = false;
   private taildropCancelInFlight: boolean = false;
@@ -187,6 +186,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     // stop request. Never let that stale request stop a newly created session.
     this.writeTextFile(`${this.context.filesDir}/${VPN_STOP_REQUEST_FILE_NAME}`, '');
     this.writeTextFile(`${this.context.filesDir}/${VPN_STOP_RESPONSE_FILE_NAME}`, '');
+    this.writeTextFile(`${this.context.filesDir}/${VPN_CONFIG_SUMMARY_FILE_NAME}`, '');
     this.writeTaildropSnapshot({
       state: 'loading', reason: '', targets: [], waitingFiles: [], inboxReason: '',
       transfer: emptyTaildropTransfer()
@@ -320,21 +320,12 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
         this.recordDiagnosticEvent('vpn_replacement_approved', 'destroy_existing');
         this.writeStatus('Disconnecting existing VPN connection');
         await this.vpnConnection.destroy();
-        this.clearOwnedVpnId();
         await this.waitForVpnDestroy();
       }
-      const vpnId: string = await this.vpnConnection.generateVpnId();
-      if (vpnId.length === 0) {
-        this.recordDiagnosticEvent('vpn_id_failed', 'create');
-        this.writeStatus('FAILED | VPN ID generation | empty identifier');
-        return;
-      }
-      config.vpnId = vpnId;
+      this.writeVpnConfigSummary(config);
       this.writeStatus('VPN probe TUN creation pending');
       this.tunFd = await this.vpnConnection.create(config);
       this.recordDiagnosticEvent('vpn_tun_created', 'create');
-      this.activeVpnId = vpnId;
-      this.writeOwnedVpnId(vpnId);
       const probeStatus: string = nativeBridge.tunFdProbe(this.tunFd);
       if (backendReady && probeStatus.startsWith('OK')) {
         const restartStatus: string = nativeBridge.backendRestartWithTun(
@@ -358,8 +349,6 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       const errorCode: number = businessError.code ?? -1;
       if (errorCode === VPN_EXISTS_ERROR_CODE) {
         this.recordDiagnosticEvent('vpn_conflict', 'create', errorCode);
-        this.activeVpnId = '';
-        this.clearOwnedVpnId();
         this.writeStatus(`FAILED | VPN conflict | code=${VPN_EXISTS_ERROR_CODE}`);
       } else {
         this.recordDiagnosticEvent('vpn_create_failed', 'create', errorCode);
@@ -376,8 +365,16 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     });
   }
 
-  private vpnIdFilePath(): string {
-    return `${this.context.filesDir}/${VPN_ID_FILE_NAME}`;
+  private writeVpnConfigSummary(config: vpnExtension.VpnConfig): void {
+    const routes: vpnExtension.RouteInfo[] = config.routes ?? [];
+    const hasDefaultIPv4: boolean = routes.some((route: vpnExtension.RouteInfo) =>
+      route.destination.address.address === '0.0.0.0' && route.destination.prefixLength === 0 &&
+      route.isDefaultRoute);
+    const hasDefaultIPv6: boolean = routes.some((route: vpnExtension.RouteInfo) =>
+      route.destination.address.address === '::' && route.destination.prefixLength === 0 &&
+      route.isDefaultRoute);
+    this.writeTextFile(`${this.context.filesDir}/${VPN_CONFIG_SUMMARY_FILE_NAME}`,
+      `routes=${routes.length} | defaultIPv4=${hasDefaultIPv4} | defaultIPv6=${hasDefaultIPv6}`);
   }
 
   private vpnReplaceApprovalFilePath(): string {
@@ -397,14 +394,6 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     } catch (_error) {
       return false;
     }
-  }
-
-  private writeOwnedVpnId(vpnId: string): void {
-    this.writeTextFile(this.vpnIdFilePath(), vpnId);
-  }
-
-  private clearOwnedVpnId(): void {
-    this.writeOwnedVpnId('');
   }
 
   private async restoreBackendVpnConfig(): Promise<string> {
@@ -1005,9 +994,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       this.statusTimer = -1;
     }
     const connection = this.vpnConnection;
-    const vpnId: string = this.activeVpnId;
     this.vpnConnection = undefined;
-    this.activeVpnId = '';
     this.tunFd = -1;
     try {
       const backendStopStatus: string = nativeBridge.backendStop();
@@ -1028,11 +1015,10 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       transfer: finalTransfer
     });
     this.writeStatus('VPN extension destroyed');
-    if (connection !== undefined && vpnId.length > 0) {
+    if (connection !== undefined) {
       try {
-        const destroyPromise: Promise<void> = connection.destroy(vpnId);
+        const destroyPromise: Promise<void> = connection.destroy();
         destroyPromise
-          .then(() => this.clearOwnedVpnId())
           .catch((error: BusinessError) => {
             hilog.error(DOMAIN, TAG, 'VPN destroy failed. code=%{public}d', error.code);
           });
