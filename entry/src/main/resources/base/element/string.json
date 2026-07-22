@@ -110,15 +110,19 @@
     },
     {
       "name": "transfer_photo_action",
-      "value": "Photos"
+      "value": "Media"
     },
     {
-      "name": "transfer_photo_picker_title",
-      "value": "Choose photos"
+      "name": "transfer_text_action",
+      "value": "Text"
     },
     {
-      "name": "transfer_photo_picker_count",
-      "value": "%d of %d selected"
+      "name": "transfer_text_editor_title",
+      "value": "Send text"
+    },
+    {
+      "name": "transfer_text_placeholder",
+      "value": "Enter the text to send"
     },
     {
       "name": "transfer_cancel_failed",
