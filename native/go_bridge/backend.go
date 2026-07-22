@@ -1632,81 +1632,54 @@ func writeExitNodeChoice(stateDir, id string) error {
 	return nil
 }
 
-// restoreExitNodeChoice reapplies the app-level selection after tsnet startup.
-// tsnet intentionally supplies a fresh preference set on every Server.Start,
-// which otherwise clears exit-node choice when the UI hands off to the VPN
-// Extension or when a development update restarts the processes.
-func restoreExitNodeChoice(ctx context.Context, client *local.Client, stateDir string) {
-	id, err := readExitNodeChoice(stateDir)
-	if err != nil || id == "" {
-		return
-	}
-	selectedID := tailcfg.StableNodeID(id)
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		requestContext, cancel := context.WithTimeout(ctx, 2*time.Second)
-		status, statusErr := client.Status(requestContext)
-		cancel()
-		if statusErr == nil && status.BackendState == "Running" {
-			validChoice := false
-			for _, peer := range status.Peer {
-				if peer.ID == selectedID && peer.ExitNodeOption {
-					validChoice = true
-					break
-				}
-			}
-			if !validChoice {
-				if !waitForBackendRetry(ctx) {
-					return
-				}
-				continue
-			}
-			requestContext, cancel = context.WithTimeout(ctx, 3*time.Second)
-			updatedPrefs, prefsErr := client.EditPrefs(requestContext, &ipn.MaskedPrefs{
-				Prefs: ipn.Prefs{
-					ExitNodeID: selectedID,
-				},
-				ExitNodeIDSet: true,
-			})
-			cancel()
-			if prefsErr == nil && updatedPrefs != nil && updatedPrefs.ExitNodeID == selectedID {
-				return
-			}
-		}
-		if !waitForBackendRetry(ctx) {
-			return
-		}
-	}
-}
-
-// restoreNetworkPreferences matches the mobile defaults on a first run, then
-// preserves explicit user choices across the UI-process to VPN-Extension
-// handoff. tsnet supplies fresh platform defaults on each Server.Start, and
-// OpenHarmony does not inherit the Android/iOS RouteAll default.
-func restoreNetworkPreferences(ctx context.Context, client *local.Client, stateDir string) {
+// restoreBackendPreferences applies the app-level network and exit-node choices
+// in one LocalBackend transaction. Applying them separately forces tsnet to
+// process two preference changes during every UI/VPN process handoff and keeps
+// callers in the "starting" state longer than necessary.
+func restoreBackendPreferences(ctx context.Context, client *local.Client, stateDir string) {
 	settings, err := readNetworkPreferences(stateDir)
 	if err != nil {
 		settings = defaultNetworkPreferences()
 	}
+	exitNodeID, exitNodeErr := readExitNodeChoice(stateDir)
+	if exitNodeErr != nil {
+		exitNodeID = ""
+	}
+	selectedID := tailcfg.StableNodeID(exitNodeID)
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		requestContext, cancel := context.WithTimeout(ctx, 2*time.Second)
-		status, statusErr := client.Status(requestContext)
-		cancel()
-		if statusErr == nil && status.BackendState == "Running" {
-			requestContext, cancel = context.WithTimeout(ctx, 2*time.Second)
-			_, prefsErr := client.EditPrefs(requestContext, &ipn.MaskedPrefs{
+		readyToApply := selectedID == ""
+		if selectedID != "" {
+			requestContext, cancel := context.WithTimeout(ctx, 2*time.Second)
+			status, statusErr := client.Status(requestContext)
+			cancel()
+			if statusErr == nil && status.BackendState == "Running" {
+				for _, peer := range status.Peer {
+					if peer.ID == selectedID && peer.ExitNodeOption {
+						readyToApply = true
+						break
+					}
+				}
+			}
+		}
+		if readyToApply {
+			maskedPrefs := &ipn.MaskedPrefs{
 				Prefs: ipn.Prefs{
 					RouteAll:               settings.RouteAll,
 					CorpDNS:                settings.CorpDNS,
 					ExitNodeAllowLANAccess: settings.ExitNodeAllowLANAccess,
+					ExitNodeID:             selectedID,
 				},
 				RouteAllSet:               true,
 				CorpDNSSet:                true,
 				ExitNodeAllowLANAccessSet: true,
-			})
+				ExitNodeIDSet:             selectedID != "",
+			}
+			requestContext, cancel := context.WithTimeout(ctx, 3*time.Second)
+			updatedPrefs, prefsErr := client.EditPrefs(requestContext, maskedPrefs)
 			cancel()
-			if prefsErr == nil {
+			if prefsErr == nil && (selectedID == "" ||
+				(updatedPrefs != nil && updatedPrefs.ExitNodeID == selectedID)) {
 				_ = writeNetworkPreferences(stateDir, settings)
 				return
 			}
@@ -2063,8 +2036,8 @@ func (b *backendController) startAsync(
 	b.client = client
 	b.mu.Unlock()
 
-	restoreNetworkPreferences(startContext, client, stateDir)
-	restoreExitNodeChoice(startContext, client, stateDir)
+	b.setPhase("restoring-preferences")
+	restoreBackendPreferences(startContext, client, stateDir)
 
 	b.mu.Lock()
 	if b.server != server || b.generation != generation || startContext.Err() != nil {
@@ -2073,9 +2046,7 @@ func (b *backendController) startAsync(
 	}
 	b.starting = false
 	b.cancelStart = nil
-	if b.phase == "netns-disabled" {
-		b.phase = "local-client-ready"
-	}
+	b.phase = "ready"
 	b.mu.Unlock()
 }
 

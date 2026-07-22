@@ -73,6 +73,30 @@
       "value": "Send"
     },
     {
+      "name": "transfer_source_title",
+      "value": "Choose what to send"
+    },
+    {
+      "name": "transfer_source_message",
+      "value": "Send to %s"
+    },
+    {
+      "name": "transfer_file_action",
+      "value": "Files"
+    },
+    {
+      "name": "transfer_photo_action",
+      "value": "Photos"
+    },
+    {
+      "name": "transfer_photo_picker_title",
+      "value": "Choose photos"
+    },
+    {
+      "name": "transfer_photo_picker_count",
+      "value": "%d of %d selected"
+    },
+    {
       "name": "transfer_cancel_failed",
       "value": "Could not cancel the transfer."
     },
@@ -115,6 +139,26 @@
     {
       "name": "transfer_receiving_file",
       "value": "Saving received file"
+    },
+    {
+      "name": "transfer_media_ready_to_save",
+      "value": "Media is ready to save"
+    },
+    {
+      "name": "transfer_media_ready_title",
+      "value": "Ready to save to Gallery"
+    },
+    {
+      "name": "transfer_media_saving",
+      "value": "Saving to Gallery"
+    },
+    {
+      "name": "transfer_media_save_failed",
+      "value": "Could not save this media to Gallery. Try again."
+    },
+    {
+      "name": "transfer_media_save_authorization_failed",
+      "value": "Gallery save authorization was not granted."
     },
     {
       "name": "transfer_save_action",
@@ -210,11 +254,11 @@
     },
     {
       "name": "transfer_taildrop_title",
-      "value": "Taildrop"
+      "value": "Meshsend"
     },
     {
       "name": "transfer_taildrop_description",
-      "value": "Files travel over your encrypted Tailscale connection using the best available path."
+      "value": "Secure file transfer powered by Taildrop."
     },
     {
       "name": "transfer_connected_title",

@@ -2,8 +2,15 @@ import nativeBridge from 'libtailscale_ohos.so';
 import { bundleManager, common, Want } from '@kit.AbilityKit';
 import { vpnExtension } from '@kit.NetworkKit';
 import { BusinessError, deviceInfo, pasteboard } from '@kit.BasicServicesKit';
-import { fileIo, picker } from '@kit.CoreFileKit';
+import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
 import { LengthMetrics } from '@kit.ArkUI';
+import {
+  PhotoPickerComponent,
+  PickerController,
+  PickerOptions,
+  ReminderMode,
+  photoAccessHelper
+} from '@kit.MediaLibraryKit';
 import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
 import {
   DiagnosticReportInput,
@@ -28,7 +35,14 @@ import {
   DEFAULT_CONTROL_SERVER_URL
 } from '../services/ControlServerConfig';
 
-const MIN_CONNECTION_LOADING_MS: number = 1400;
+const MIN_CONNECTION_LOADING_MS: number = 250;
+const CONNECTION_START_FRAME_DELAY_MS: number = 32;
+const CONNECTION_POLL_INTERVAL_MS: number = 250;
+const BACKEND_READINESS_POLL_INTERVAL_MS: number = 250;
+const FILE_WATCH_CLOSE_WRITE: number = 0x8;
+const FAST_RECONNECT_TTL_MS: number = 15000;
+const VPN_STOP_POLL_INTERVAL_MS: number = 50;
+const VPN_STOP_POLL_MAX_ATTEMPTS: number = 150;
 const VPN_REPLACE_APPROVAL_FILE_NAME: string = 'vpn-replace-approved';
 const PEER_CONNECTIVITY_REQUEST_FILE_NAME: string = 'peer-connectivity-request.json';
 const PEER_CONNECTIVITY_RESPONSE_FILE_NAME: string = 'peer-connectivity-response.json';
@@ -44,6 +58,7 @@ const TAILDROP_HISTORY_LIMIT: number = 10;
 const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
 const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
 const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
+const VPN_CONNECT_CONFIG_FILE_NAME: string = 'vpn-connect-config.json';
 
 interface ExitNodeChoice {
   id: string;
@@ -215,6 +230,11 @@ interface VpnStopResponse {
   status: string;
 }
 
+interface VpnConnectConfigHandoff {
+  createdAtMs: number;
+  config: string;
+}
+
 interface ControlServerTipStateChange {
   isVisible: boolean;
 }
@@ -331,6 +351,11 @@ export struct BridgeStatus {
   @State taildropHistory: TaildropTransferRecord[] = [];
   @State taildropPreparing: boolean = false;
   @State taildropReceiveInProgress: boolean = false;
+  @State taildropReceiveRouting: boolean = false;
+  @State expandedTaildropTargetKey: string = '';
+  @State @Watch('onTaildropPhotoPickerVisibilityChanged') taildropPhotoPickerVisible: boolean = false;
+  @State taildropPhotoPickerController: PickerController = new PickerController();
+  @State taildropPhotoUris: string[] = [];
   @State loginInProgress: boolean = false;
   @State connectInProgress: boolean = false;
   @State disconnectInProgress: boolean = false;
@@ -339,6 +364,7 @@ export struct BridgeStatus {
   @State devicesLoading: boolean = true;
   @State hasAuthenticatedSession: boolean = false;
   @State currentTab: number = 0;
+  @State activeTab: number = 0;
   @State controlServerURL: string = DEFAULT_CONTROL_SERVER_URL;
   @State controlServerInput: string = DEFAULT_CONTROL_SERVER_URL;
   @State controlServerConfirmed: boolean = false;
@@ -352,8 +378,13 @@ export struct BridgeStatus {
   @State layoutWidth: number = 360;
   @State expandedPeerKeys: string[] = [];
   private connectionPollTimer: number = -1;
+  private connectionStatusWatcher?: fileIo.Watcher;
   private connectionCompletionTimer: number = -1;
   private connectionStartedAtMs: number = 0;
+  private backendReadinessPollTimer: number = -1;
+  private backendRestartDeferred: boolean = false;
+  private cachedVpnConnectConfig: string = '';
+  private cachedVpnConnectConfigAtMs: number = 0;
   private healthPollTimer: number = -1;
   private loginPollTimer: number = -1;
   private magicDNSProbeUrl: string = '';
@@ -380,7 +411,10 @@ export struct BridgeStatus {
   private taildropReceiveResponseInFlight: boolean = false;
   private taildropReceiveDestinationUri: string = '';
   private taildropReceiveExpectedSize: number = 0;
+  private taildropReceiveMediaType?: photoAccessHelper.PhotoType;
   private taildropPickerOpen: boolean = false;
+  private taildropPhotoPickerOptions: PickerOptions = new PickerOptions();
+  private taildropPhotoTarget?: TaildropTargetSummary;
   private peerDataSource: PeerDataSource = new PeerDataSource();
 
   private applyPeers(peers: PeerSummary[]): void {
@@ -437,6 +471,7 @@ export struct BridgeStatus {
     this.controlServerTipVisible = false;
     this.stopConnectionPolling();
     this.clearConnectionCompletionTimer();
+    this.stopBackendReadinessPolling();
     this.stopHealthPolling();
     this.stopLoginPolling();
     this.stopPeerConnectivityPolling();
@@ -499,6 +534,7 @@ export struct BridgeStatus {
   }
 
   private navigateToTab(index: number): void {
+    this.activeTab = index;
     if (this.currentTab === index) {
       return;
     }
@@ -589,6 +625,7 @@ export struct BridgeStatus {
   }
 
   private startBackend(showInitialization: boolean = true): void {
+    this.backendRestartDeferred = false;
     if (!this.controlServerConfirmed) {
       this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
       this.backendReady = true;
@@ -605,6 +642,7 @@ export struct BridgeStatus {
       this.recordDiagnosticEvent('backend_start_requested', showInitialization ? 'visible' : 'silent');
       this.backendStatus = nativeBridge.backendStart(
         `${context.filesDir}/tailscale`, this.deviceModel(), this.controlServerURL);
+      this.startBackendReadinessPolling();
     } catch (error) {
       this.recordDiagnosticEvent('backend_start_failed', 'start');
       this.backendStatus = `Tailscale Backend Failed: ${JSON.stringify(error)}`;
@@ -838,6 +876,118 @@ export struct BridgeStatus {
     };
   }
 
+  private stageVpnConnectConfig(config: string): boolean {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const path: string = `${context.filesDir}/${VPN_CONNECT_CONFIG_FILE_NAME}`;
+    const temporaryPath: string = `${path}.tmp`;
+    const handoff: VpnConnectConfigHandoff = {
+      createdAtMs: Date.now(),
+      config: config
+    };
+    if (!this.writePrivateTextFile(temporaryPath, JSON.stringify(handoff))) {
+      return false;
+    }
+    try {
+      fileIo.renameSync(temporaryPath, path);
+      return true;
+    } catch (_error) {
+      try {
+        if (fileIo.accessSync(temporaryPath)) {
+          fileIo.unlinkSync(temporaryPath);
+        }
+      } catch (_cleanupError) {
+        // A later connection attempt replaces the temporary handoff.
+      }
+      return false;
+    }
+  }
+
+  private cacheVpnReconnectConfig(): boolean {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const path: string = `${context.filesDir}/${VPN_CONNECT_CONFIG_FILE_NAME}`;
+    try {
+      if (!fileIo.accessSync(path)) {
+        return false;
+      }
+      const handoff: VpnConnectConfigHandoff = JSON.parse(fileIo.readTextSync(path)) as VpnConnectConfigHandoff;
+      const ageMs: number = Date.now() - handoff.createdAtMs;
+      if (handoff.createdAtMs <= 0 || ageMs < 0 || ageMs > FAST_RECONNECT_TTL_MS ||
+        handoff.config.length === 0 || handoff.config.length > 8192 || handoff.config.startsWith('FAILED')) {
+        return false;
+      }
+      this.cachedVpnConnectConfig = handoff.config;
+      this.cachedVpnConnectConfigAtMs = handoff.createdAtMs;
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private tryFastReconnect(): boolean {
+    const ageMs: number = Date.now() - this.cachedVpnConnectConfigAtMs;
+    if (!this.backendRestartDeferred || this.cachedVpnConnectConfig.length === 0 ||
+      ageMs < 0 || ageMs > FAST_RECONNECT_TTL_MS) {
+      return false;
+    }
+    if (!this.stageVpnConnectConfig(this.cachedVpnConnectConfig)) {
+      this.recordDiagnosticEvent('fast_reconnect_failed', 'persistence');
+      return false;
+    }
+    this.backendRestartDeferred = false;
+    this.recordDiagnosticEvent('fast_reconnect_used', 'cached_config');
+    this.requestVpnExtensionStart();
+    return true;
+  }
+
+  private deferBackendRestart(): boolean {
+    if (!this.cacheVpnReconnectConfig()) {
+      return false;
+    }
+    this.backendRestartDeferred = true;
+    this.backendReady = true;
+    this.backendInitializationVisible = false;
+    this.devicesLoading = false;
+    this.recordDiagnosticEvent('backend_restart_deferred', 'fast_reconnect_window');
+    this.scheduleLifecycleTask(() => {
+      if (!this.backendRestartDeferred || this.isConnected() || this.isConnecting() ||
+        this.disconnectInProgress) {
+        return;
+      }
+      this.backendRestartDeferred = false;
+      this.recordDiagnosticEvent('backend_restart_deferred_completed', 'timeout');
+      this.startBackend(false);
+    }, FAST_RECONNECT_TTL_MS);
+    return true;
+  }
+
+  private startBackendReadinessPolling(): void {
+    this.stopBackendReadinessPolling();
+    this.scheduleBackendReadinessPoll(this.lifecycleGeneration, 0);
+  }
+
+  private scheduleBackendReadinessPoll(generation: number, delayMs: number): void {
+    this.backendReadinessPollTimer = setTimeout(() => {
+      if (generation !== this.lifecycleGeneration || this.isConnected()) {
+        return;
+      }
+      this.refreshBackendStatus().finally(() => {
+        if (generation !== this.lifecycleGeneration || this.backendReady ||
+          this.backendStatus.startsWith('FAILED') || this.backendStatus.startsWith('STOPPED')) {
+          this.stopBackendReadinessPolling();
+          return;
+        }
+        this.scheduleBackendReadinessPoll(generation, BACKEND_READINESS_POLL_INTERVAL_MS);
+      });
+    }, delayMs);
+  }
+
+  private stopBackendReadinessPolling(): void {
+    if (this.backendReadinessPollTimer >= 0) {
+      clearTimeout(this.backendReadinessPollTimer);
+      this.backendReadinessPollTimer = -1;
+    }
+  }
+
   private beginVpnConnection(): void {
     if (!this.controlServerConfirmed) {
       this.openControlServerSettings();
@@ -850,12 +1000,15 @@ export struct BridgeStatus {
     this.connectionStartedAtMs = Date.now();
     this.recordDiagnosticEvent('connect_requested', 'preflight');
     this.setConnectInProgress(true);
-    // Let the button render its loading state before the native/VPN calls.
-    this.scheduleLifecycleTask(() => this.startVpnProbe(), 300);
+    // Leave one rendering frame for the loading state before native/VPN calls.
+    this.scheduleLifecycleTask(() => this.startVpnProbe(), CONNECTION_START_FRAME_DELAY_MS);
   }
 
   private async startVpnProbe(): Promise<void> {
     try {
+      if (this.tryFastReconnect()) {
+        return;
+      }
       const backendConfig: string = await this.backendVpnConfigWithRecovery();
       if (backendConfig.startsWith('FAILED')) {
         this.recordDiagnosticEvent('vpn_preflight_failed', 'backend_config');
@@ -871,6 +1024,11 @@ export struct BridgeStatus {
       } else {
         this.magicDNSProbeUrl = '';
         this.magicDNSProbeStatus = magicDNSProbeUrl;
+      }
+      if (this.stageVpnConnectConfig(backendConfig)) {
+        this.recordDiagnosticEvent('vpn_config_handoff_staged', 'preflight');
+      } else {
+        this.recordDiagnosticEvent('vpn_config_handoff_failed', 'persistence');
       }
       this.backendStatus = await nativeBridge.backendStopAsync();
       this.requestVpnExtensionStart();
@@ -982,7 +1140,7 @@ export struct BridgeStatus {
     if (!this.disconnectInProgress) {
       return;
     }
-    if (attempt >= 50) {
+    if (attempt >= VPN_STOP_POLL_MAX_ATTEMPTS) {
       this.recordDiagnosticEvent('vpn_backend_stop_timeout', 'disconnect');
       this.finishVpnExtensionStop();
       return;
@@ -1007,7 +1165,7 @@ export struct BridgeStatus {
     }
     this.vpnStopPollTimer = setTimeout(() => {
       this.pollVpnStopResponse(attempt + 1);
-    }, 150);
+    }, VPN_STOP_POLL_INTERVAL_MS);
   }
 
   private stopVpnStopPolling(): void {
@@ -1025,8 +1183,10 @@ export struct BridgeStatus {
         this.vpnStatus = 'HarmonyOS VPN Extension stopped';
         this.disconnectInProgress = false;
         this.stopConnectionPolling();
-        this.startBackend(false);
-        this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
+        if (!this.deferBackendRestart()) {
+          this.startBackend(false);
+          this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
+        }
       })
       .catch((error: BusinessError) => {
         this.recordDiagnosticEvent('disconnect_failed', 'system', error.code);
@@ -1243,18 +1403,42 @@ export struct BridgeStatus {
 
   private startConnectionPolling(): void {
     this.stopConnectionPolling();
-    this.connectionPollTimer = setInterval(() => {
-      this.refreshVpnProbeStatus();
-      if (this.vpnStatus.includes('state=Running') || this.vpnStatus.startsWith('FAILED')) {
-        this.stopConnectionPolling();
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const statusPath: string = `${context.filesDir}/vpn-probe-status.txt`;
+    try {
+      if (fileIo.accessSync(statusPath)) {
+        this.connectionStatusWatcher = fileIo.createWatcher(statusPath, FILE_WATCH_CLOSE_WRITE, () => {
+          this.handleConnectionStatusUpdate();
+        });
+        this.connectionStatusWatcher.start();
       }
-    }, 1000);
+    } catch (_error) {
+      this.connectionStatusWatcher = undefined;
+    }
+    this.connectionPollTimer = setInterval(() => {
+      this.handleConnectionStatusUpdate();
+    }, CONNECTION_POLL_INTERVAL_MS);
+  }
+
+  private handleConnectionStatusUpdate(): void {
+    this.refreshVpnProbeStatus();
+    if (this.vpnStatus.includes('state=Running') || this.vpnStatus.startsWith('FAILED')) {
+      this.stopConnectionPolling();
+    }
   }
 
   private stopConnectionPolling(): void {
     if (this.connectionPollTimer >= 0) {
       clearInterval(this.connectionPollTimer);
       this.connectionPollTimer = -1;
+    }
+    if (this.connectionStatusWatcher !== undefined) {
+      try {
+        this.connectionStatusWatcher.stop();
+      } catch (_error) {
+        // The watcher may already have stopped with the Extension process.
+      }
+      this.connectionStatusWatcher = undefined;
     }
   }
 
@@ -1317,6 +1501,7 @@ export struct BridgeStatus {
     this.taildropState = 'disconnected';
     this.taildropReason = '';
     this.taildropTargets = [];
+    this.expandedTaildropTargetKey = '';
     this.taildropWaitingFiles = [];
     this.taildropInboxReason = '';
     if (this.taildropReceiveInProgress) {
@@ -1487,7 +1672,7 @@ export struct BridgeStatus {
     // The UI backend is intentionally stopped immediately before launching the
     // VPN extension. Do not mistake that short handoff window for a killed
     // extension and start a second backend against the same state directory.
-    if (this.connectInProgress || this.disconnectInProgress) {
+    if (this.connectInProgress || this.disconnectInProgress || this.backendRestartDeferred) {
       return;
     }
     await this.refreshBackendStatus();
@@ -1764,41 +1949,6 @@ export struct BridgeStatus {
       return target.deviceModel;
     }
     return 'Tailscale';
-  }
-
-  private taildropStatusTitle(): ResourceStr {
-    if (!this.isConnected()) {
-      return $r('app.string.transfer_connect_first_title');
-    }
-    if (this.taildropState === 'loading') {
-      return $r('app.string.transfer_detecting_title');
-    }
-    if (this.taildropState === 'disabled') {
-      return $r('app.string.transfer_admin_disabled_title');
-    }
-    if (this.taildropState !== 'ready') {
-      return $r('app.string.transfer_unavailable_title');
-    }
-    return $r('app.string.transfer_targets_ready_title', this.taildropOnlineTargetCount());
-  }
-
-  private taildropStatusDescription(): ResourceStr {
-    if (!this.isConnected()) {
-      return $r('app.string.transfer_connect_first_description');
-    }
-    if (this.taildropState === 'loading') {
-      return $r('app.string.transfer_detecting_description');
-    }
-    if (this.taildropState === 'disabled') {
-      return $r('app.string.transfer_admin_disabled_description');
-    }
-    if (this.taildropState !== 'ready') {
-      return $r('app.string.transfer_unavailable_description');
-    }
-    if (this.taildropTargets.length === 0) {
-      return $r('app.string.transfer_no_targets_description');
-    }
-    return $r('app.string.transfer_targets_ready_description');
   }
 
   private primaryTailscaleAddress(addresses: string[]): string {
@@ -2325,7 +2475,7 @@ export struct BridgeStatus {
 
   private taildropSendActive(): boolean {
     return this.taildropPickerOpen || this.taildropPreparing || this.taildropTransfer.state === 'queued' ||
-      this.taildropTransfer.state === 'sending' || this.taildropReceiveInProgress;
+      this.taildropTransfer.state === 'sending' || this.taildropReceiveInProgress || this.taildropReceiveRouting;
   }
 
   private writeTaildropSendRequest(request: TaildropSendRequest): boolean {
@@ -2398,15 +2548,34 @@ export struct BridgeStatus {
     }
   }
 
-  private startTaildropSelection(target: TaildropTargetSummary): void {
-    this.selectTaildropFiles(target).catch(() => {
-      this.taildropPickerOpen = false;
-      this.taildropPreparing = false;
-      this.showToast($r('app.string.transfer_file_selection_failed'));
+  private toggleTaildropSourceChooser(target: TaildropTargetSummary): void {
+    if (!target.online || !this.isConnected() || this.taildropState !== 'ready' ||
+      this.taildropSendActive()) {
+      return;
+    }
+    this.expandedTaildropTargetKey = this.expandedTaildropTargetKey === target.key ? '' : target.key;
+  }
+
+  private chooseTaildropDocuments(target: TaildropTargetSummary): void {
+    this.expandedTaildropTargetKey = '';
+    this.selectTaildropDocuments(target).catch(() => {
+      this.handleTaildropSelectionFailure();
     });
   }
 
-  private async selectTaildropFiles(target: TaildropTargetSummary): Promise<void> {
+  private chooseTaildropPhotos(target: TaildropTargetSummary): void {
+    this.expandedTaildropTargetKey = '';
+    this.openTaildropPhotoPicker(target);
+  }
+
+  private handleTaildropSelectionFailure(): void {
+    this.taildropPhotoPickerVisible = false;
+    this.taildropPickerOpen = false;
+    this.taildropPreparing = false;
+    this.showToast($r('app.string.transfer_file_selection_failed'));
+  }
+
+  private async selectTaildropDocuments(target: TaildropTargetSummary): Promise<void> {
     if (!target.online || !this.isConnected() || this.taildropState !== 'ready' ||
       this.taildropSendActive()) {
       return;
@@ -2422,7 +2591,63 @@ export struct BridgeStatus {
     } finally {
       this.taildropPickerOpen = false;
     }
-    if (uris.length === 0) {
+    if (uris.length > 0) {
+      await this.queueTaildropFiles(target, uris);
+    }
+  }
+
+  private openTaildropPhotoPicker(target: TaildropTargetSummary): void {
+    if (!target.online || !this.isConnected() || this.taildropState !== 'ready' ||
+      this.taildropSendActive()) {
+      return;
+    }
+    this.taildropPhotoUris = [];
+    this.taildropPhotoTarget = target;
+    this.taildropPhotoPickerController = new PickerController();
+    this.taildropPhotoPickerOptions = new PickerOptions();
+    this.taildropPhotoPickerOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+    this.taildropPhotoPickerOptions.maxSelectNumber = 10;
+    this.taildropPhotoPickerOptions.maxSelectedReminderMode = ReminderMode.TOAST;
+    this.taildropPhotoPickerOptions.isSearchSupported = true;
+    this.taildropPhotoPickerOptions.isPhotoTakingSupported = true;
+    this.taildropPickerOpen = true;
+    this.taildropPhotoPickerVisible = true;
+  }
+
+  private onTaildropPhotoPickerVisibilityChanged(): void {
+    if (!this.taildropPhotoPickerVisible) {
+      this.taildropPickerOpen = false;
+      this.taildropPhotoTarget = undefined;
+    }
+  }
+
+  private selectTaildropPhoto(uri: string): void {
+    if (!this.taildropPhotoUris.includes(uri) && this.taildropPhotoUris.length < 10) {
+      this.taildropPhotoUris = [...this.taildropPhotoUris, uri];
+    }
+  }
+
+  private deselectTaildropPhoto(uri: string): void {
+    this.taildropPhotoUris = this.taildropPhotoUris.filter((selectedUri: string) => selectedUri !== uri);
+  }
+
+  private confirmTaildropPhotoSelection(): void {
+    const target: TaildropTargetSummary | undefined = this.taildropPhotoTarget;
+    const uris: string[] = [...this.taildropPhotoUris];
+    if (target === undefined || uris.length === 0) {
+      return;
+    }
+    this.taildropPhotoPickerVisible = false;
+    this.taildropPickerOpen = false;
+    this.queueTaildropFiles(target, uris).catch(() => {
+      this.handleTaildropSelectionFailure();
+    });
+  }
+
+  private async queueTaildropFiles(target: TaildropTargetSummary, uris: string[]): Promise<void> {
+    if (!target.online || !this.isConnected() || this.taildropState !== 'ready' ||
+      this.taildropPreparing || this.taildropTransfer.state === 'queued' ||
+      this.taildropTransfer.state === 'sending' || this.taildropReceiveInProgress) {
       return;
     }
     this.taildropPreparing = true;
@@ -2487,24 +2712,94 @@ export struct BridgeStatus {
       this.showToast($r('app.string.transfer_send_target_unavailable'));
       return;
     }
-    this.startTaildropSelection(target);
+    this.toggleTaildropSourceChooser(target);
   }
 
   private startTaildropReceive(file: TaildropWaitingFileSummary): void {
-    this.selectTaildropReceiveDestination(file).catch(() => {
-      this.failTaildropReceive('export_failed');
+    if (!this.isConnected() || this.taildropState !== 'ready' || this.taildropSendActive()) {
+      return;
+    }
+    this.routeTaildropReceive(file).catch(() => {
+      this.taildropReceiveRouting = false;
+      this.showToast($r('app.string.transfer_receive_failed'));
     });
+  }
+
+  private taildropFileExtension(name: string): string {
+    const dotIndex: number = name.lastIndexOf('.');
+    if (dotIndex <= 0 || dotIndex >= name.length - 1) {
+      return '';
+    }
+    return name.substring(dotIndex + 1).trim().toLowerCase();
+  }
+
+  private normalizedPhotoFormat(format: string): string {
+    return format.trim().toLowerCase().replace(/^\./, '');
+  }
+
+  private async resolveTaildropMediaType(name: string): Promise<photoAccessHelper.PhotoType | undefined> {
+    const extension: string = this.taildropFileExtension(name);
+    if (extension.length === 0) {
+      return undefined;
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
+    let imageFormatQuerySucceeded: boolean = false;
+    try {
+      const imageFormats: string[] = await phAccessHelper.getSupportedPhotoFormats(
+        photoAccessHelper.PhotoType.IMAGE);
+      imageFormatQuerySucceeded = true;
+      if (imageFormats.some((format: string) => this.normalizedPhotoFormat(format) === extension)) {
+        return photoAccessHelper.PhotoType.IMAGE;
+      }
+    } catch (_error) {
+      // Fall back to common extensions when the format query is temporarily unavailable.
+    }
+    let videoFormatQuerySucceeded: boolean = false;
+    try {
+      const videoFormats: string[] = await phAccessHelper.getSupportedPhotoFormats(
+        photoAccessHelper.PhotoType.VIDEO);
+      videoFormatQuerySucceeded = true;
+      if (videoFormats.some((format: string) => this.normalizedPhotoFormat(format) === extension)) {
+        return photoAccessHelper.PhotoType.VIDEO;
+      }
+    } catch (_error) {
+      // Fall back to common extensions when the format query is temporarily unavailable.
+    }
+    const commonImageExtensions: string[] = ['jpg', 'jpeg', 'png', 'heic', 'heif', 'gif', 'webp', 'bmp', 'dng'];
+    if (!imageFormatQuerySucceeded && commonImageExtensions.includes(extension)) {
+      return photoAccessHelper.PhotoType.IMAGE;
+    }
+    const commonVideoExtensions: string[] = ['mp4', 'mov', 'm4v', '3gp', '3g2', 'mkv', 'webm'];
+    if (!videoFormatQuerySucceeded && commonVideoExtensions.includes(extension)) {
+      return photoAccessHelper.PhotoType.VIDEO;
+    }
+    return undefined;
+  }
+
+  private async routeTaildropReceive(file: TaildropWaitingFileSummary): Promise<void> {
+    this.taildropReceiveRouting = true;
+    let mediaType: photoAccessHelper.PhotoType | undefined = undefined;
+    try {
+      mediaType = await this.resolveTaildropMediaType(file.name);
+    } finally {
+      this.taildropReceiveRouting = false;
+    }
+    if (!this.isConnected() || this.taildropState !== 'ready' || this.taildropSendActive()) {
+      return;
+    }
+    if (mediaType !== undefined) {
+      this.submitTaildropReceiveStage(file, mediaType);
+      return;
+    }
+    await this.selectTaildropReceiveDestination(file);
   }
 
   private async selectTaildropReceiveDestination(file: TaildropWaitingFileSummary): Promise<void> {
     if (!this.isConnected() || this.taildropState !== 'ready' || this.taildropSendActive()) {
       return;
     }
-    this.taildropReceiveInProgress = true;
-    this.taildropReceive = {
-      requestId: 0, action: 'stage', state: 'selecting', reason: '', name: file.name,
-      size: file.size, path: ''
-    };
+    this.taildropPickerOpen = true;
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const documentPicker = new picker.DocumentViewPicker(context);
     const options = new picker.DocumentSaveOptions();
@@ -2513,14 +2808,26 @@ export struct BridgeStatus {
     try {
       uris = await documentPicker.save(options);
     } catch (_error) {
-      this.resetTaildropReceiveOperation();
       this.showToast($r('app.string.transfer_receive_picker_failed'));
       return;
+    } finally {
+      this.taildropPickerOpen = false;
     }
     if (uris.length === 0) {
-      this.resetTaildropReceiveOperation();
       return;
     }
+    this.taildropReceiveDestinationUri = uris[0];
+    this.submitTaildropReceiveStage(file, undefined);
+  }
+
+  private submitTaildropReceiveStage(
+    file: TaildropWaitingFileSummary,
+    mediaType?: photoAccessHelper.PhotoType
+  ): void {
+    if (!this.isConnected() || this.taildropState !== 'ready' || this.taildropSendActive()) {
+      return;
+    }
+    this.taildropReceiveInProgress = true;
     const requestId: number = Date.now();
     const inboxRoot: string = this.taildropInboxRoot();
     fileIo.mkdirSync(inboxRoot, true);
@@ -2531,8 +2838,8 @@ export struct BridgeStatus {
       inboxRoot: inboxRoot,
       path: `${inboxRoot}/${requestId}.taildrop`
     };
-    this.taildropReceiveDestinationUri = uris[0];
     this.taildropReceiveExpectedSize = file.size;
+    this.taildropReceiveMediaType = mediaType;
     this.taildropReceive = {
       requestId: requestId, action: 'stage', state: 'requesting', reason: '', name: file.name,
       size: file.size, path: request.path
@@ -2542,7 +2849,8 @@ export struct BridgeStatus {
       this.failTaildropReceive('extension_error');
       return;
     }
-    this.recordDiagnosticEvent('taildrop_receive_queued', 'transfer');
+    this.recordDiagnosticEvent(mediaType === undefined ? 'taildrop_receive_queued' :
+      'taildrop_media_receive_queued', 'transfer');
   }
 
   private confirmClearTaildropInboxCache(): void {
@@ -2622,6 +2930,20 @@ export struct BridgeStatus {
       return;
     }
     if (result.action === 'stage' && result.state === 'staged') {
+      if (this.taildropReceiveMediaType !== undefined) {
+        const mediaPath: string | undefined = this.prepareTaildropMediaForSave(result);
+        if (mediaPath === undefined) {
+          this.failTaildropReceive('export_failed');
+          return;
+        }
+        this.taildropReceive = {
+          requestId: result.requestId, action: 'stage', state: 'awaiting_gallery_save', reason: '',
+          name: result.name, size: result.size, path: mediaPath
+        };
+        this.recordDiagnosticEvent('taildrop_media_ready_for_save', 'transfer');
+        this.showToast($r('app.string.transfer_media_ready_to_save'));
+        return;
+      }
       this.taildropReceive = {
         requestId: result.requestId, action: 'stage', state: 'exporting', reason: '', name: result.name,
         size: result.size, path: result.path
@@ -2631,17 +2953,7 @@ export struct BridgeStatus {
         this.failTaildropReceive('export_failed');
         return;
       }
-      const deleteRequest: TaildropReceiveRequest = {
-        requestId: result.requestId, action: 'delete', name: result.name, inboxRoot: '', path: ''
-      };
-      this.taildropReceive = {
-        requestId: result.requestId, action: 'delete', state: 'deleting', reason: '', name: result.name,
-        size: result.size, path: ''
-      };
-      if (!this.writeAtomicTaildropRequest(this.taildropReceiveRequestPath(), result.requestId,
-        JSON.stringify(deleteRequest))) {
-        this.failTaildropReceive('delete_failed');
-      }
+      this.requestTaildropReceiveDelete(result.requestId, result.name, result.size);
       return;
     }
     if (result.action === 'delete' && result.state === 'completed') {
@@ -2661,6 +2973,116 @@ export struct BridgeStatus {
       return;
     }
     this.failTaildropReceive('invalid_result');
+  }
+
+  private prepareTaildropMediaForSave(result: TaildropReceiveResult): string | undefined {
+    const safeName: string = this.sanitizeTaildropFileName(result.name, 0);
+    const mediaPath: string = `${this.taildropInboxRoot()}/${safeName}`;
+    try {
+      if (fileIo.accessSync(mediaPath)) {
+        fileIo.unlinkSync(mediaPath);
+      }
+      fileIo.renameSync(result.path, mediaPath);
+      const stat: fileIo.Stat = fileIo.statSync(mediaPath);
+      if (!stat.isFile() || stat.size !== result.size) {
+        fileIo.unlinkSync(mediaPath);
+        return undefined;
+      }
+      return mediaPath;
+    } catch (_error) {
+      return undefined;
+    }
+  }
+
+  private requestTaildropReceiveDelete(requestId: number, name: string, size: number): void {
+    const deleteRequest: TaildropReceiveRequest = {
+      requestId: requestId, action: 'delete', name: name, inboxRoot: '', path: ''
+    };
+    this.taildropReceive = {
+      requestId: requestId, action: 'delete', state: 'deleting', reason: '', name: name,
+      size: size, path: ''
+    };
+    if (!this.writeAtomicTaildropRequest(this.taildropReceiveRequestPath(), requestId,
+      JSON.stringify(deleteRequest))) {
+      this.failTaildropReceive('delete_failed');
+    }
+  }
+
+  private handleTaildropMediaSaveClick(result: SaveButtonOnClickResult): void {
+    if (result === SaveButtonOnClickResult.CANCELED_BY_USER) {
+      return;
+    }
+    if (result !== SaveButtonOnClickResult.SUCCESS) {
+      this.showToast($r('app.string.transfer_media_save_authorization_failed'));
+      return;
+    }
+    this.saveTaildropMediaToGallery().catch(() => {
+      this.restoreTaildropMediaSaveAfterFailure();
+    });
+  }
+
+  private cancelTaildropMediaSave(): void {
+    if (this.taildropReceive.state !== 'awaiting_gallery_save') {
+      return;
+    }
+    this.recordDiagnosticEvent('taildrop_media_save_cancelled', 'transfer');
+    this.resetTaildropReceiveOperation();
+  }
+
+  private restoreTaildropMediaSaveAfterFailure(): void {
+    if (this.taildropReceive.path.length === 0) {
+      this.failTaildropReceive('export_failed');
+      return;
+    }
+    this.taildropReceive = {
+      requestId: this.taildropReceive.requestId,
+      action: 'stage',
+      state: 'awaiting_gallery_save',
+      reason: '',
+      name: this.taildropReceive.name,
+      size: this.taildropReceive.size,
+      path: this.taildropReceive.path
+    };
+    this.showToast($r('app.string.transfer_media_save_failed'));
+  }
+
+  private async saveTaildropMediaToGallery(): Promise<void> {
+    const mediaType: photoAccessHelper.PhotoType | undefined = this.taildropReceiveMediaType;
+    const staged: TaildropReceiveResult = this.taildropReceive;
+    if (mediaType === undefined || staged.state !== 'awaiting_gallery_save' || staged.path.length === 0) {
+      return;
+    }
+    const stat: fileIo.Stat = fileIo.statSync(staged.path);
+    if (!stat.isFile() || stat.size !== staged.size) {
+      this.failTaildropReceive('export_failed');
+      return;
+    }
+    this.taildropReceive = {
+      requestId: staged.requestId, action: 'stage', state: 'saving_gallery', reason: '',
+      name: staged.name, size: staged.size, path: staged.path
+    };
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const sourceUri: string = fileUri.getUriFromPath(staged.path);
+    const changeRequest: photoAccessHelper.MediaAssetChangeRequest =
+      mediaType === photoAccessHelper.PhotoType.IMAGE ?
+        photoAccessHelper.MediaAssetChangeRequest.createImageAssetRequest(context, sourceUri) :
+        photoAccessHelper.MediaAssetChangeRequest.createVideoAssetRequest(context, sourceUri);
+    const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
+    try {
+      await phAccessHelper.applyChanges(changeRequest);
+    } catch (_error) {
+      this.restoreTaildropMediaSaveAfterFailure();
+      return;
+    }
+    try {
+      if (fileIo.accessSync(staged.path)) {
+        fileIo.unlinkSync(staged.path);
+      }
+    } catch (_error) {
+      // The receive operation reset retries cleanup after the remote inbox entry is deleted.
+    }
+    this.recordDiagnosticEvent('taildrop_media_saved_to_gallery', 'transfer');
+    this.requestTaildropReceiveDelete(staged.requestId, staged.name, staged.size);
   }
 
   private clearLocalTaildropInboxCache(): boolean {
@@ -2775,8 +3197,10 @@ export struct BridgeStatus {
       }
     }
     this.taildropReceiveInProgress = false;
+    this.taildropReceiveRouting = false;
     this.taildropReceiveDestinationUri = '';
     this.taildropReceiveExpectedSize = 0;
+    this.taildropReceiveMediaType = undefined;
     this.taildropReceive = emptyTaildropReceive();
   }
 
@@ -3293,7 +3717,7 @@ export struct BridgeStatus {
 
   @Builder
   private ConnectionPanel() {
-    Column({ space: 12 }) {
+    Column() {
       Row({ space: 12 }) {
         Column({ space: 2 }) {
           Text(this.connectionTitle())
@@ -4399,7 +4823,7 @@ export struct BridgeStatus {
         .width(44)
         .height(44)
         .borderRadius(14)
-        .backgroundColor($r('sys.color.comp_background_tertiary'))
+        .backgroundColor(this.secondaryBackground())
 
         Column({ space: 3 }) {
           Text($r('app.string.transfer_taildrop_title'))
@@ -4417,92 +4841,95 @@ export struct BridgeStatus {
         .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
-
-      Divider()
-        .color($r('sys.color.comp_divider'))
-
-      Row({ space: 10 }) {
-        if (this.isConnected() && this.taildropState === 'ready') {
-          SymbolGlyph($r('sys.symbol.checkmark'))
-            .fontSize(18)
-            .fontColor([$r('sys.color.icon_emphasize')])
-        } else {
-          SymbolGlyph($r('sys.symbol.clock'))
-            .fontSize(18)
-            .fontColor([$r('sys.color.icon_secondary')])
-        }
-        Column({ space: 2 }) {
-          Text(this.taildropStatusTitle())
-            .id('taildrop-status-title')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'))
-            .width('100%')
-          Text(this.taildropStatusDescription())
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .lineHeight(18)
-            .width('100%')
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-      }
-      .width('100%')
     }
     .width('100%')
-    .padding(16)
+    .padding(14)
     .backgroundColor(this.groupBackground())
     .borderRadius(16)
   }
 
   @Builder
   private TaildropTargetRow(target: TaildropTargetSummary) {
-    Row({ space: 12 }) {
-      Stack() {
-        Image(this.peerDeviceIcon(target.deviceType))
-          .width(22)
-          .height(22)
-          .fillColor(target.online ? $r('sys.color.icon_primary') :
-            $r('sys.color.icon_secondary'))
-      }
-      .width(38)
-      .height(38)
-      .borderRadius(12)
-      .backgroundColor(this.secondaryBackground())
+    Column({ space: 0 }) {
+      Row({ space: 12 }) {
+        Stack() {
+          Image(this.peerDeviceIcon(target.deviceType))
+            .width(22)
+            .height(22)
+            .fillColor(target.online ? $r('sys.color.icon_primary') :
+              $r('sys.color.icon_secondary'))
+        }
+        .width(38)
+        .height(38)
+        .borderRadius(12)
+        .backgroundColor(this.secondaryBackground())
 
-      Column({ space: 2 }) {
-        Text(target.name)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(this.taildropTargetDescription(target))
-          .fontSize(12)
-          .fontColor($r('sys.color.font_secondary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
+        Column({ space: 2 }) {
+          Text(target.name)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          Text(this.taildropTargetDescription(target))
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
 
-      Text(target.online ? $r('app.string.transfer_send_action') : $r('app.string.peer_offline'))
-        .fontSize(11)
-        .fontColor(target.online ? $r('app.color.status_success') :
-          $r('sys.color.font_secondary'))
+        if (target.online) {
+          SymbolGlyph($r('sys.symbol.chevron_down'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.icon_secondary')])
+            .rotate({ angle: this.expandedTaildropTargetKey === target.key ? 180 : 0 })
+            .animation({ duration: 180, curve: Curve.EaseInOut })
+        } else {
+          Text($r('app.string.peer_offline'))
+            .fontSize(11)
+            .fontColor($r('sys.color.font_secondary'))
+        }
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 54 })
+      .padding({ left: 12, right: 12 })
+      .onClick(() => {
+        if (target.online && !this.taildropSendActive()) {
+          this.toggleTaildropSourceChooser(target);
+        }
+      })
+
+      if (target.online && this.expandedTaildropTargetKey === target.key) {
+        Row({ space: 10 }) {
+          Button($r('app.string.transfer_file_action'))
+            .layoutWeight(1)
+            .height(40)
+            .type(ButtonType.Normal)
+            .borderRadius(12)
+            .backgroundColor(this.secondaryBackground())
+            .fontColor($r('sys.color.font_primary'))
+            .onClick(() => this.chooseTaildropDocuments(target))
+          Button($r('app.string.transfer_photo_action'))
+            .layoutWeight(1)
+            .height(40)
+            .type(ButtonType.Normal)
+            .borderRadius(12)
+            .backgroundColor(this.secondaryBackground())
+            .fontColor($r('sys.color.font_primary'))
+            .onClick(() => this.chooseTaildropPhotos(target))
+        }
+        .width('100%')
+        .padding({ left: 62, right: 12, bottom: 10 })
+      }
     }
     .id('taildrop-target-' + target.key)
     .width('100%')
-    .constraintSize({ minHeight: 54 })
-    .padding({ left: 12, right: 12 })
     .opacity(target.online && !this.taildropSendActive() ? 1 : 0.62)
-    .onClick(() => {
-      if (target.online && !this.taildropSendActive()) {
-        this.startTaildropSelection(target);
-      }
-    })
+    .animation({ duration: 180, curve: Curve.EaseInOut })
   }
 
   @Builder
@@ -4539,6 +4966,37 @@ export struct BridgeStatus {
       .padding({ left: 20, right: 20, top: 20, bottom: 20 })
       .backgroundColor(this.groupBackground())
       .borderRadius(16)
+  }
+
+  @Builder
+  private TaildropPhotoPickerSheet() {
+    Column() {
+      Row({ space: 12 }) {
+        Text($r('app.string.transfer_photo_picker_count', this.taildropPhotoUris.length, 10))
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .layoutWeight(1)
+        Button($r('app.string.transfer_send_action'))
+          .height(36)
+          .enabled(this.taildropPhotoUris.length > 0)
+          .opacity(this.taildropPhotoUris.length > 0 ? 1 : 0.5)
+          .onClick(() => this.confirmTaildropPhotoSelection())
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .backgroundColor(this.groupBackground())
+
+      PhotoPickerComponent({
+        pickerOptions: this.taildropPhotoPickerOptions,
+        pickerController: this.taildropPhotoPickerController,
+        onSelect: (uri: string) => this.selectTaildropPhoto(uri),
+        onDeselect: (uri: string) => this.deselectTaildropPhoto(uri)
+      })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_secondary'))
   }
 
   @Builder
@@ -4608,13 +5066,22 @@ export struct BridgeStatus {
   @Builder
   private TaildropActiveReceivePanel() {
     Row({ space: 10 }) {
-      LoadingProgress()
-        .width(20)
-        .height(20)
-        .color($r('sys.color.icon_emphasize'))
+      if (this.taildropReceive.state === 'awaiting_gallery_save') {
+        SymbolGlyph($r('sys.symbol.doc'))
+          .fontSize(22)
+          .fontColor([$r('sys.color.icon_emphasize')])
+      } else {
+        LoadingProgress()
+          .width(20)
+          .height(20)
+          .color($r('sys.color.icon_emphasize'))
+      }
       Column({ space: 2 }) {
-        Text(this.taildropReceive.action === 'clear' ?
-          $r('app.string.transfer_clearing_cache') : $r('app.string.transfer_receiving_file'))
+        Text(this.taildropReceive.action === 'clear' ? $r('app.string.transfer_clearing_cache') :
+          this.taildropReceive.state === 'awaiting_gallery_save' ?
+            $r('app.string.transfer_media_ready_title') :
+            this.taildropReceive.state === 'saving_gallery' ?
+              $r('app.string.transfer_media_saving') : $r('app.string.transfer_receiving_file'))
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
@@ -4630,6 +5097,25 @@ export struct BridgeStatus {
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
+      if (this.taildropReceive.state === 'awaiting_gallery_save') {
+        Column({ space: 4 }) {
+          SaveButton({
+            icon: SaveIconStyle.FULL_FILLED,
+            text: SaveDescription.SAVE_TO_GALLERY,
+            buttonType: ButtonType.Capsule
+          })
+            .height(40)
+            .onClick((_event: ClickEvent, result: SaveButtonOnClickResult) => {
+              this.handleTaildropMediaSaveClick(result);
+            })
+          Button($r('app.string.cancel_action'))
+            .height(28)
+            .fontSize(11)
+            .fontColor($r('sys.color.font_secondary'))
+            .backgroundColor(Color.Transparent)
+            .onClick(() => this.cancelTaildropMediaSave())
+        }
+      }
     }
     .width('100%')
     .padding(14)
@@ -4785,13 +5271,20 @@ export struct BridgeStatus {
         }
         if (this.isConnected() && (this.taildropState === 'ready' || this.taildropState === 'disabled')) {
           Column({ space: 8 }) {
-            Text($r('app.string.transfer_targets_title'))
-              .id('transfer-page-title')
-              .fontSize(14)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('sys.color.font_secondary'))
-              .width('100%')
-              .padding({ left: 4 })
+            Column({ space: 2 }) {
+              Text($r('app.string.transfer_targets_title'))
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor($r('sys.color.font_primary'))
+                .width('100%')
+              Text($r('app.string.transfer_targets_ready_title', this.taildropOnlineTargetCount()))
+                .fontSize(12)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+            }
+            .id('transfer-page-title')
+            .width('100%')
+            .padding({ left: 4, top: 8, bottom: 2 })
             if (this.taildropTargets.length > 0) {
               this.TaildropTargetsPanel()
             } else {
@@ -4803,9 +5296,9 @@ export struct BridgeStatus {
             Column({ space: 8 }) {
               Row() {
                 Text($r('app.string.transfer_inbox_title'))
-                  .fontSize(14)
+                  .fontSize(15)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor($r('sys.color.font_secondary'))
+                  .fontColor($r('sys.color.font_primary'))
                 Blank()
                 Text($r('app.string.transfer_clear_cache_action'))
                   .fontSize(12)
@@ -4814,7 +5307,7 @@ export struct BridgeStatus {
                   .onClick(() => this.confirmClearTaildropInboxCache())
               }
               .width('100%')
-              .padding({ left: 4, right: 4 })
+              .padding({ left: 4, right: 4, top: 8, bottom: 2 })
               .alignItems(VerticalAlign.Center)
               if (this.taildropWaitingFiles.length > 0) {
                 this.TaildropInboxPanel()
@@ -4836,9 +5329,9 @@ export struct BridgeStatus {
         Column({ space: 8 }) {
           Row() {
             Text($r('app.string.transfer_history_title'))
-              .fontSize(14)
+              .fontSize(15)
               .fontWeight(FontWeight.Medium)
-              .fontColor($r('sys.color.font_secondary'))
+              .fontColor($r('sys.color.font_primary'))
             Blank()
             Text($r('app.string.transfer_clear_history_action'))
               .fontSize(12)
@@ -4851,7 +5344,7 @@ export struct BridgeStatus {
               })
           }
           .width('100%')
-          .padding({ left: 4, right: 4 })
+          .padding({ left: 4, right: 4, top: 8, bottom: 2 })
           .alignItems(VerticalAlign.Center)
           if (this.taildropHistory.length > 0) {
             this.TaildropHistoryPanel()
@@ -4877,6 +5370,7 @@ export struct BridgeStatus {
     .edgeEffect(EdgeEffect.Spring)
     .scrollBar(BarState.Auto)
     .scrollBarWidth(4)
+    .align(Alignment.TopStart)
   }
 
   @Builder
@@ -5126,16 +5620,56 @@ export struct BridgeStatus {
   }
 
   @Builder
+  private HomeTabBar() {
+    Column({ space: 2 }) {
+      Image($r('app.media.tab_home'))
+        .width(24)
+        .height(24)
+        .fillColor(this.activeTab === 0 ? $r('sys.color.icon_emphasize') :
+          $r('sys.color.icon_secondary'))
+      Text($r('app.string.tab_home'))
+        .fontSize(10)
+        .fontColor(this.activeTab === 0 ? $r('sys.color.font_emphasize') :
+          $r('sys.color.font_secondary'))
+        .maxLines(1)
+    }
+    .id('tab-home')
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  private TransferTabBar() {
+    Column({ space: 2 }) {
+      Image($r('app.media.tab_transfer'))
+        .width(24)
+        .height(24)
+        .fillColor(this.activeTab === 1 ? $r('sys.color.icon_emphasize') :
+          $r('sys.color.icon_secondary'))
+      Text($r('app.string.tab_transfer'))
+        .fontSize(10)
+        .fontColor(this.activeTab === 1 ? $r('sys.color.font_emphasize') :
+          $r('sys.color.font_secondary'))
+        .maxLines(1)
+    }
+    .id('tab-transfer')
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
   private SettingsTabBar() {
     Column({ space: 2 }) {
       Image($r('app.media.tab_settings'))
         .width(24)
         .height(24)
-        .fillColor(this.currentTab === 2 ? $r('sys.color.icon_emphasize') :
+        .fillColor(this.activeTab === 2 ? $r('sys.color.icon_emphasize') :
           $r('sys.color.icon_secondary'))
       Text($r('app.string.tab_settings'))
         .fontSize(10)
-        .fontColor(this.currentTab === 2 ? $r('sys.color.font_emphasize') :
+        .fontColor(this.activeTab === 2 ? $r('sys.color.font_emphasize') :
           $r('sys.color.font_secondary'))
         .maxLines(1)
     }
@@ -5171,30 +5705,12 @@ export struct BridgeStatus {
       TabContent() {
         this.HomePage()
       }
-      .tabBar(new BottomTabBarStyle($r('app.media.tab_home'), $r('app.string.tab_home'))
-        .id('tab-home')
-        .labelStyle({
-          unselectedColor: $r('sys.color.font_secondary'),
-          selectedColor: $r('sys.color.font_emphasize')
-        })
-        .iconStyle({
-          unselectedColor: $r('sys.color.icon_secondary'),
-          selectedColor: $r('sys.color.icon_emphasize')
-        }))
+      .tabBar(this.HomeTabBar())
 
       TabContent() {
         this.TransferPage()
       }
-      .tabBar(new BottomTabBarStyle($r('app.media.tab_transfer'), $r('app.string.tab_transfer'))
-        .id('tab-transfer')
-        .labelStyle({
-          unselectedColor: $r('sys.color.font_secondary'),
-          selectedColor: $r('sys.color.font_emphasize')
-        })
-        .iconStyle({
-          unselectedColor: $r('sys.color.icon_secondary'),
-          selectedColor: $r('sys.color.icon_emphasize')
-        }))
+      .tabBar(this.TransferTabBar())
 
       TabContent() {
         this.SettingsPage()
@@ -5225,6 +5741,7 @@ export struct BridgeStatus {
     })
     .divider({ mode: DividerMode.NONE })
     .onSelected((index: number) => {
+      this.activeTab = index;
       // HdsTabs emits onSelected when the swipe transition starts and
       // onChange after it completes. Writing the controlled index here makes
       // the component jump straight to the destination and cancels the
@@ -5236,6 +5753,7 @@ export struct BridgeStatus {
     })
     .onChange((index: number) => {
       this.currentTab = index;
+      this.activeTab = index;
     })
     .width('100%')
     .height('100%')
@@ -5407,6 +5925,7 @@ export struct BridgeStatus {
     .divider({ mode: DividerMode.NONE })
     .onChange((index: number) => {
       this.currentTab = index;
+      this.activeTab = index;
     })
     .width('100%')
     .height('100%')
@@ -5425,6 +5944,14 @@ export struct BridgeStatus {
     .backgroundColor($r('sys.color.background_secondary'))
     .onAreaChange((_oldValue: Area, newValue: Area) => {
       this.layoutWidth = Number(newValue.width);
+    })
+    .bindSheet($$this.taildropPhotoPickerVisible, this.TaildropPhotoPickerSheet(), {
+      height: SheetSize.MEDIUM,
+      detents: [SheetSize.MEDIUM, SheetSize.LARGE],
+      preferType: SheetType.BOTTOM,
+      dragBar: true,
+      showClose: true,
+      title: { title: $r('app.string.transfer_photo_picker_title') }
     })
   }
 }

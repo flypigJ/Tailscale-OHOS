@@ -28,6 +28,11 @@ const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
 const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
 const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
 const VPN_CONFIG_SUMMARY_FILE_NAME: string = 'vpn-config-summary.txt';
+const VPN_CONNECT_CONFIG_FILE_NAME: string = 'vpn-connect-config.json';
+const VPN_CONNECT_CONFIG_TTL_MS: number = 15000;
+const VPN_BACKEND_STATUS_POLL_INTERVAL_MS: number = 100;
+const VPN_BACKEND_STATUS_MAX_ATTEMPTS: number = 150;
+const FILE_WATCH_CLOSE_WRITE: number = 0x8;
 
 interface PeerSummary {
   key: string;
@@ -54,6 +59,11 @@ interface VpnStopRequest {
 interface VpnStopResponse {
   requestId: number;
   status: string;
+}
+
+interface VpnConnectConfigHandoff {
+  createdAtMs: number;
+  config: string;
 }
 
 interface TaildropTargetSummary {
@@ -162,6 +172,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   private tunFd: number = -1;
   private statusTimer: number = -1;
   private statusUpdateInFlight: boolean = false;
+  private backendStopWatcher?: fileIo.Watcher;
   private peerConnectivityInFlight: boolean = false;
   private taildropSendInFlight: boolean = false;
   private taildropCancelInFlight: boolean = false;
@@ -186,6 +197,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     // stop request. Never let that stale request stop a newly created session.
     this.writeTextFile(`${this.context.filesDir}/${VPN_STOP_REQUEST_FILE_NAME}`, '');
     this.writeTextFile(`${this.context.filesDir}/${VPN_STOP_RESPONSE_FILE_NAME}`, '');
+    this.startBackendStopWatcher();
     this.writeTextFile(`${this.context.filesDir}/${VPN_CONFIG_SUMMARY_FILE_NAME}`, '');
     this.writeTaildropSnapshot({
       state: 'loading', reason: '', targets: [], waitingFiles: [], inboxReason: '',
@@ -328,6 +340,15 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       this.recordDiagnosticEvent('vpn_tun_created', 'create');
       const probeStatus: string = nativeBridge.tunFdProbe(this.tunFd);
       if (backendReady && probeStatus.startsWith('OK')) {
+        this.writeStatus('VPN interface established | backend starting');
+        try {
+          await this.vpnConnection.protectProcessNet();
+          this.recordDiagnosticEvent('vpn_process_protected', 'network');
+        } catch (_error) {
+          // blockedApplications already excludes this bundle; keep it as the
+          // compatibility fallback when process-wide protection is unavailable.
+          this.recordDiagnosticEvent('vpn_process_protect_failed', 'network');
+        }
         const restartStatus: string = nativeBridge.backendRestartWithTun(
           `${this.context.filesDir}/tailscale`, this.deviceModel(), controlSettings.controlURL, this.tunFd);
         const finalStatus: string = await this.waitForVpnBackend(restartStatus);
@@ -402,6 +423,12 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     if (!controlSettings.confirmed) {
       return 'FAILED | VPN config | control server not configured';
     }
+    const handedOffConfig: string = this.consumeVpnConnectConfig();
+    if (handedOffConfig.length > 0) {
+      this.recordDiagnosticEvent('vpn_config_handoff_used', 'preflight');
+      return handedOffConfig;
+    }
+    this.recordDiagnosticEvent('vpn_config_handoff_fallback', 'backend_restore');
     nativeBridge.backendStart(stateDir, this.deviceModel(), controlSettings.controlURL);
     let configStatus: string = 'FAILED | VPN config | backend restore timeout';
     for (let attempt: number = 0; attempt < 60; attempt++) {
@@ -416,6 +443,30 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     return configStatus;
   }
 
+  private consumeVpnConnectConfig(): string {
+    const path: string = `${this.context.filesDir}/${VPN_CONNECT_CONFIG_FILE_NAME}`;
+    try {
+      if (!fileIo.accessSync(path)) {
+        return '';
+      }
+      const text: string = fileIo.readTextSync(path);
+      try {
+        fileIo.unlinkSync(path);
+      } catch (_unlinkError) {
+        this.writeTextFile(path, '');
+      }
+      const handoff: VpnConnectConfigHandoff = JSON.parse(text) as VpnConnectConfigHandoff;
+      const ageMs: number = Date.now() - handoff.createdAtMs;
+      if (handoff.createdAtMs <= 0 || ageMs < 0 || ageMs > VPN_CONNECT_CONFIG_TTL_MS ||
+        handoff.config.length === 0 || handoff.config.length > 8192 || handoff.config.startsWith('FAILED')) {
+        return '';
+      }
+      return handoff.config;
+    } catch (_error) {
+      return '';
+    }
+  }
+
   private deviceModel(): string {
     return DeviceNameService.model();
   }
@@ -425,14 +476,19 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       return initialStatus;
     }
     let backendStatus: string = initialStatus;
-    for (let attempt: number = 0; attempt < 60; attempt++) {
+    let visibleStatus: string = '';
+    for (let attempt: number = 0; attempt < VPN_BACKEND_STATUS_MAX_ATTEMPTS; attempt++) {
       const snapshotText: string = await nativeBridge.backendSnapshot();
       backendStatus = (JSON.parse(snapshotText) as BackendHealthSnapshot).status;
+      if (backendStatus !== visibleStatus) {
+        visibleStatus = backendStatus;
+        this.writeStatus(backendStatus);
+      }
       if (backendStatus.includes('state=Running') || backendStatus.startsWith('FAILED')) {
         return backendStatus;
       }
       await new Promise<void>((resolve: () => void) => {
-        setTimeout(resolve, 250);
+        setTimeout(resolve, VPN_BACKEND_STATUS_POLL_INTERVAL_MS);
       });
     }
     return 'FAILED | VPN backend | restart timeout';
@@ -486,6 +542,31 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     this.writeTextFile(`${this.context.filesDir}/vpn-peer-probe-status.txt`, status);
   }
 
+  private startBackendStopWatcher(): void {
+    const requestPath: string = `${this.context.filesDir}/${VPN_STOP_REQUEST_FILE_NAME}`;
+    try {
+      this.backendStopWatcher = fileIo.createWatcher(requestPath, FILE_WATCH_CLOSE_WRITE, () => {
+        this.processBackendStopRequest();
+      });
+      this.backendStopWatcher.start();
+    } catch (_error) {
+      this.backendStopWatcher = undefined;
+      // The one-second status loop remains as a compatibility fallback.
+    }
+  }
+
+  private stopBackendStopWatcher(): void {
+    if (this.backendStopWatcher === undefined) {
+      return;
+    }
+    try {
+      this.backendStopWatcher.stop();
+    } catch (_error) {
+      // The watcher may already have stopped with the Extension lifecycle.
+    }
+    this.backendStopWatcher = undefined;
+  }
+
   private writeTaildropSnapshot(snapshot: TaildropSnapshot): void {
     this.latestTaildropSnapshot = snapshot;
     const persisted: PersistedTaildropSnapshot = {
@@ -511,6 +592,9 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   }
 
   private processBackendStopRequest(): boolean {
+    if (this.backendStopInFlight || this.destroying) {
+      return false;
+    }
     const requestPath: string = `${this.context.filesDir}/${VPN_STOP_REQUEST_FILE_NAME}`;
     try {
       if (!fileIo.accessSync(requestPath)) {
@@ -526,31 +610,57 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
         return false;
       }
       this.backendStopInFlight = true;
-      nativeBridge.backendStopAsync()
-        .then((status: string) => {
-          const response: VpnStopResponse = { requestId: request.requestId, status: status };
-          this.writeTextFile(`${this.context.filesDir}/${VPN_STOP_RESPONSE_FILE_NAME}`,
-            JSON.stringify(response));
-          this.recordDiagnosticEvent(status.startsWith('OK') ?
-            'vpn_backend_stopped' : 'vpn_backend_stop_failed', 'disconnect');
-        })
-        .catch(() => {
-          const response: VpnStopResponse = {
-            requestId: request.requestId,
-            status: 'FAILED | backend stop | extension error'
-          };
-          this.writeTextFile(`${this.context.filesDir}/${VPN_STOP_RESPONSE_FILE_NAME}`,
-            JSON.stringify(response));
-          this.recordDiagnosticEvent('vpn_backend_stop_failed', 'disconnect');
-        })
-        .finally(() => {
-          this.backendStopInFlight = false;
-        });
+      this.stopVpnAndBackend(request);
       return true;
     } catch (_error) {
       this.writeTextFile(requestPath, '');
       return false;
     }
+  }
+
+  private async stopVpnAndBackend(request: VpnStopRequest): Promise<void> {
+    let status: string = 'FAILED | backend stop | extension error';
+    const reconnectConfigPromise: Promise<string> = nativeBridge.backendVpnConfigAsync()
+      .catch(() => 'FAILED | VPN config | extension error');
+    const connection: vpnExtension.VpnConnection | undefined = this.vpnConnection;
+    if (connection !== undefined) {
+      try {
+        await connection.destroy();
+        this.vpnConnection = undefined;
+        this.tunFd = -1;
+        this.writeStatus('VPN disconnected | backend stopping');
+        this.recordDiagnosticEvent('vpn_tun_destroyed', 'disconnect');
+      } catch (_error) {
+        this.recordDiagnosticEvent('vpn_tun_destroy_failed', 'disconnect');
+      }
+    }
+    const reconnectConfig: string = await reconnectConfigPromise;
+    this.stageVpnReconnectConfig(reconnectConfig);
+    try {
+      status = await nativeBridge.backendStopAsync();
+      this.recordDiagnosticEvent(status.startsWith('OK') ?
+        'vpn_backend_stopped' : 'vpn_backend_stop_failed', 'disconnect');
+    } catch (_error) {
+      this.recordDiagnosticEvent('vpn_backend_stop_failed', 'disconnect');
+    }
+    const response: VpnStopResponse = { requestId: request.requestId, status: status };
+    this.writeTextFile(`${this.context.filesDir}/${VPN_STOP_RESPONSE_FILE_NAME}`,
+      JSON.stringify(response));
+    this.backendStopInFlight = false;
+  }
+
+  private stageVpnReconnectConfig(config: string): void {
+    if (config.length === 0 || config.length > 8192 || config.startsWith('FAILED')) {
+      this.recordDiagnosticEvent('fast_reconnect_config_failed', 'backend_config');
+      return;
+    }
+    const handoff: VpnConnectConfigHandoff = {
+      createdAtMs: Date.now(),
+      config: config
+    };
+    this.writeAtomicTextFile(`${this.context.filesDir}/${VPN_CONNECT_CONFIG_FILE_NAME}`,
+      JSON.stringify(handoff));
+    this.recordDiagnosticEvent('fast_reconnect_config_staged', 'disconnect');
   }
 
   private peerConnectivityRequestPath(): string {
@@ -989,6 +1099,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   onDestroy(): void {
     this.destroying = true;
     this.recordDiagnosticEvent('vpn_extension_destroyed', 'lifecycle');
+    this.stopBackendStopWatcher();
     if (this.statusTimer >= 0) {
       clearInterval(this.statusTimer);
       this.statusTimer = -1;
