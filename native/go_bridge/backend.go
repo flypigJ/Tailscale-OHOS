@@ -298,9 +298,7 @@ func (b *backendController) startWithDevice(stateDir, deviceModel, controlURL st
 	// application process cannot use tailscaled's Linux socket marks/network
 	// namespace bypass. Use the ordinary system dialer for control traffic.
 	netns.SetEnabled(false)
-	b.mu.Lock()
 	osVersion := b.osVersion
-	b.mu.Unlock()
 	hostinfo.SetOSVersion(osVersion)
 	trimmedModel := stripHuaweiBrand(deviceModel)
 	hostinfoModelOnce.Do(func() {

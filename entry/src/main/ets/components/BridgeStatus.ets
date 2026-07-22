@@ -84,7 +84,7 @@ interface PeerSummary {
   key: string;
   name: string;
   os: string;
-  osVersion: string;
+  osVersion?: string;
   deviceModel: string;
   deviceType: string;
   addresses: string[];
@@ -2048,7 +2048,7 @@ export struct BridgeStatus {
 
   private peerDeviceDescription(peer: PeerSummary): string {
     const osName: string = peer.os.length > 0 ? this.displayOsName(peer.os) : '';
-    const osVersion: string = peer.osVersion.trim();
+    const osVersion: string = peer.osVersion === undefined ? '' : peer.osVersion.trim();
     if (osVersion.length > 0) {
       return osName.length > 0 ? `${osName} ${osVersion}` : osVersion;
     }
