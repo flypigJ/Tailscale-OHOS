@@ -61,6 +61,30 @@
       "value": "Tailscale disconnected before the transfer finished."
     },
     {
+      "name": "transfer_send_permission_denied",
+      "value": "The selected files cannot be read."
+    },
+    {
+      "name": "transfer_send_no_space",
+      "value": "There is not enough storage space to prepare this transfer."
+    },
+    {
+      "name": "transfer_send_file_unavailable",
+      "value": "A selected file is no longer available."
+    },
+    {
+      "name": "transfer_send_file_changed",
+      "value": "A selected file changed before it could be sent."
+    },
+    {
+      "name": "transfer_send_backend_unavailable",
+      "value": "The VPN backend is not ready for this transfer."
+    },
+    {
+      "name": "transfer_busy_message",
+      "value": "A transfer is already in progress."
+    },
+    {
       "name": "transfer_file_selection_failed",
       "value": "Could not open the file picker."
     },
@@ -89,12 +113,32 @@
       "value": "Sending to %s"
     },
     {
+      "name": "transfer_waiting_for_backend",
+      "value": "Waiting for the VPN backend"
+    },
+    {
+      "name": "transfer_calculating_speed",
+      "value": "Calculating speed"
+    },
+    {
+      "name": "transfer_speed_eta",
+      "value": "%s · %s left"
+    },
+    {
       "name": "transfer_receive_picker_failed",
       "value": "Could not choose where to save the file."
     },
     {
       "name": "transfer_receive_completed",
       "value": "File saved"
+    },
+    {
+      "name": "transfer_image_saved",
+      "value": "Image saved to Photos"
+    },
+    {
+      "name": "transfer_text_copied",
+      "value": "Text copied to the clipboard"
     },
     {
       "name": "transfer_receive_unavailable",
@@ -106,7 +150,7 @@
     },
     {
       "name": "transfer_receive_delete_failed",
-      "value": "The file was saved, but its inbox copy could not be removed."
+      "value": "The content was handled, but its inbox copy could not be removed."
     },
     {
       "name": "transfer_receive_failed",
@@ -117,8 +161,68 @@
       "value": "Saving received file"
     },
     {
+      "name": "transfer_saving_image",
+      "value": "Saving image to Photos"
+    },
+    {
+      "name": "transfer_copying_text",
+      "value": "Copying received text"
+    },
+    {
+      "name": "transfer_gallery_failed",
+      "value": "Could not save the image to Photos. Try again."
+    },
+    {
+      "name": "transfer_text_copy_failed",
+      "value": "Could not copy the received text. Try again."
+    },
+    {
+      "name": "transfer_content_image",
+      "value": "Image"
+    },
+    {
+      "name": "transfer_content_text",
+      "value": "Text"
+    },
+    {
+      "name": "transfer_content_file",
+      "value": "File"
+    },
+    {
       "name": "transfer_save_action",
       "value": "Save"
+    },
+    {
+      "name": "transfer_save_to_gallery_action",
+      "value": "Save to Photos"
+    },
+    {
+      "name": "transfer_copy_text_action",
+      "value": "Copy"
+    },
+    {
+      "name": "transfer_discard_action",
+      "value": "Discard"
+    },
+    {
+      "name": "transfer_discard_confirm_title",
+      "value": "Discard this file?"
+    },
+    {
+      "name": "transfer_discard_confirm_message",
+      "value": "This permanently removes \"%s\" from the Taildrop inbox."
+    },
+    {
+      "name": "transfer_discarding_file",
+      "value": "Discarding received file"
+    },
+    {
+      "name": "transfer_discard_completed",
+      "value": "File discarded"
+    },
+    {
+      "name": "transfer_discard_failed",
+      "value": "Could not discard this file. Try again."
     },
     {
       "name": "transfer_retry_action",
@@ -559,6 +663,26 @@
     {
       "name": "about_title",
       "value": "About"
+    },
+    {
+      "name": "welcome_dialog_title",
+      "value": "Thank you for trying this app 🎉"
+    },
+    {
+      "name": "welcome_dialog_message",
+      "value": "This app is still in early development. Some features may be incomplete, and you may encounter errors or compatibility issues.\n\nIf you run into a problem, please contact us through Settings > About > Feedback. Your suggestions will help us keep improving the app.\n\nThank you for your understanding and support!"
+    },
+    {
+      "name": "welcome_dialog_action",
+      "value": "Got it"
+    },
+    {
+      "name": "feedback_label",
+      "value": "Feedback"
+    },
+    {
+      "name": "feedback_open_failed",
+      "value": "Unable to open an email app"
     },
     {
       "name": "app_version_label",

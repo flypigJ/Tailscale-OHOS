@@ -23,6 +23,7 @@ func TestClassifyTaildropSendError(t *testing.T) {
 		{message: "write: broken pipe", want: "network_interrupted"},
 		{message: "connection reset by peer", want: "target_offline"},
 		{message: "file sharing not enabled", want: "admin_disabled"},
+		{message: "write failed: no space left on device", want: "no_space"},
 	}
 	for _, test := range tests {
 		if got := classifyTaildropSendError(errors.New(test.message)); got != test.want {
@@ -34,6 +35,9 @@ func TestClassifyTaildropSendError(t *testing.T) {
 	}
 	if isTransientTaildropSendError(errors.New("file sharing not enabled")) {
 		t.Fatal("admin-disabled Taildrop should not be retried")
+	}
+	if isTransientTaildropSendError(errors.New("no space left on device")) {
+		t.Fatal("low-storage Taildrop failure should not be retried")
 	}
 }
 

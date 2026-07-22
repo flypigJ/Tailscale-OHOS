@@ -8,6 +8,7 @@ import {
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { APP_FOREGROUND_EVENT } from '../services/AppLifecycleEvents';
 
 const DOMAIN = 0x0000;
 const TAG = 'TailscaleOHOS';
@@ -71,6 +72,7 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     this.applyEdgeToEdge(this.context.config.colorMode);
+    this.context.eventHub.emit(APP_FOREGROUND_EVENT);
     hilog.info(DOMAIN, TAG, 'EntryAbility onForeground');
   }
 

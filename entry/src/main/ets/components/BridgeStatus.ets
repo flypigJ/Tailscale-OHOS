@@ -3,6 +3,7 @@ import { bundleManager, common, Want } from '@kit.AbilityKit';
 import { vpnExtension } from '@kit.NetworkKit';
 import { BusinessError, deviceInfo, pasteboard } from '@kit.BasicServicesKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { LengthMetrics } from '@kit.ArkUI';
 import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
 import {
@@ -11,6 +12,7 @@ import {
   DiagnosticReportService
 } from '../services/DiagnosticReportService';
 import { DeviceNameService } from '../services/DeviceNameService';
+import { APP_FOREGROUND_EVENT } from '../services/AppLifecycleEvents';
 import {
   BlurStrategy,
   DividerMode,
@@ -41,9 +43,21 @@ const TAILDROP_RECEIVE_REQUEST_FILE_NAME: string = 'taildrop-receive-request.jso
 const TAILDROP_RECEIVE_RESPONSE_FILE_NAME: string = 'taildrop-receive-response.json';
 const TAILDROP_HISTORY_FILE_NAME: string = 'taildrop-history.json';
 const TAILDROP_HISTORY_LIMIT: number = 10;
+const TAILDROP_TEXT_CLIPBOARD_MAX_BYTES: number = 1024 * 1024;
+const TAILDROP_IMAGE_EXTENSIONS: string[] = [
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif', 'dng'
+];
+const TAILDROP_TEXT_EXTENSIONS: string[] = [
+  'txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'json5', 'xml', 'yaml', 'yml', 'log',
+  'ini', 'conf', 'cfg', 'properties', 'env', 'sql', 'sh', 'ps1', 'bat', 'cmd', 'py',
+  'js', 'ts', 'ets', 'css', 'html', 'htm', 'java', 'kt', 'go', 'rs', 'c', 'cc', 'cpp',
+  'h', 'hpp'
+];
 const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
 const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
 const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
+const WELCOME_ACKNOWLEDGED_FILE_NAME: string = 'welcome-acknowledged';
+const FEEDBACK_EMAIL: string = 'zzx15821178583@gmail.com';
 
 interface ExitNodeChoice {
   id: string;
@@ -302,7 +316,7 @@ export struct BridgeStatus {
     keyExpiryUnixMs: 0
   };
   @State avatarLoadFailed: boolean = false;
-  @State appVersion: string = '0.8.31';
+  @State appVersion: string = '0.8.32';
   @State tailscaleVersion: string = '—';
   @State exitNodeStatus: string = '未使用出口节点';
   @State logoutStatus: string = '';
@@ -331,6 +345,8 @@ export struct BridgeStatus {
   @State taildropHistory: TaildropTransferRecord[] = [];
   @State taildropPreparing: boolean = false;
   @State taildropReceiveInProgress: boolean = false;
+  @State taildropTransferRate: number = 0;
+  @State taildropTransferEtaSeconds: number = 0;
   @State loginInProgress: boolean = false;
   @State connectInProgress: boolean = false;
   @State disconnectInProgress: boolean = false;
@@ -339,6 +355,7 @@ export struct BridgeStatus {
   @State devicesLoading: boolean = true;
   @State hasAuthenticatedSession: boolean = false;
   @State currentTab: number = 0;
+  @State activeTab: number = 0;
   @State controlServerURL: string = DEFAULT_CONTROL_SERVER_URL;
   @State controlServerInput: string = DEFAULT_CONTROL_SERVER_URL;
   @State controlServerConfirmed: boolean = false;
@@ -366,6 +383,7 @@ export struct BridgeStatus {
   private lifecycleGeneration: number = 0;
   private refreshInFlight: boolean = false;
   private vpnConflictDialogVisible: boolean = false;
+  private welcomeDialogVisible: boolean = false;
   private trafficSession: number = 0;
   private trafficLastHeartbeatMs: number = 0;
   private trafficLastDownloadBytes: number = 0;
@@ -377,11 +395,16 @@ export struct BridgeStatus {
   private peerSnapshotSignature: string = '';
   private lastHandledTaildropRequestId: number = 0;
   private taildropRequestSubmittedAtMs: number = 0;
+  private taildropProgressSampleRequestId: number = 0;
+  private taildropProgressSampleBytes: number = 0;
+  private taildropProgressSampleMs: number = 0;
   private taildropReceiveResponseInFlight: boolean = false;
   private taildropReceiveDestinationUri: string = '';
   private taildropReceiveExpectedSize: number = 0;
+  private taildropReceiveStrategy: string = 'none';
   private taildropPickerOpen: boolean = false;
   private peerDataSource: PeerDataSource = new PeerDataSource();
+  private appForegroundListener: () => void = () => this.handleAppForeground();
 
   private applyPeers(peers: PeerSummary[]): void {
     this.peers = peers;
@@ -390,6 +413,8 @@ export struct BridgeStatus {
 
   aboutToAppear(): void {
     this.lifecycleGeneration++;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    context.eventHub.on(APP_FOREGROUND_EVENT, this.appForegroundListener);
     this.loadGlowLevel();
     this.resetDiagnosticsMode();
     this.backendReady = false;
@@ -398,6 +423,7 @@ export struct BridgeStatus {
     this.loadAppVersion();
     this.loadTaildropHistory();
     this.loadControlServerSettings();
+    this.scheduleLifecycleTask(() => this.showWelcomeDialogIfNeeded(), 350);
     this.recordDiagnosticEvent('ui_opened', 'lifecycle');
     const vpnIsLive: boolean = this.refreshVpnProbeStatus();
     if (!this.controlServerConfirmed) {
@@ -433,7 +459,10 @@ export struct BridgeStatus {
 
   aboutToDisappear(): void {
     this.lifecycleGeneration++;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    context.eventHub.off(APP_FOREGROUND_EVENT, this.appForegroundListener);
     this.vpnConflictDialogVisible = false;
+    this.welcomeDialogVisible = false;
     this.controlServerTipVisible = false;
     this.stopConnectionPolling();
     this.clearConnectionCompletionTimer();
@@ -444,6 +473,24 @@ export struct BridgeStatus {
     this.peerConnectivityInProgress = false;
     this.clearLifecycleTimers();
     this.resetDiagnosticsMode();
+  }
+
+  private handleAppForeground(): void {
+    const generation: number = this.lifecycleGeneration;
+    const vpnIsLive: boolean = this.refreshVpnProbeStatus();
+    this.startHealthPolling();
+    if (!this.controlServerConfirmed) {
+      return;
+    }
+    if (!vpnIsLive) {
+      this.refreshOrRecoverBackend(generation);
+      return;
+    }
+    // The VPN Extension runs in a separate process and keeps writing peer
+    // snapshots while the UI is suspended. Read once immediately on return,
+    // then recheck after its next one-second snapshot so admin-console changes
+    // are reflected without restarting the application.
+    this.scheduleLifecycleTask(() => this.refreshVpnProbeStatus(), 1200);
   }
 
   private scheduleLifecycleTask(task: () => void, delayMs: number): number {
@@ -484,6 +531,47 @@ export struct BridgeStatus {
     this.controlServerStatus = '';
   }
 
+  private welcomeAcknowledgedPath(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return `${context.filesDir}/${WELCOME_ACKNOWLEDGED_FILE_NAME}`;
+  }
+
+  private showWelcomeDialogIfNeeded(): void {
+    if (this.welcomeDialogVisible) {
+      return;
+    }
+    const markerPath: string = this.welcomeAcknowledgedPath();
+    try {
+      if (fileIo.accessSync(markerPath)) {
+        return;
+      }
+    } catch (_error) {
+      // A missing marker means this is the first acknowledged launch.
+    }
+    this.welcomeDialogVisible = true;
+    this.getUIContext().showAlertDialog({
+      title: $r('app.string.welcome_dialog_title'),
+      message: $r('app.string.welcome_dialog_message'),
+      autoCancel: false,
+      secondaryButton: {
+        value: $r('app.string.welcome_dialog_action'),
+        action: () => {
+          this.writePrivateTextFile(markerPath, 'acknowledged');
+          this.welcomeDialogVisible = false;
+          this.recordDiagnosticEvent('welcome_dialog_acknowledged', 'first_run');
+        }
+      }
+    });
+    this.recordDiagnosticEvent('welcome_dialog_shown', 'first_run');
+  }
+
+  private openFeedbackEmail(): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    context.openLink(`mailto:${FEEDBACK_EMAIL}`, { appLinkingOnly: false })
+      .then(() => this.recordDiagnosticEvent('feedback_email_opened', 'about'))
+      .catch(() => this.showToast($r('app.string.feedback_open_failed')));
+  }
+
   private showControlServerTip(): void {
     if (this.controlServerConfirmed || this.controlServerTipVisible) {
       return;
@@ -499,6 +587,7 @@ export struct BridgeStatus {
   }
 
   private navigateToTab(index: number): void {
+    this.activeTab = index;
     if (this.currentTab === index) {
       return;
     }
@@ -1368,6 +1457,19 @@ export struct BridgeStatus {
         return $r('app.string.transfer_send_disconnected');
       case 'cancelled':
         return $r('app.string.transfer_send_cancelled');
+      case 'permission_denied':
+        return $r('app.string.transfer_send_permission_denied');
+      case 'no_space':
+        return $r('app.string.transfer_send_no_space');
+      case 'file_unavailable':
+        return $r('app.string.transfer_send_file_unavailable');
+      case 'file_changed':
+        return $r('app.string.transfer_send_file_changed');
+      case 'busy':
+        return $r('app.string.transfer_busy_message');
+      case 'backend_unavailable':
+      case 'extension_error':
+        return $r('app.string.transfer_send_backend_unavailable');
       case 'timeout':
       case 'network_interrupted':
         return $r('app.string.transfer_send_interrupted');
@@ -1399,6 +1501,7 @@ export struct BridgeStatus {
         transfer.fileName = this.taildropTransfer.fileName;
       }
     }
+    this.updateTaildropProgressEstimate(transfer);
     this.taildropTransfer = transfer;
     if ((transfer.state === 'completed' || transfer.state === 'failed') && transfer.requestId > 0 &&
       transfer.requestId !== this.lastHandledTaildropRequestId) {
@@ -2183,6 +2286,142 @@ export struct BridgeStatus {
       Math.round(this.taildropTransfer.bytesSent * 100 / this.taildropTransfer.totalBytes)));
   }
 
+  private resetTaildropProgressEstimate(): void {
+    this.taildropTransferRate = 0;
+    this.taildropTransferEtaSeconds = 0;
+    this.taildropProgressSampleRequestId = 0;
+    this.taildropProgressSampleBytes = 0;
+    this.taildropProgressSampleMs = 0;
+  }
+
+  private updateTaildropProgressEstimate(transfer: TaildropTransferSummary): void {
+    const active: boolean = transfer.state === 'queued' || transfer.state === 'sending';
+    if (!active || transfer.requestId <= 0 || transfer.totalBytes <= 0) {
+      this.resetTaildropProgressEstimate();
+      return;
+    }
+    const nowMs: number = Date.now();
+    if (transfer.requestId !== this.taildropProgressSampleRequestId ||
+      transfer.bytesSent < this.taildropProgressSampleBytes || this.taildropProgressSampleMs <= 0) {
+      this.taildropProgressSampleRequestId = transfer.requestId;
+      this.taildropProgressSampleBytes = transfer.bytesSent;
+      this.taildropProgressSampleMs = nowMs;
+      this.taildropTransferRate = 0;
+      this.taildropTransferEtaSeconds = 0;
+      return;
+    }
+    const elapsedMs: number = nowMs - this.taildropProgressSampleMs;
+    if (elapsedMs < 500) {
+      return;
+    }
+    const byteDelta: number = transfer.bytesSent - this.taildropProgressSampleBytes;
+    if (byteDelta <= 0) {
+      if (elapsedMs >= 3000) {
+        this.taildropTransferRate = 0;
+        this.taildropTransferEtaSeconds = 0;
+        this.taildropProgressSampleMs = nowMs;
+      }
+      return;
+    }
+    const measuredRate: number = Math.round(byteDelta * 1000 / elapsedMs);
+    this.taildropTransferRate = this.taildropTransferRate > 0 ?
+      Math.round(this.taildropTransferRate * 0.55 + measuredRate * 0.45) : measuredRate;
+    const remainingBytes: number = Math.max(0, transfer.totalBytes - transfer.bytesSent);
+    this.taildropTransferEtaSeconds = this.taildropTransferRate > 0 ?
+      Math.ceil(remainingBytes / this.taildropTransferRate) : 0;
+    this.taildropProgressSampleBytes = transfer.bytesSent;
+    this.taildropProgressSampleMs = nowMs;
+  }
+
+  private formatTransferDuration(seconds: number): string {
+    const safeSeconds: number = Math.max(0, Math.round(seconds));
+    if (safeSeconds < 60) {
+      return `${safeSeconds}s`;
+    }
+    const minutes: number = Math.floor(safeSeconds / 60);
+    const remainingSeconds: number = safeSeconds % 60;
+    if (minutes < 60) {
+      return `${minutes}m ${remainingSeconds.toString().padStart(2, '0')}s`;
+    }
+    const hours: number = Math.floor(minutes / 60);
+    const remainingMinutes: number = minutes % 60;
+    return `${hours}h ${remainingMinutes.toString().padStart(2, '0')}m`;
+  }
+
+  private taildropTransferSpeedText(): ResourceStr {
+    if (this.taildropPreparing || this.taildropTransfer.state === 'queued') {
+      return $r('app.string.transfer_waiting_for_backend');
+    }
+    if (this.taildropTransferRate <= 0 || this.taildropTransferEtaSeconds <= 0) {
+      return $r('app.string.transfer_calculating_speed');
+    }
+    return $r('app.string.transfer_speed_eta',
+      this.formatTrafficBytes(this.taildropTransferRate, true),
+      this.formatTransferDuration(this.taildropTransferEtaSeconds));
+  }
+
+  private taildropActiveReceiveText(): ResourceStr {
+    if (this.taildropReceive.action === 'clear') {
+      return $r('app.string.transfer_clearing_cache');
+    }
+    if (this.taildropReceiveStrategy === 'discard') {
+      return $r('app.string.transfer_discarding_file');
+    }
+    if (this.taildropReceiveStrategy === 'image') {
+      return $r('app.string.transfer_saving_image');
+    }
+    if (this.taildropReceiveStrategy === 'text') {
+      return $r('app.string.transfer_copying_text');
+    }
+    return $r('app.string.transfer_receiving_file');
+  }
+
+  private taildropFileExtension(name: string): string {
+    const dotIndex: number = name.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex === name.length - 1) {
+      return '';
+    }
+    return name.substring(dotIndex + 1).toLowerCase();
+  }
+
+  private taildropFileTitle(name: string): string {
+    const dotIndex: number = name.lastIndexOf('.');
+    return dotIndex > 0 ? name.substring(0, dotIndex) : name;
+  }
+
+  private taildropContentKind(file: TaildropWaitingFileSummary): string {
+    const extension: string = this.taildropFileExtension(file.name);
+    if (TAILDROP_IMAGE_EXTENSIONS.includes(extension)) {
+      return 'image';
+    }
+    if (file.size <= TAILDROP_TEXT_CLIPBOARD_MAX_BYTES && TAILDROP_TEXT_EXTENSIONS.includes(extension)) {
+      return 'text';
+    }
+    return 'file';
+  }
+
+  private taildropContentKindText(file: TaildropWaitingFileSummary): ResourceStr {
+    const kind: string = this.taildropContentKind(file);
+    if (kind === 'image') {
+      return $r('app.string.transfer_content_image');
+    }
+    if (kind === 'text') {
+      return $r('app.string.transfer_content_text');
+    }
+    return $r('app.string.transfer_content_file');
+  }
+
+  private taildropReceiveActionText(file: TaildropWaitingFileSummary): ResourceStr {
+    const kind: string = this.taildropContentKind(file);
+    if (kind === 'image') {
+      return $r('app.string.transfer_save_to_gallery_action');
+    }
+    if (kind === 'text') {
+      return $r('app.string.transfer_copy_text_action');
+    }
+    return $r('app.string.transfer_save_action');
+  }
+
   private taildropTransferStatusText(record: TaildropTransferRecord): ResourceStr {
     if (record.state === 'completed') {
       return record.direction === 'receive' ? $r('app.string.transfer_received_status') :
@@ -2445,6 +2684,7 @@ export struct BridgeStatus {
         targetName: target.name, fileName: '', fileIndex: 0, fileCount: files.length,
         fileBytes: 0, fileSize: 0, bytesSent: 0, totalBytes: totalBytes, completedAtMs: 0
       };
+      this.resetTaildropProgressEstimate();
       this.taildropRequestSubmittedAtMs = Date.now();
       if (!this.writeTaildropSendRequest(request)) {
         this.cleanupPreparedTaildropFiles(files);
@@ -2491,6 +2731,14 @@ export struct BridgeStatus {
   }
 
   private startTaildropReceive(file: TaildropWaitingFileSummary): void {
+    if (!this.isConnected() || this.taildropState !== 'ready' || this.taildropSendActive()) {
+      return;
+    }
+    const strategy: string = this.taildropContentKind(file);
+    if (strategy !== 'file') {
+      this.stageTaildropReceivedContent(file, strategy, '');
+      return;
+    }
     this.selectTaildropReceiveDestination(file).catch(() => {
       this.failTaildropReceive('export_failed');
     });
@@ -2521,6 +2769,12 @@ export struct BridgeStatus {
       this.resetTaildropReceiveOperation();
       return;
     }
+    this.stageTaildropReceivedContent(file, 'file', uris[0]);
+  }
+
+  private stageTaildropReceivedContent(file: TaildropWaitingFileSummary, strategy: string,
+    destinationUri: string): void {
+    this.taildropReceiveInProgress = true;
     const requestId: number = Date.now();
     const inboxRoot: string = this.taildropInboxRoot();
     fileIo.mkdirSync(inboxRoot, true);
@@ -2531,7 +2785,8 @@ export struct BridgeStatus {
       inboxRoot: inboxRoot,
       path: `${inboxRoot}/${requestId}.taildrop`
     };
-    this.taildropReceiveDestinationUri = uris[0];
+    this.taildropReceiveStrategy = strategy;
+    this.taildropReceiveDestinationUri = destinationUri;
     this.taildropReceiveExpectedSize = file.size;
     this.taildropReceive = {
       requestId: requestId, action: 'stage', state: 'requesting', reason: '', name: file.name,
@@ -2543,6 +2798,52 @@ export struct BridgeStatus {
       return;
     }
     this.recordDiagnosticEvent('taildrop_receive_queued', 'transfer');
+  }
+
+  private confirmDiscardTaildropFile(file: TaildropWaitingFileSummary): void {
+    if (this.taildropSendActive()) {
+      this.showToast($r('app.string.transfer_busy_message'));
+      return;
+    }
+    this.getUIContext().showAlertDialog({
+      title: $r('app.string.transfer_discard_confirm_title'),
+      message: $r('app.string.transfer_discard_confirm_message', file.name),
+      autoCancel: true,
+      primaryButton: {
+        value: $r('app.string.cancel_action'),
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.transfer_discard_action'),
+        fontColor: $r('app.color.status_error'),
+        action: () => this.discardTaildropFile(file)
+      }
+    });
+  }
+
+  private discardTaildropFile(file: TaildropWaitingFileSummary): void {
+    if (!this.isConnected() || this.taildropState !== 'ready' || this.taildropSendActive()) {
+      return;
+    }
+    const requestId: number = Date.now();
+    const request: TaildropReceiveRequest = {
+      requestId: requestId, action: 'delete', name: file.name, inboxRoot: '', path: ''
+    };
+    this.taildropReceiveStrategy = 'discard';
+    this.taildropReceiveDestinationUri = '';
+    this.taildropReceiveExpectedSize = 0;
+    this.taildropReceiveInProgress = true;
+    this.taildropReceive = {
+      requestId: requestId, action: 'delete', state: 'deleting', reason: '', name: file.name,
+      size: file.size, path: ''
+    };
+    this.writePrivateTextFile(this.taildropReceiveResponsePath(), '');
+    if (!this.writeAtomicTaildropRequest(this.taildropReceiveRequestPath(), requestId, JSON.stringify(request))) {
+      this.failTaildropReceive('discard_failed');
+      return;
+    }
+    this.recordDiagnosticEvent('taildrop_receive_discard_requested', 'transfer');
   }
 
   private confirmClearTaildropInboxCache(): void {
@@ -2574,6 +2875,7 @@ export struct BridgeStatus {
     const request: TaildropReceiveRequest = {
       requestId: requestId, action: 'clear', name: '', inboxRoot: '', path: ''
     };
+    this.taildropReceiveStrategy = 'clear';
     this.taildropReceiveInProgress = true;
     this.taildropReceive = {
       requestId: requestId, action: 'clear', state: 'requesting', reason: '', name: '', size: 0, path: ''
@@ -2626,8 +2928,8 @@ export struct BridgeStatus {
         requestId: result.requestId, action: 'stage', state: 'exporting', reason: '', name: result.name,
         size: result.size, path: result.path
       };
-      const copied: boolean = await this.exportTaildropReceivedFile(result);
-      if (!copied) {
+      const handled: boolean = await this.handleTaildropStagedFile(result);
+      if (!handled) {
         this.failTaildropReceive('export_failed');
         return;
       }
@@ -2645,7 +2947,11 @@ export struct BridgeStatus {
       return;
     }
     if (result.action === 'delete' && result.state === 'completed') {
-      this.completeTaildropReceive();
+      if (this.taildropReceiveStrategy === 'discard') {
+        this.completeTaildropDiscard();
+      } else {
+        this.completeTaildropReceive();
+      }
       return;
     }
     if (result.action === 'clear' && result.state === 'completed') {
@@ -2689,17 +2995,77 @@ export struct BridgeStatus {
     }
   }
 
-  private async exportTaildropReceivedFile(result: TaildropReceiveResult): Promise<boolean> {
+  private async handleTaildropStagedFile(result: TaildropReceiveResult): Promise<boolean> {
+    let handled: boolean = false;
+    if (result.size === this.taildropReceiveExpectedSize) {
+      if (this.taildropReceiveStrategy === 'image') {
+        handled = await this.exportTaildropImageToGallery(result);
+      } else if (this.taildropReceiveStrategy === 'text') {
+        handled = await this.copyTaildropTextToClipboard(result);
+      } else {
+        handled = await this.exportTaildropReceivedFile(result);
+      }
+    }
+    try {
+      if (result.path.length > 0 && fileIo.accessSync(result.path)) {
+        fileIo.unlinkSync(result.path);
+      }
+    } catch (_error) {
+      // Extension startup cleanup removes any staged export left behind.
+    }
+    return handled;
+  }
+
+  private async exportTaildropImageToGallery(result: TaildropReceiveResult): Promise<boolean> {
+    const extension: string = this.taildropFileExtension(result.name);
+    if (!TAILDROP_IMAGE_EXTENSIONS.includes(extension)) {
+      return false;
+    }
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const helper = photoAccessHelper.getPhotoAccessHelper(context);
+      const configs: photoAccessHelper.PhotoCreationConfig[] = [{
+        title: this.taildropFileTitle(result.name),
+        fileNameExtension: extension,
+        photoType: photoAccessHelper.PhotoType.IMAGE
+      }];
+      const destinationUris: string[] = await helper.showAssetsCreationDialog([result.path], configs);
+      if (destinationUris.length === 0) {
+        return false;
+      }
+      this.taildropReceiveDestinationUri = destinationUris[0];
+      return await this.copyTaildropStagedFile(result.path, destinationUris[0], result.size);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private async copyTaildropTextToClipboard(result: TaildropReceiveResult): Promise<boolean> {
+    if (result.size > TAILDROP_TEXT_CLIPBOARD_MAX_BYTES) {
+      return false;
+    }
+    try {
+      const content: string = fileIo.readTextSync(result.path);
+      const data: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, content);
+      await pasteboard.getSystemPasteboard().setData(data);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  private async copyTaildropStagedFile(sourcePath: string, destinationUri: string,
+    expectedSize: number): Promise<boolean> {
     let destination: fileIo.File | undefined = undefined;
     let copied: boolean = false;
     try {
-      if (this.taildropReceiveDestinationUri.length === 0 || result.size !== this.taildropReceiveExpectedSize) {
+      if (destinationUri.length === 0) {
         copied = false;
       } else {
-        destination = fileIo.openSync(this.taildropReceiveDestinationUri,
+        destination = fileIo.openSync(destinationUri,
           fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-        await fileIo.copyFile(result.path, destination.fd);
-        copied = fileIo.statSync(destination.fd).size === result.size;
+        await fileIo.copyFile(sourcePath, destination.fd);
+        copied = fileIo.statSync(destination.fd).size === expectedSize;
       }
     } catch (_error) {
       copied = false;
@@ -2711,21 +3077,18 @@ export struct BridgeStatus {
         copied = false;
       }
     }
-    if (!copied && this.taildropReceiveDestinationUri.length > 0) {
+    if (!copied && destinationUri.length > 0) {
       try {
-        fileIo.unlinkSync(this.taildropReceiveDestinationUri);
+        fileIo.unlinkSync(destinationUri);
       } catch (_error) {
         // The system provider may not allow deleting a failed export URI.
       }
     }
-    try {
-      if (result.path.length > 0 && fileIo.accessSync(result.path)) {
-        fileIo.unlinkSync(result.path);
-      }
-    } catch (_error) {
-      // Extension startup cleanup removes any staged export left behind.
-    }
     return copied;
+  }
+
+  private async exportTaildropReceivedFile(result: TaildropReceiveResult): Promise<boolean> {
+    return await this.copyTaildropStagedFile(result.path, this.taildropReceiveDestinationUri, result.size);
   }
 
   private addTaildropReceiveRecord(state: string, reason: string): void {
@@ -2747,11 +3110,27 @@ export struct BridgeStatus {
 
   private completeTaildropReceive(): void {
     const receivedName: string = this.taildropReceive.name;
+    const receiveStrategy: string = this.taildropReceiveStrategy;
     this.addTaildropReceiveRecord('completed', '');
     this.taildropWaitingFiles = this.taildropWaitingFiles.filter(
       (file: TaildropWaitingFileSummary) => file.name !== receivedName);
     this.recordDiagnosticEvent('taildrop_receive_completed', 'transfer');
-    this.showToast($r('app.string.transfer_receive_completed'));
+    if (receiveStrategy === 'image') {
+      this.showToast($r('app.string.transfer_image_saved'));
+    } else if (receiveStrategy === 'text') {
+      this.showToast($r('app.string.transfer_text_copied'));
+    } else {
+      this.showToast($r('app.string.transfer_receive_completed'));
+    }
+    this.resetTaildropReceiveOperation();
+  }
+
+  private completeTaildropDiscard(): void {
+    const discardedName: string = this.taildropReceive.name;
+    this.taildropWaitingFiles = this.taildropWaitingFiles.filter(
+      (file: TaildropWaitingFileSummary) => file.name !== discardedName);
+    this.recordDiagnosticEvent('taildrop_receive_discarded', 'transfer');
+    this.showToast($r('app.string.transfer_discard_completed'));
     this.resetTaildropReceiveOperation();
   }
 
@@ -2777,6 +3156,7 @@ export struct BridgeStatus {
     this.taildropReceiveInProgress = false;
     this.taildropReceiveDestinationUri = '';
     this.taildropReceiveExpectedSize = 0;
+    this.taildropReceiveStrategy = 'none';
     this.taildropReceive = emptyTaildropReceive();
   }
 
@@ -2791,7 +3171,17 @@ export struct BridgeStatus {
       return $r('app.string.transfer_receive_no_space');
     }
     if (reason === 'delete_failed') {
-      return $r('app.string.transfer_receive_delete_failed');
+      return this.taildropReceiveStrategy === 'discard' ?
+        $r('app.string.transfer_discard_failed') : $r('app.string.transfer_receive_delete_failed');
+    }
+    if (reason === 'discard_failed') {
+      return $r('app.string.transfer_discard_failed');
+    }
+    if (reason === 'export_failed' && this.taildropReceiveStrategy === 'image') {
+      return $r('app.string.transfer_gallery_failed');
+    }
+    if (reason === 'export_failed' && this.taildropReceiveStrategy === 'text') {
+      return $r('app.string.transfer_text_copy_failed');
     }
     return $r('app.string.transfer_receive_failed');
   }
@@ -4217,8 +4607,12 @@ export struct BridgeStatus {
   private VersionPanel() {
     Column({ space: 0 }) {
       this.AppVersionActionRow()
+      Divider().color($r('sys.color.comp_divider'))
       this.AccountDetailRow($r('app.string.tailscale_version_label'),
         this.tailscaleVersion, 'tailscale-version')
+      Divider().color($r('sys.color.comp_divider'))
+      this.AccountDetailRow($r('app.string.feedback_label'), FEEDBACK_EMAIL,
+        'feedback-email', () => this.openFeedbackEmail())
     }
     .width('100%')
     .padding(14)
@@ -4598,6 +4992,12 @@ export struct BridgeStatus {
           .fontColor($r('sys.color.font_secondary'))
       }
       .width('100%')
+      Text(this.taildropTransferSpeedText())
+        .fontSize(11)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('100%')
     .padding(14)
@@ -4613,8 +5013,7 @@ export struct BridgeStatus {
         .height(20)
         .color($r('sys.color.icon_emphasize'))
       Column({ space: 2 }) {
-        Text(this.taildropReceive.action === 'clear' ?
-          $r('app.string.transfer_clearing_cache') : $r('app.string.transfer_receiving_file'))
+        Text(this.taildropActiveReceiveText())
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
@@ -4651,25 +5050,38 @@ export struct BridgeStatus {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
-        Text(this.formatTrafficBytes(file.size))
-          .fontSize(12)
-          .fontColor($r('sys.color.font_secondary'))
+        Row({ space: 6 }) {
+          Text(this.taildropContentKindText(file))
+            .fontSize(12)
+            .fontColor($r('sys.color.icon_emphasize'))
+          Text(this.formatTrafficBytes(file.size))
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+        }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
-      Text($r('app.string.transfer_save_action'))
-        .fontSize(12)
-        .fontColor($r('sys.color.icon_emphasize'))
+      Row({ space: 12 }) {
+        Text(this.taildropReceiveActionText(file))
+          .fontSize(12)
+          .fontColor($r('sys.color.icon_emphasize'))
+          .onClick(() => {
+            if (this.taildropSendActive()) {
+              this.showToast($r('app.string.transfer_busy_message'));
+              return;
+            }
+            this.startTaildropReceive(file);
+          })
+        Text($r('app.string.transfer_discard_action'))
+          .fontSize(12)
+          .fontColor($r('app.color.status_error'))
+          .onClick(() => this.confirmDiscardTaildropFile(file))
+      }
     }
     .width('100%')
     .constraintSize({ minHeight: 54 })
     .padding({ left: 12, right: 12 })
     .opacity(this.taildropSendActive() ? 0.62 : 1)
-    .onClick(() => {
-      if (!this.taildropSendActive()) {
-        this.startTaildropReceive(file);
-      }
-    })
   }
 
   @Builder
@@ -4866,7 +5278,7 @@ export struct BridgeStatus {
       .padding({
         left: this.contentMargin(),
         right: this.contentMargin(),
-        top: 8,
+        top: 0,
         bottom: this.pageBottomInset()
       })
       .alignItems(HorizontalAlign.Center)
@@ -5126,16 +5538,56 @@ export struct BridgeStatus {
   }
 
   @Builder
+  private HomeTabBar() {
+    Column({ space: 2 }) {
+      Image($r('app.media.tab_home'))
+        .width(24)
+        .height(24)
+        .fillColor(this.activeTab === 0 ? $r('sys.color.icon_emphasize') :
+          $r('sys.color.icon_secondary'))
+      Text($r('app.string.tab_home'))
+        .fontSize(10)
+        .fontColor(this.activeTab === 0 ? $r('sys.color.font_emphasize') :
+          $r('sys.color.font_secondary'))
+        .maxLines(1)
+    }
+    .id('tab-home')
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  private TransferTabBar() {
+    Column({ space: 2 }) {
+      Image($r('app.media.tab_transfer'))
+        .width(24)
+        .height(24)
+        .fillColor(this.activeTab === 1 ? $r('sys.color.icon_emphasize') :
+          $r('sys.color.icon_secondary'))
+      Text($r('app.string.tab_transfer'))
+        .fontSize(10)
+        .fontColor(this.activeTab === 1 ? $r('sys.color.font_emphasize') :
+          $r('sys.color.font_secondary'))
+        .maxLines(1)
+    }
+    .id('tab-transfer')
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
   private SettingsTabBar() {
     Column({ space: 2 }) {
       Image($r('app.media.tab_settings'))
         .width(24)
         .height(24)
-        .fillColor(this.currentTab === 2 ? $r('sys.color.icon_emphasize') :
+        .fillColor(this.activeTab === 2 ? $r('sys.color.icon_emphasize') :
           $r('sys.color.icon_secondary'))
       Text($r('app.string.tab_settings'))
         .fontSize(10)
-        .fontColor(this.currentTab === 2 ? $r('sys.color.font_emphasize') :
+        .fontColor(this.activeTab === 2 ? $r('sys.color.font_emphasize') :
           $r('sys.color.font_secondary'))
         .maxLines(1)
     }
@@ -5171,30 +5623,12 @@ export struct BridgeStatus {
       TabContent() {
         this.HomePage()
       }
-      .tabBar(new BottomTabBarStyle($r('app.media.tab_home'), $r('app.string.tab_home'))
-        .id('tab-home')
-        .labelStyle({
-          unselectedColor: $r('sys.color.font_secondary'),
-          selectedColor: $r('sys.color.font_emphasize')
-        })
-        .iconStyle({
-          unselectedColor: $r('sys.color.icon_secondary'),
-          selectedColor: $r('sys.color.icon_emphasize')
-        }))
+      .tabBar(this.HomeTabBar())
 
       TabContent() {
         this.TransferPage()
       }
-      .tabBar(new BottomTabBarStyle($r('app.media.tab_transfer'), $r('app.string.tab_transfer'))
-        .id('tab-transfer')
-        .labelStyle({
-          unselectedColor: $r('sys.color.font_secondary'),
-          selectedColor: $r('sys.color.font_emphasize')
-        })
-        .iconStyle({
-          unselectedColor: $r('sys.color.icon_secondary'),
-          selectedColor: $r('sys.color.icon_emphasize')
-        }))
+      .tabBar(this.TransferTabBar())
 
       TabContent() {
         this.SettingsPage()
@@ -5225,6 +5659,7 @@ export struct BridgeStatus {
     })
     .divider({ mode: DividerMode.NONE })
     .onSelected((index: number) => {
+      this.activeTab = index;
       // HdsTabs emits onSelected when the swipe transition starts and
       // onChange after it completes. Writing the controlled index here makes
       // the component jump straight to the destination and cancels the
@@ -5236,6 +5671,7 @@ export struct BridgeStatus {
     })
     .onChange((index: number) => {
       this.currentTab = index;
+      this.activeTab = index;
     })
     .width('100%')
     .height('100%')
@@ -5282,6 +5718,10 @@ export struct BridgeStatus {
       if (!ControlServerConfig.reset(context.filesDir)) {
         throw new Error('first-run reset failed');
       }
+      const welcomeMarkerPath: string = this.welcomeAcknowledgedPath();
+      if (fileIo.accessSync(welcomeMarkerPath)) {
+        fileIo.unlinkSync(welcomeMarkerPath);
+      }
       this.controlServerURL = DEFAULT_CONTROL_SERVER_URL;
       this.controlServerInput = DEFAULT_CONTROL_SERVER_URL;
       this.controlServerConfirmed = false;
@@ -5304,6 +5744,7 @@ export struct BridgeStatus {
         $r('app.string.diagnostic_reset_first_run_completed').id);
       this.recordDiagnosticEvent('diagnostic_first_run_reset_completed', 'diagnostics');
       this.navigateToTab(0);
+      this.scheduleLifecycleTask(() => this.showWelcomeDialogIfNeeded(), 350);
       this.scheduleLifecycleTask(() => this.showControlServerTip(), 700);
     } catch (_error) {
       this.diagnosticActionStatus = context.resourceManager.getStringSync(
@@ -5407,6 +5848,7 @@ export struct BridgeStatus {
     .divider({ mode: DividerMode.NONE })
     .onChange((index: number) => {
       this.currentTab = index;
+      this.activeTab = index;
     })
     .width('100%')
     .height('100%')

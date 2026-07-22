@@ -1293,6 +1293,8 @@ func classifyTaildropSendError(err error) string {
 		return "admin_disabled"
 	case strings.Contains(message, "permission denied"):
 		return "permission_denied"
+	case strings.Contains(message, "no space"):
+		return "no_space"
 	case strings.Contains(message, "offline"), strings.Contains(message, "no route"),
 		strings.Contains(message, "connection refused"), strings.Contains(message, "connection reset"):
 		return "target_offline"
