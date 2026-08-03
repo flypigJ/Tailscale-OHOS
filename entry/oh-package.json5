@@ -5,5 +5,7 @@
   "main": "",
   "author": "TailscaleOHOS contributors",
   "license": "BSD-3-Clause",
-  "dependencies": {}
+  "dependencies": {
+    "@tailscale/common": "file:../common"
+  }
 }

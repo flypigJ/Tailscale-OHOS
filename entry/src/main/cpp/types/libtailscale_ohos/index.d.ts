@@ -7,6 +7,7 @@ export const backendStop: () => string;
 export const backendLogout: () => string;
 export const backendStatus: () => string;
 export const backendSnapshot: () => Promise<string>;
+export const backendTaildropIncomingSnapshot: () => Promise<string>;
 export const backendStopAsync: () => Promise<string>;
 export const backendLogoutAsync: () => Promise<string>;
 export const backendAuthURLAsync: () => Promise<string>;
@@ -32,6 +33,6 @@ export const backendTaildropSendAsync: (request: string) => Promise<string>;
 export const backendTaildropCancelAsync: () => Promise<string>;
 export const backendTaildropReceiveAsync: (request: string) => Promise<string>;
 export const backendRestartWithTun: (stateDir: string, deviceModel: string,
-  controlURL: string, fd: number) => string;
+  osVersion: string, controlURL: string, fd: number) => string;
 export const controlProbe: () => string;
 export const tunFdProbe: (fd: number) => string;

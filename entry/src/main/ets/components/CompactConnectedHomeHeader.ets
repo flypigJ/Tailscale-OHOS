@@ -2,7 +2,7 @@
 export struct CompactConnectedHomeHeader {
   @Prop statusTitle: ResourceStr = '';
   @Prop statusDescription: ResourceStr = '';
-  @Prop statusColor: ResourceColor = '#8A8A8A';
+  @Prop statusColor: ResourceColor = $r('app.color.status_offline');
   @Prop downloadRate: string = '0 B/s';
   @Prop uploadRate: string = '0 B/s';
   @Prop showTraffic: boolean = true;
@@ -63,7 +63,7 @@ export struct CompactConnectedHomeHeader {
             Text(`\u2191 ${this.uploadRate}`)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#8B5CF6')
+              .fontColor($r('app.color.traffic_upload'))
               .layoutWeight(1)
           }
           .width('100%')
@@ -77,7 +77,7 @@ export struct CompactConnectedHomeHeader {
       }
 
       Row({ space: 8 }) {
-        Text('\u51FA\u53E3\u8282\u70B9')
+        Text($r('app.string.exit_node_title'))
           .fontSize(13)
           .fontColor($r('sys.color.font_secondary'))
         if (this.exitNodeEditable) {
@@ -90,6 +90,8 @@ export struct CompactConnectedHomeHeader {
             .font({ size: 12 })
             .optionFont({ size: 12 })
             .selectedOptionFont({ size: 12 })
+            .menuBackgroundColor($r('sys.color.comp_background_tertiary'))
+            .menuBackgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
             .constraintSize({ minWidth: 104, maxWidth: 160 })
             .enabled(this.exitNodeEnabled)
             .opacity(this.exitNodeEnabled ? 1 : 0.55)
@@ -120,6 +122,5 @@ export struct CompactConnectedHomeHeader {
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
     .backgroundColor($r('sys.color.comp_background_primary'))
     .borderRadius(16)
-    .animation({ duration: 240, curve: Curve.EaseOut })
   }
 }

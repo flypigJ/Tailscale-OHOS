@@ -23,6 +23,130 @@
     {
       "name": "status_offline",
       "value": "#8A8A8E"
+    },
+    {
+      "name": "status_probe_pending",
+      "value": "#667085"
+    },
+    {
+      "name": "status_streaming_available",
+      "value": "#397A52"
+    },
+    {
+      "name": "status_media_available",
+      "value": "#68439D"
+    },
+    {
+      "name": "status_path_direct",
+      "value": "#45A267"
+    },
+    {
+      "name": "status_path_relay",
+      "value": "#D9933B"
+    },
+    {
+      "name": "status_path_unknown",
+      "value": "#9A9A9A"
+    },
+    {
+      "name": "status_probe_spinner",
+      "value": "#7B8EA8"
+    },
+    {
+      "name": "badge_background_available",
+      "value": "#EAF5ED"
+    },
+    {
+      "name": "badge_background_pending",
+      "value": "#EEF1F5"
+    },
+    {
+      "name": "badge_background_media",
+      "value": "#F3EDFF"
+    },
+    {
+      "name": "surface_subtle",
+      "value": "#0D000000"
+    },
+    {
+      "name": "divider_subtle",
+      "value": "#14000000"
+    },
+    {
+      "name": "action_streaming_icon",
+      "value": "#3C78C5"
+    },
+    {
+      "name": "action_streaming_text",
+      "value": "#326DB4"
+    },
+    {
+      "name": "action_streaming_surface",
+      "value": "#EAF2FF"
+    },
+    {
+      "name": "action_streaming_border",
+      "value": "#9FC2F1"
+    },
+    {
+      "name": "action_media_icon",
+      "value": "#7650AE"
+    },
+    {
+      "name": "action_media_progress",
+      "value": "#7A5AB5"
+    },
+    {
+      "name": "action_media_text",
+      "value": "#68439D"
+    },
+    {
+      "name": "action_media_surface",
+      "value": "#F3EDFF"
+    },
+    {
+      "name": "action_media_border",
+      "value": "#C6AFE8"
+    },
+    {
+      "name": "action_copy_surface",
+      "value": "#F2F4F7"
+    },
+    {
+      "name": "action_copy_border",
+      "value": "#B8C0CC"
+    },
+    {
+      "name": "traffic_upload",
+      "value": "#8B5CF6"
+    },
+    {
+      "name": "transfer_file_icon_blue",
+      "value": "#3B82F6"
+    },
+    {
+      "name": "transfer_file_icon_red",
+      "value": "#FF5A67"
+    },
+    {
+      "name": "transfer_file_icon_yellow",
+      "value": "#F4C430"
+    },
+    {
+      "name": "transfer_file_icon_neutral",
+      "value": "#D9E0EA"
+    },
+    {
+      "name": "account_action_primary",
+      "value": "#2558D9"
+    },
+    {
+      "name": "account_action_destructive",
+      "value": "#B42318"
+    },
+    {
+      "name": "diagnostic_danger_surface",
+      "value": "#FFF1F0"
     }
   ]
 }

@@ -334,6 +334,13 @@ napi_value BackendSnapshotAsync(napi_env env, napi_callback_info info)
     return CreateAsyncStringPromise(env, TSBackendSnapshot, "TailscaleBackendSnapshot");
 }
 
+napi_value BackendTaildropIncomingSnapshotAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(
+        env, TSBackendTaildropIncomingSnapshot, "TailscaleBackendTaildropIncomingSnapshot");
+}
+
 napi_value BackendStopAsync(napi_env env, napi_callback_info info)
 {
     (void)info;
@@ -751,11 +758,11 @@ napi_value BackendPeerProbe(napi_env env, napi_callback_info info)
 
 napi_value BackendRestartWithTun(napi_env env, napi_callback_info info)
 {
-    size_t argc = 4;
-    napi_value args[4] = {nullptr, nullptr, nullptr, nullptr};
-    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 4) {
+    size_t argc = 5;
+    napi_value args[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 5) {
         napi_throw_type_error(env, nullptr,
-            "backendRestartWithTun requires state directory, device model, control server and TUN descriptor");
+            "backendRestartWithTun requires state directory, device model, OS version, control server and TUN descriptor");
         return nullptr;
     }
     size_t length = 0;
@@ -778,23 +785,33 @@ napi_value BackendRestartWithTun(napi_env env, napi_callback_info info)
         napi_throw_error(env, nullptr, "Failed to read the VPN backend device model");
         return nullptr;
     }
+    size_t osVersionLength = 0;
+    if (napi_get_value_string_utf8(env, args[2], nullptr, 0, &osVersionLength) != napi_ok) {
+        napi_throw_type_error(env, nullptr, "VPN backend OS version must be a string");
+        return nullptr;
+    }
+    std::vector<char> osVersion(osVersionLength + 1, '\0');
+    if (napi_get_value_string_utf8(env, args[2], osVersion.data(), osVersion.size(), &osVersionLength) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to read the VPN backend OS version");
+        return nullptr;
+    }
     size_t controlLength = 0;
-    if (napi_get_value_string_utf8(env, args[2], nullptr, 0, &controlLength) != napi_ok) {
+    if (napi_get_value_string_utf8(env, args[3], nullptr, 0, &controlLength) != napi_ok) {
         napi_throw_type_error(env, nullptr, "VPN backend control server must be a string");
         return nullptr;
     }
     std::vector<char> controlURL(controlLength + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[2], controlURL.data(), controlURL.size(), &controlLength) != napi_ok) {
+    if (napi_get_value_string_utf8(env, args[3], controlURL.data(), controlURL.size(), &controlLength) != napi_ok) {
         napi_throw_error(env, nullptr, "Failed to read the VPN backend control server");
         return nullptr;
     }
     int32_t fd = -1;
-    if (napi_get_value_int32(env, args[3], &fd) != napi_ok) {
+    if (napi_get_value_int32(env, args[4], &fd) != napi_ok) {
         napi_throw_type_error(env, nullptr, "VPN TUN descriptor must be an integer");
         return nullptr;
     }
     char* message = TSBackendRestartWithTun(
-        stateDir.data(), deviceModel.data(), controlURL.data(), fd);
+        stateDir.data(), deviceModel.data(), osVersion.data(), controlURL.data(), fd);
     if (message == nullptr) {
         napi_throw_error(env, nullptr, "VPN backend restart returned a null status");
         return nullptr;
@@ -868,6 +885,8 @@ static napi_value Init(napi_env env, napi_value exports)
         {"backendLogout", nullptr, BackendLogout, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendStatus", nullptr, BackendStatus, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendSnapshot", nullptr, BackendSnapshotAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendTaildropIncomingSnapshot", nullptr, BackendTaildropIncomingSnapshotAsync,
+            nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendStopAsync", nullptr, BackendStopAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendLogoutAsync", nullptr, BackendLogoutAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"backendAuthURLAsync", nullptr, BackendAuthURLAsync, nullptr, nullptr, nullptr, napi_default, nullptr},

@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/key"
 )
 
 func TestClassifyTaildropSendError(t *testing.T) {
@@ -61,6 +63,124 @@ func TestPeerStableKeyIsDeterministicAndOpaque(t *testing.T) {
 	}
 	if first == peerStableKey(tailcfg.StableNodeID("node-other")) {
 		t.Fatalf("different node IDs produced the same test key: %q", first)
+	}
+}
+
+func TestPeerHostinfoCompletesMissingStatusMetadata(t *testing.T) {
+	node := &tailcfg.Node{
+		Key: key.NewNode().Public(),
+		Hostinfo: (&tailcfg.Hostinfo{
+			OS:          "windows",
+			OSVersion:   "10.0.22631.0",
+			DeviceModel: "ThinkPad X1",
+		}).View(),
+	}
+
+	osName, osVersion, deviceModel := mergeHostinfoValues("", "", "", node)
+	if osName != "windows" || osVersion != "10.0.22631.0" || deviceModel != "ThinkPad X1" {
+		t.Fatalf("hostinfo metadata = %q, %q, %q", osName, osVersion, deviceModel)
+	}
+	if gotOS, gotVersion, gotModel := mergeHostinfoValues(
+		"android", "17", "Pixel", node); gotOS != "android" || gotVersion != "17" || gotModel != "Pixel" {
+		t.Fatalf("existing status metadata was overwritten: %q, %q, %q", gotOS, gotVersion, gotModel)
+	}
+}
+
+func TestApplyHarmonyHostinfoMetadata(t *testing.T) {
+	info := &tailcfg.Hostinfo{
+		OS:          "linux",
+		OSVersion:   "HongMeng Kernel 1.12.0",
+		DeviceModel: "default",
+	}
+	applyHarmonyHostinfo(info, "7.0.0", "HUAWEI Pura 80 Pro")
+	if info.OS != "HarmonyOS" || info.OSVersion != "7.0.0" || info.DeviceModel != "HUAWEI Pura 80 Pro" {
+		t.Fatalf("HarmonyOS hostinfo = %#v", info)
+	}
+}
+
+func TestInteractiveLoginStartIsDeduplicatedPerBackendGeneration(t *testing.T) {
+	var backend backendController
+	if !backend.claimInteractiveLoginStart(7) {
+		t.Fatal("first interactive login request was not claimed")
+	}
+	if backend.claimInteractiveLoginStart(7) {
+		t.Fatal("repeated interactive login request was not deduplicated")
+	}
+	backend.clearInteractiveLoginStart(6)
+	if backend.claimInteractiveLoginStart(7) {
+		t.Fatal("stale generation clear released the active login request")
+	}
+	backend.clearInteractiveLoginStart(7)
+	if !backend.claimInteractiveLoginStart(7) {
+		t.Fatal("login request could not be started after the prior request failed")
+	}
+}
+
+func TestBuildExitNodeChoicesUsesHostNameInsteadOfMagicDNS(t *testing.T) {
+	status := &ipnstate.Status{Peer: map[key.NodePublic]*ipnstate.PeerStatus{
+		key.NewNode().Public(): {
+			ID:             tailcfg.StableNodeID("active-exit-node"),
+			HostName:       "active-exit-node",
+			DNSName:        "active.tailnet.ts.net.",
+			ExitNodeOption: true,
+			Online:         true,
+		},
+	}}
+
+	choices := buildExitNodeChoices(status, t.TempDir())
+	if len(choices) != 1 {
+		t.Fatalf("exit node choices = %#v, want one choice", choices)
+	}
+	if choices[0].ID != "active-exit-node" || choices[0].Name != "active-exit-node" {
+		t.Fatalf("exit node choice should use HostName instead of DNSName: %#v", choices[0])
+	}
+}
+
+func TestNetworkPreferencesKeepM4BDefaultsAndFields(t *testing.T) {
+	stateDir := t.TempDir()
+	defaults, err := readNetworkPreferences(stateDir)
+	if err != nil {
+		t.Fatalf("read default network preferences: %v", err)
+	}
+	if !defaults.RouteAll || defaults.ExitNodeAllowLANAccess {
+		t.Fatalf("unexpected defaults: %#v", defaults)
+	}
+	updated := networkPreferences{RouteAll: false, ExitNodeAllowLANAccess: true}
+	if err := writeNetworkPreferences(stateDir, updated); err != nil {
+		t.Fatalf("write network preferences: %v", err)
+	}
+	stored, err := readNetworkPreferences(stateDir)
+	if err != nil {
+		t.Fatalf("read stored network preferences: %v", err)
+	}
+	if stored != updated {
+		t.Fatalf("stored network preferences = %#v, want %#v", stored, updated)
+	}
+	encoded, err := os.ReadFile(filepath.Join(stateDir, networkPreferencesFile))
+	if err != nil {
+		t.Fatalf("read network preference file: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"routeAll":false`) ||
+		!strings.Contains(string(encoded), `"exitNodeAllowLANAccess":true`) {
+		t.Fatalf("network preference fields changed: %s", encoded)
+	}
+}
+
+func TestExitNodeChoiceRoundTripPreservesEmptySelection(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := writeExitNodeChoice(stateDir, "stable-exit-node"); err != nil {
+		t.Fatalf("write selected exit node: %v", err)
+	}
+	selected, err := readExitNodeChoice(stateDir)
+	if err != nil || selected != "stable-exit-node" {
+		t.Fatalf("selected exit node = %q, %v", selected, err)
+	}
+	if err := writeExitNodeChoice(stateDir, ""); err != nil {
+		t.Fatalf("clear selected exit node: %v", err)
+	}
+	selected, err = readExitNodeChoice(stateDir)
+	if err != nil || selected != "" {
+		t.Fatalf("cleared exit node = %q, %v", selected, err)
 	}
 }
 

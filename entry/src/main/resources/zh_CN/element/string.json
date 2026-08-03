@@ -1,5 +1,6 @@
 {
   "string": [
+    { "name": "permission_short_term_write_imagevideo_reason", "value": "将收到的图片和视频保存到系统图库。" },
     { "name": "transfer_send_interrupted", "value": "网络传输中断，自动续传仍未完成，请重试。" },
     { "name": "transfer_detecting_title", "value": "正在发现可传输设备" },
     { "name": "transfer_detecting_description", "value": "正在从 VPN 后端读取 Taildrop 能力与设备列表。" },
@@ -52,26 +53,20 @@
     { "name": "transfer_receive_failed", "value": "无法保存收到的文件，请重试。" },
     { "name": "transfer_save_timeout", "value": "保存超时，可直接重试，无需重启应用。" },
     { "name": "transfer_receive_cancelled", "value": "已取消保存，可以重新尝试。" },
-    { "name": "transfer_receiving_file", "value": "正在保存收到的文件" },
     { "name": "transfer_media_ready_to_save", "value": "媒体文件已准备好保存" },
-    { "name": "transfer_media_ready_title", "value": "可以保存到图库" },
-    { "name": "transfer_media_saving", "value": "正在保存到图库" },
     { "name": "transfer_media_save_failed", "value": "无法保存到图库，请重试。" },
     { "name": "transfer_media_save_authorization_failed", "value": "未获得保存到图库的临时授权。" },
-    { "name": "transfer_saving_image", "value": "正在保存图片到图库" },
-    { "name": "transfer_copying_text", "value": "正在复制收到的文本" },
     { "name": "transfer_gallery_failed", "value": "无法将图片保存到图库，请重试。" },
     { "name": "transfer_text_copy_failed", "value": "无法复制收到的文本，请重试。" },
     { "name": "transfer_content_image", "value": "图片" },
+    { "name": "transfer_content_video", "value": "视频" },
     { "name": "transfer_content_text", "value": "文本" },
     { "name": "transfer_content_file", "value": "文件" },
     { "name": "transfer_save_action", "value": "保存" },
-    { "name": "transfer_save_to_gallery_action", "value": "存入图库" },
     { "name": "transfer_copy_text_action", "value": "复制" },
     { "name": "transfer_discard_action", "value": "丢弃" },
     { "name": "transfer_discard_confirm_title", "value": "丢弃此文件？" },
     { "name": "transfer_discard_confirm_message", "value": "此操作会从 Taildrop 收件箱中永久移除“%s”。" },
-    { "name": "transfer_discarding_file", "value": "正在丢弃收到的文件" },
     { "name": "transfer_discard_completed", "value": "文件已丢弃" },
     { "name": "transfer_discard_failed", "value": "无法丢弃此文件，请重试。" },
     { "name": "transfer_retry_action", "value": "重试" },
@@ -103,7 +98,7 @@
     { "name": "transfer_connected_description", "value": "向在线设备发送文件，并保存本机收到的文件。" },
     { "name": "transfer_connect_first_title", "value": "请先连接 Tailscale" },
     { "name": "transfer_connect_first_description", "value": "连接 Tailscale 后才能发送与接收；已有的收到文件和传输记录仍可在下方查看。" },
-    { "name": "transfer_history_title", "value": "传输记录" },
+    { "name": "transfer_history_title", "value": "发送记录" },
     { "name": "transfer_clear_history_action", "value": "清除记录" },
     { "name": "transfer_history_cleared", "value": "传输记录已清除" },
     { "name": "transfer_empty_title", "value": "还没有传输记录" },
@@ -114,10 +109,6 @@
     { "name": "glow_gentle", "value": "轻柔" },
     { "name": "glow_smooth", "value": "流畅" },
     { "name": "glow_adaptive", "value": "自适应" },
-    { "name": "glow_exquisite_description", "value": "光感与材质细节更丰富" },
-    { "name": "glow_gentle_description", "value": "柔和克制" },
-    { "name": "glow_smooth_description", "value": "减少光影负担" },
-    { "name": "glow_adaptive_description", "value": "使用设备默认光感" },
     { "name": "connection_connected", "value": "已连接" },
     { "name": "connection_connecting", "value": "正在连接" },
     { "name": "connection_problem", "value": "连接遇到问题" },
@@ -133,9 +124,10 @@
     { "name": "description_tls_problem", "value": "安全控制连接校验失败，请检查系统时间和网络后重试。" },
     { "name": "description_network_problem", "value": "暂时无法访问 Tailscale 网络，请检查 Wi-Fi 或移动数据后重试。" },
     { "name": "description_vpn_permission_problem", "value": "系统 VPN 启动失败，请允许 VPN 请求后重新连接。" },
-    { "name": "description_vpn_conflict_problem", "value": "当前已有其它 VPN 连接，再次连接可选择是否替换。" },
-    { "name": "vpn_conflict_title", "value": "已有其它 VPN 连接" },
-    { "name": "vpn_conflict_message", "value": "当前已有其它 VPN 连接，继续将断开该连接。" },
+    { "name": "description_vpn_conflict_problem", "value": "请先在系统中断开其它 VPN，再重新连接。" },
+    { "name": "vpn_conflict_title", "value": "请先断开其它 VPN" },
+    { "name": "vpn_conflict_message", "value": "请断开其它 VPN 以连接 Tailscale" },
+    { "name": "vpn_conflict_confirm_action", "value": "确定" },
     { "name": "description_status_problem", "value": "暂时无法读取 VPN 状态，请重新打开应用后重试。" },
     { "name": "description_disconnected", "value": "连接后可通过Tailscale访问其它设备" },
     { "name": "description_starting", "value": "正在准备 Tailscale，请稍候" },
@@ -148,6 +140,8 @@
     { "name": "traffic_download", "value": "本次连接下载" },
     { "name": "traffic_upload", "value": "本次连接上传" },
     { "name": "action_login", "value": "登录 Tailscale" },
+    { "name": "login_loading", "value": "正在加载登录，请稍等" },
+    { "name": "login_browser_prompt", "value": "请在浏览器中完成登录" },
     { "name": "exit_node_title", "value": "出口节点" },
     { "name": "exit_node_description", "value": "通过另一台设备访问互联网" },
     { "name": "exit_node_empty", "value": "当前网络没有可用的出口节点" },
@@ -164,10 +158,6 @@
     { "name": "peer_connectivity_testing", "value": "正在测试…" },
     { "name": "peer_connectivity_summary", "value": "%d/%d 次响应 · 平均 %d 毫秒 · 丢包 %d%%" },
     { "name": "peer_connectivity_latency_range", "value": "延迟范围 %d–%d 毫秒" },
-    { "name": "peer_connectivity_offline", "value": "该 Peer 当前离线。" },
-    { "name": "peer_connectivity_no_address", "value": "该 Peer 没有可探测的 Tailscale 地址。" },
-    { "name": "peer_connectivity_no_response", "value": "未收到 TSMP 响应。" },
-    { "name": "peer_connectivity_unavailable", "value": "Peer 连通性测试暂不可用。" },
     { "name": "peer_copy_ip", "value": "复制 IP" },
     { "name": "peer_ip_copied", "value": "设备 IP 已复制" },
     { "name": "device_copy_unavailable", "value": "此设备没有可复制的信息" },
@@ -202,6 +192,7 @@
     { "name": "diagnostics_collapse", "value": "收起工程诊断" },
     { "name": "diagnostics_title", "value": "工程诊断" },
     { "name": "diagnostics_description", "value": "用于排查问题的技术状态" },
+    { "name": "diagnostics_unlocked_toast", "value": "工程模式已开启，已定位到工程诊断" },
     { "name": "diagnostic_report_title", "value": "诊断报告" },
     { "name": "diagnostic_report_description", "value": "生成经过隐私脱敏的 ZIP，包含设备型号、版本、状态摘要、数量、设置及近期结构化事件；不会收集原始日志、身份信息或网络地址。" },
     { "name": "diagnostic_report_action", "value": "生成并分享报告" },
@@ -225,6 +216,10 @@
     { "name": "control_server_confirmed", "value": "已确认" },
     { "name": "control_server_not_confirmed", "value": "未确认" },
     { "name": "control_server_save", "value": "确认后端服务器" },
+    { "name": "control_server_http_risk_title", "value": "HTTP 后端连接风险" },
+    { "name": "control_server_http_risk_message", "value": "该地址使用未加密的 HTTP。登录和连接流量可能被网络读取或篡改。只有在信任此网络和服务器时才保存。" },
+    { "name": "control_server_http_risk_cancel", "value": "取消" },
+    { "name": "control_server_http_risk_confirm", "value": "仍然保存 HTTP 后端" },
     { "name": "control_server_saved", "value": "后端服务器已保存，现在可以登录。" },
     { "name": "control_server_invalid", "value": "请输入有效的 HTTP 或 HTTPS 控制服务器地址，且不要包含查询参数。" },
     { "name": "control_server_save_failed", "value": "控制服务器保存失败，请重试。" },
@@ -251,9 +246,26 @@
     { "name": "diagnostic_simulate_crash_confirm_message", "value": "此工程测试会停止系统 VPN、保留一份新鲜的“已连接”状态快照，然后异常终止应用。重新打开后，应用应短暂核验这份旧状态，并在约 2.5 秒内显示“未连接”。" },
     { "name": "diagnostic_simulate_crash_failed", "value": "未能准备闪退模拟" },
     { "name": "diagnostic_action_status", "value": "工程操作" },
+    { "name": "diagnostic_probe_title", "value": "诊断检查" },
+    { "name": "diagnostic_probe_description", "value": "检查应用和控制面状态，不会修改数据。" },
+    { "name": "diagnostic_refresh_status_action", "value": "刷新状态" },
+    { "name": "diagnostic_probe_engine_action", "value": "检查引擎" },
+    { "name": "diagnostic_probe_control_tls_action", "value": "检查控制面 TLS" },
+    { "name": "diagnostic_control_plane_status_title", "value": "控制面" },
+    { "name": "diagnostic_vpn_extension_status_title", "value": "VPN 扩展" },
+    { "name": "diagnostic_dangerous_title", "value": "危险操作" },
+    { "name": "diagnostic_dangerous_description", "value": "以下操作可能清除数据、停止服务或模拟故障，请确认影响后再执行。" },
+    { "name": "diagnostic_fake_media_online_title", "value": "伪装媒体服务在线" },
+    { "name": "diagnostic_fake_media_online_description", "value": "仅本次启动临时将 Jellyfin 显示为可用。" },
+    { "name": "diagnostic_media_integration_title", "value": "媒体服务联动验证" },
+    { "name": "diagnostic_media_integration_description", "value": "使用内置样本验证 Jellyfin、Emby、Plex 和 HosPlayer 联动。" },
+    { "name": "diagnostic_media_self_test_action", "value": "运行媒体服务离线自检" },
+    { "name": "diagnostic_hosplayer_copy_action", "value": "复制 HosPlayer 参数原型" },
+    { "name": "diagnostic_media_self_test_status", "value": "媒体联动自检" },
     { "name": "settings_appearance_title", "value": "外观" },
     { "name": "settings_storage_title", "value": "存储" },
     { "name": "settings_cache_title", "value": "缓存" },
+    { "name": "settings_cache_description", "value": "（7天后自动清理）" },
     { "name": "settings_cache_calculating", "value": "正在计算" },
     { "name": "settings_cache_clearing", "value": "正在清除" },
     { "name": "settings_clear_cache_action", "value": "清除缓存" },
@@ -262,5 +274,33 @@
     { "name": "settings_clear_cache_busy", "value": "当前有任务正在使用缓存，请稍后再试。" },
     { "name": "settings_cache_cleared", "value": "缓存已清除" },
     { "name": "settings_clear_cache_failed", "value": "部分缓存未能清除，请稍后重试。" }
+    ,{ "name": "notification_taildrop_receiving_title", "value": "\u6b63\u5728\u63a5\u6536\u6587\u4ef6" }
+    ,{ "name": "notification_taildrop_receiving_indeterminate", "value": "\u6b63\u5728\u63a5\u6536" }
+    ,{ "name": "notification_taildrop_received_title", "value": "\u5df2\u63a5\u6536\u6587\u4ef6" }
+    ,{ "name": "notification_taildrop_received_message", "value": "\u9009\u62e9\u4fdd\u5b58\u65b9\u5f0f" }
+    ,{ "name": "notification_taildrop_save_action", "value": "\u4fdd\u5b58" }
+    ,{ "name": "notification_taildrop_open_action", "value": "\u6253\u5f00" }
+    ,{ "name": "notification_taildrop_copy_action", "value": "\u590d\u5236" }
+    ,{ "name": "notification_taildrop_later_action", "value": "\u7a0d\u540e" }
+    ,{ "name": "device_connection_status", "value": "\u8fde\u63a5\u72b6\u6001" }
+    ,{ "name": "device_connection_path", "value": "\u8fde\u63a5\u65b9\u5f0f" }
+    ,{ "name": "device_probe_checking", "value": "\u6b63\u5728\u68c0\u6d4b" }
+    ,{ "name": "device_path_direct", "value": "\u76f4\u8fde · %d ms" }
+    ,{ "name": "device_path_peer_relay", "value": "\u70b9\u5bf9\u70b9\u4e2d\u7ee7 · %d ms" }
+    ,{ "name": "device_path_derp_relay", "value": "DERP \u4e2d\u7ee7 · %d ms" }
+    ,{ "name": "device_path_unreachable", "value": "\u5f53\u524d\u4e0d\u53ef\u8fbe" }
+    ,{ "name": "device_status_unknown", "value": "\u5c1a\u672a\u786e\u8ba4" }
+    ,{ "name": "streaming_label", "value": "\u8fdc\u7a0b\u4e32\u6d41" }
+    ,{ "name": "sunshine_available", "value": "Sunshine \u53ef\u7528" }
+    ,{ "name": "sunshine_checking", "value": "Sunshine \u68c0\u6d4b\u4e2d" }
+    ,{ "name": "sunshine_timeout", "value": "Sunshine \u68c0\u6d4b\u8d85\u65f6" }
+    ,{ "name": "sunshine_unavailable", "value": "\u672a\u68c0\u6d4b\u5230 Sunshine" }
+    ,{ "name": "sunshine_failed", "value": "Sunshine \u68c0\u6d4b\u5931\u8d25" }
+    ,{ "name": "media_services_label", "value": "\u5f71\u97f3\u670d\u52a1" }
+    ,{ "name": "media_services_checking", "value": "\u5f71\u97f3\u670d\u52a1\u68c0\u6d4b\u4e2d" }
+    ,{ "name": "media_services_available", "value": "%s \u53ef\u7528" }
+    ,{ "name": "media_services_unavailable", "value": "\u672a\u53d1\u73b0\u652f\u6301\u7684\u5f71\u97f3\u670d\u52a1" }
+    ,{ "name": "media_services_timeout", "value": "\u68c0\u6d4b\u8d85\u65f6" }
+    ,{ "name": "media_services_failed", "value": "\u68c0\u6d4b\u5931\u8d25" }
   ]
 }

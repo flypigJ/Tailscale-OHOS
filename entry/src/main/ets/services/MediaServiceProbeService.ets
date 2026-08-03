@@ -52,7 +52,7 @@ export class MediaServiceProbeService {
   }
 
   cancel(peerKey: string): void {
-    this.requestIds.set(peerKey, Date.now());
+    this.requestIds.set(peerKey, (this.requestIds.get(peerKey) ?? 0) + 1);
   }
 
   async probe(peerKey: string, vpnConnected: boolean, force: boolean = false): Promise<MediaProbeResult> {
@@ -68,10 +68,10 @@ export class MediaServiceProbeService {
     if (!vpnConnected) {
       return this.emptyResult('unknown', 'mesh_disconnected');
     }
-    const requestId: number = Date.now();
-    this.requestIds.set(peerKey, requestId);
-    const resultText: string = await this.requestThroughVpnExtension(peerKey, requestId);
-    if (this.requestIds.get(peerKey) !== requestId) {
+    const requestGeneration: number = (this.requestIds.get(peerKey) ?? 0) + 1;
+    this.requestIds.set(peerKey, requestGeneration);
+    const resultText: string = await this.requestThroughVpnExtension(peerKey, Date.now());
+    if (this.requestIds.get(peerKey) !== requestGeneration) {
       return this.emptyResult('unknown', 'cancelled');
     }
     const parsed: MediaProbeResult = this.parse(resultText);

@@ -25,6 +25,7 @@ export class PeerPathService {
   private readonly requestIds: Map<string, number> = new Map();
   private readonly context: common.UIAbilityContext;
   private queue: Promise<void> = Promise.resolve();
+  private lastExtensionRequestId: number = 0;
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
@@ -39,7 +40,7 @@ export class PeerPathService {
   }
 
   cancel(peerKey: string): void {
-    this.requestIds.set(peerKey, Date.now());
+    this.requestIds.set(peerKey, (this.requestIds.get(peerKey) ?? 0) + 1);
   }
 
   async probe(peerKey: string, vpnConnected: boolean, force: boolean = false): Promise<PeerPathResult> {
@@ -54,10 +55,11 @@ export class PeerPathService {
     if (!vpnConnected) {
       return { type: 'unknown', checkedAt: Date.now(), errorMessage: 'mesh_disconnected' };
     }
-    const requestId: number = Date.now();
-    this.requestIds.set(peerKey, requestId);
-    const resultText: string = await this.requestThroughVpnExtension(peerKey, requestId);
-    if (this.requestIds.get(peerKey) !== requestId) {
+    const requestGeneration: number = (this.requestIds.get(peerKey) ?? 0) + 1;
+    this.requestIds.set(peerKey, requestGeneration);
+    const resultText: string = await this.requestThroughVpnExtension(
+      peerKey, this.nextExtensionRequestId());
+    if (this.requestIds.get(peerKey) !== requestGeneration) {
       return { type: 'unknown', checkedAt: Date.now(), errorMessage: 'cancelled' };
     }
     const parsed: PeerPathResult = this.parse(resultText);
@@ -70,6 +72,11 @@ export class PeerPathService {
     const previous: Promise<void> = this.queue;
     this.queue = new Promise<void>((resolve: () => void) => { release = resolve; });
     return previous.then(task).finally(() => release());
+  }
+
+  private nextExtensionRequestId(): number {
+    this.lastExtensionRequestId = Math.max(Date.now(), this.lastExtensionRequestId + 1);
+    return this.lastExtensionRequestId;
   }
 
   private async requestThroughVpnExtension(peerKey: string, requestId: number): Promise<string> {

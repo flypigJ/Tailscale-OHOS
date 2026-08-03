@@ -1,0 +1,9 @@
+{
+  "name": "@tailscale/common",
+  "version": "0.1.0",
+  "description": "Framework-free contracts shared within the Tailscale OHOS app",
+  "main": "src/main/ets/Index.ets",
+  "author": "TailscaleOHOS contributors",
+  "license": "BSD-3-Clause",
+  "dependencies": {}
+}

@@ -13,6 +13,5 @@ export struct LegacyConnectedHomeHeader {
       this.exitNodePanel()
     }
     .width('100%')
-    .animation({ duration: 240, curve: Curve.EaseOut })
   }
 }

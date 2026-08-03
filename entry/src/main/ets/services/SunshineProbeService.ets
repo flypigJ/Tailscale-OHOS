@@ -41,7 +41,7 @@ export class SunshineProbeService {
   }
 
   cancel(peerKey: string): void {
-    this.requestIds.set(peerKey, Date.now());
+    this.requestIds.set(peerKey, (this.requestIds.get(peerKey) ?? 0) + 1);
   }
 
   async probe(peerKey: string, host: string, vpnConnected: boolean,
@@ -58,10 +58,10 @@ export class SunshineProbeService {
     if (!vpnConnected || host.length === 0) {
       return { state: 'unknown', checkedAt: Date.now(), errorMessage: 'mesh_disconnected' };
     }
-    const requestId: number = Date.now();
-    this.requestIds.set(peerKey, requestId);
-    const resultText: string = await this.requestThroughVpnExtension(peerKey, requestId);
-    if (this.requestIds.get(peerKey) !== requestId) {
+    const requestGeneration: number = (this.requestIds.get(peerKey) ?? 0) + 1;
+    this.requestIds.set(peerKey, requestGeneration);
+    const resultText: string = await this.requestThroughVpnExtension(peerKey, Date.now());
+    if (this.requestIds.get(peerKey) !== requestGeneration) {
       return { state: 'unknown', checkedAt: Date.now(), errorMessage: 'cancelled' };
     }
     const parsed: SunshineProbeResult = this.parse(resultText);

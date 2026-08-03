@@ -3,12 +3,13 @@ import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { StoragePaths } from './StoragePaths';
+import { DiagnosticPrivacy } from './DiagnosticPrivacy';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'VpnBackgroundTask';
 const BUNDLE_NAME: string = 'io.github.tailscaleohos';
 const ENTRY_ABILITY_NAME: string = 'EntryAbility';
-const VPN_STATUS_FILE_NAME: string = 'vpn-probe-status.txt';
 const VPN_STATUS_FRESH_MS: number = 15000;
 const START_RETRY_INTERVAL_MS: number = 250;
 const START_RETRY_LIMIT: number = 20;
@@ -18,6 +19,7 @@ export class VpnBackgroundTaskManager {
   private isBackground: boolean = false;
   private isStarted: boolean = false;
   private startInFlight: boolean = false;
+  private stopInFlight: boolean = false;
   private listenerRegistered: boolean = false;
   private lifecycleGeneration: number = 0;
   private retryTimer: number = -1;
@@ -49,6 +51,7 @@ export class VpnBackgroundTaskManager {
   }
 
   unregister(): void {
+    this.isBackground = false;
     this.lifecycleGeneration++;
     this.clearRetryTimer();
     this.stopHealthCheck();
@@ -84,7 +87,7 @@ export class VpnBackgroundTaskManager {
   private startWhenVpnActive(context: common.UIAbilityContext,
     generation: number, attempt: number): void {
     if (!this.isBackground || generation !== this.lifecycleGeneration ||
-      this.isStarted || this.startInFlight) {
+      this.isStarted || this.startInFlight || this.stopInFlight) {
       return;
     }
     if (this.hasLiveVpnStatus(context.filesDir)) {
@@ -130,14 +133,18 @@ export class VpnBackgroundTaskManager {
     } catch (error) {
       const businessError = error as BusinessError;
       hilog.error(DOMAIN, TAG,
-        'Failed to start VPN background task. code=%{public}d message=%{public}s',
-        businessError.code ?? -1, businessError.message ?? '');
+        'Failed to start VPN background task. code=%{public}d %{public}s',
+        businessError.code ?? -1, DiagnosticPrivacy.formatLogError(businessError));
     } finally {
       this.startInFlight = false;
     }
   }
 
   private async stop(context: common.UIAbilityContext): Promise<void> {
+    if (this.stopInFlight) {
+      return;
+    }
+    this.stopInFlight = true;
     try {
       const tasks: backgroundTaskManager.ContinuousTaskInfo[] =
         await backgroundTaskManager.getAllContinuousTasks(context, false);
@@ -153,8 +160,13 @@ export class VpnBackgroundTaskManager {
     } catch (error) {
       const businessError = error as BusinessError;
       hilog.warn(DOMAIN, TAG,
-        'Failed to stop VPN background task. code=%{public}d message=%{public}s',
-        businessError.code ?? -1, businessError.message ?? '');
+        'Failed to stop VPN background task. code=%{public}d %{public}s',
+        businessError.code ?? -1, DiagnosticPrivacy.formatLogError(businessError));
+    } finally {
+      this.stopInFlight = false;
+      if (this.isBackground) {
+        this.startWhenVpnActive(context, this.lifecycleGeneration, 0);
+      }
     }
   }
 
@@ -175,7 +187,7 @@ export class VpnBackgroundTaskManager {
 
   private hasLiveVpnStatus(filesDir: string): boolean {
     try {
-      const status: string = fileIo.readTextSync(`${filesDir}/${VPN_STATUS_FILE_NAME}`);
+      const status: string = fileIo.readTextSync(StoragePaths.vpnStatusPath(filesDir));
       const heartbeatMatch: RegExpMatchArray | null = status.match(/heartbeatMs=(\d+)/);
       if (heartbeatMatch === null) {
         return false;

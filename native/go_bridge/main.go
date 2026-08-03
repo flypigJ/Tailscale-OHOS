@@ -93,6 +93,11 @@ func TSBackendSnapshot() *C.char {
 	return C.CString(harmonyBackend.snapshot())
 }
 
+//export TSBackendTaildropIncomingSnapshot
+func TSBackendTaildropIncomingSnapshot() *C.char {
+	return C.CString(harmonyBackend.taildropIncomingSnapshotJSON())
+}
+
 //export TSBackendAuthURL
 func TSBackendAuthURL() *C.char {
 	return C.CString(harmonyBackend.authURL())
@@ -202,12 +207,16 @@ func TSBackendTaildropReceive(request *C.char) *C.char {
 }
 
 //export TSBackendRestartWithTun
-func TSBackendRestartWithTun(stateDir *C.char, deviceModel *C.char, controlURL *C.char, fd C.int) *C.char {
-	if stateDir == nil || deviceModel == nil || controlURL == nil {
+func TSBackendRestartWithTun(
+	stateDir *C.char, deviceModel *C.char, osVersion *C.char,
+	controlURL *C.char, fd C.int,
+) *C.char {
+	if stateDir == nil || deviceModel == nil || osVersion == nil || controlURL == nil {
 		return C.CString("FAILED | VPN backend | missing startup metadata")
 	}
 	return C.CString(harmonyBackend.restartWithTun(
-		C.GoString(stateDir), C.GoString(deviceModel), C.GoString(controlURL), int(fd)))
+		C.GoString(stateDir), C.GoString(deviceModel), C.GoString(osVersion),
+		C.GoString(controlURL), int(fd)))
 }
 
 //export TSControlProbe

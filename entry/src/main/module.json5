@@ -57,6 +57,14 @@
       },
       {
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
+      },
+      {
+        "name": "ohos.permission.SHORT_TERM_WRITE_IMAGEVIDEO",
+        "reason": "$string:permission_short_term_write_imagevideo_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       }
     ]
   }

@@ -1,6 +1,7 @@
 import { fileIo } from '@kit.CoreFileKit';
+import { DiagnosticPrivacy } from './DiagnosticPrivacy';
 
-const MAX_EVENTS_PER_PROCESS: number = 100;
+const MAX_EVENTS_PER_PROCESS: number = DiagnosticPrivacy.MAX_EVENTS_PER_FILE;
 const UI_EVENT_FILE_NAME: string = 'diagnostic-ui-events.ndjson';
 const VPN_EVENT_FILE_NAME: string = 'diagnostic-vpn-events.ndjson';
 
@@ -25,8 +26,7 @@ export class DiagnosticEventStore {
     const path: string = DiagnosticEventStore.eventFilePath(filesDir, safeSource);
     const events: DiagnosticEvent[] = DiagnosticEventStore.readFile(path);
     events.push(item);
-    const retained: DiagnosticEvent[] = events.length > MAX_EVENTS_PER_PROCESS ?
-      events.slice(events.length - MAX_EVENTS_PER_PROCESS) : events;
+    const retained: DiagnosticEvent[] = DiagnosticEventStore.retainWithinByteLimit(events);
     DiagnosticEventStore.writeFile(path, retained);
   }
 
@@ -54,10 +54,10 @@ export class DiagnosticEventStore {
   }
 
   private static readFile(path: string): DiagnosticEvent[] {
-    if (!fileIo.accessSync(path)) {
-      return [];
-    }
     try {
+      if (!fileIo.accessSync(path)) {
+        return [];
+      }
       const text: string = fileIo.readTextSync(path);
       if (text.trim().length === 0) {
         return [];
@@ -72,9 +72,9 @@ export class DiagnosticEventStore {
           if (parsed.timestampMs > 0) {
             result.push({
               timestampMs: parsed.timestampMs,
-              source: DiagnosticEventStore.safeToken(parsed.source, 'unknown'),
-              event: DiagnosticEventStore.safeToken(parsed.event, 'unknown'),
-              phase: DiagnosticEventStore.safeToken(parsed.phase, 'unknown'),
+              source: DiagnosticEventStore.safeToken(typeof parsed.source === 'string' ? parsed.source : '', 'unknown'),
+              event: DiagnosticEventStore.safeToken(typeof parsed.event === 'string' ? parsed.event : '', 'unknown'),
+              phase: DiagnosticEventStore.safeToken(typeof parsed.phase === 'string' ? parsed.phase : '', 'unknown'),
               code: Number.isFinite(parsed.code) ? parsed.code : 0
             });
           }
@@ -106,5 +106,16 @@ export class DiagnosticEventStore {
         }
       }
     }
+  }
+
+  private static retainWithinByteLimit(events: DiagnosticEvent[]): DiagnosticEvent[] {
+    const retained: DiagnosticEvent[] = events.length > MAX_EVENTS_PER_PROCESS ?
+      events.slice(events.length - MAX_EVENTS_PER_PROCESS) : events.slice();
+    while (retained.length > 1 && DiagnosticPrivacy.exceedsByteLimit(
+      retained.map((item: DiagnosticEvent) => JSON.stringify(item)).join('\n'),
+      DiagnosticPrivacy.MAX_EVENT_FILE_BYTES)) {
+      retained.shift();
+    }
+    return retained;
   }
 }

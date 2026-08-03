@@ -6,6 +6,8 @@ export struct DeviceActionButtons {
   @Prop sunshineState: SunshineState = 'unknown';
   @Prop reachable: boolean = true;
   @Prop meshConnected: boolean = false;
+  @Prop peerOnline: boolean = false;
+  @Prop ipAvailable: boolean = false;
   @Prop launching: boolean = false;
   @Prop showStreaming: boolean = true;
   @Prop mediaState: MediaProbeState = 'unknown';
@@ -18,103 +20,133 @@ export struct DeviceActionButtons {
   onCopyIp: () => void = () => {};
 
   private canStream(): boolean {
-    return this.meshConnected && this.reachable && this.sunshineState === 'available' && !this.launching;
+    // The launch handler performs a fresh Sunshine/path probe. An unknown or
+    // previously unreachable result must remain retryable while Mesh is live.
+    return this.peerOnline && this.ipAvailable && this.meshConnected &&
+      this.sunshineState !== 'checking' && !this.launching;
   }
 
   private canUseMedia(): boolean {
-    return this.meshConnected && this.reachable && !this.mediaChecking && !this.mediaLaunching;
+    return this.peerOnline && this.ipAvailable && this.meshConnected &&
+      !this.mediaChecking && !this.mediaLaunching;
+  }
+
+  private canCopyIp(): boolean {
+    return this.ipAvailable;
   }
 
   build() {
     Row({ space: 0 }) {
-      Button({ type: ButtonType.Normal }) {
+      Row() {
         Row({ space: 5 }) {
           if (this.launching || this.sunshineState === 'checking') {
-            LoadingProgress().width(14).height(14).color('#3C78C5')
+            LoadingProgress().width(14).height(14).color($r('app.color.action_streaming_icon'))
           } else {
-            SymbolGlyph($r('sys.symbol.rectangle_on_rectangle')).fontSize(15).fontColor(['#3C78C5'])
+            SymbolGlyph($r('sys.symbol.rectangle_on_rectangle')).fontSize(15)
+              .fontColor([$r('app.color.action_streaming_icon')])
           }
-          Text('远程串流')
+          Text($r('app.string.streaming_label'))
             .fontSize(11)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#326DB4')
+            .fontColor($r('app.color.action_streaming_text'))
             .maxLines(1)
         }
         .justifyContent(FlexAlign.Center)
         .width('100%')
       }
       .layoutWeight(1)
-      .height(40)
-      .borderRadius(0)
-      .backgroundColor(Color.Transparent)
+      .height(44)
+      .padding({ left: 6, right: 6 })
+      .backgroundColor($r('app.color.action_streaming_surface'))
       .enabled(this.showStreaming && this.canStream())
-      .opacity(this.showStreaming && this.canStream() ? 1 : 0.42)
-      .onClick(this.onStream)
-
-      Divider()
-        .vertical(true)
-        .height(20)
-        .color($r('sys.color.comp_divider'))
-
-      Button({ type: ButtonType.Normal }) {
-        Row({ space: 5 }) {
-          if (this.mediaChecking || this.mediaLaunching) {
-            LoadingProgress().width(14).height(14).color('#7A5AB5')
-          } else {
-            SymbolGlyph($r('sys.symbol.rectangle_on_rectangle')).fontSize(15).fontColor(['#7650AE'])
-          }
-          Text('影音服务')
-            .fontSize(11)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#68439D')
-            .maxLines(1)
-        }
-        .justifyContent(FlexAlign.Center)
-        .width('100%')
-      }
-      .layoutWeight(1)
-      .height(40)
-      .borderRadius(0)
-      .backgroundColor(Color.Transparent)
-      .enabled(this.canUseMedia())
-      .opacity(this.canUseMedia() ? 1 : 0.42)
+      .opacity(this.showStreaming && this.canStream() ? 1 : 0.62)
+      .accessibilityGroup(true)
+      .accessibilityText($r('app.string.streaming_label'))
       .onClick(() => {
-        if (this.mediaCount > 0) {
-          this.onMedia();
-        } else {
-          this.onDetectMedia();
+        if (this.showStreaming && this.canStream()) {
+          this.onStream();
         }
       })
 
       Divider()
         .vertical(true)
-        .height(20)
-        .color($r('sys.color.comp_divider'))
+        .height(24)
+        .color($r('app.color.action_streaming_border'))
 
-      Button({ type: ButtonType.Normal }) {
+      Row() {
         Row({ space: 5 }) {
-          SymbolGlyph($r('sys.symbol.doc'))
-            .fontSize(14)
-            .fontColor([$r('sys.color.icon_secondary')])
-          Text('复制 IP')
+          if (this.mediaChecking || this.mediaLaunching) {
+            LoadingProgress().width(14).height(14).color($r('app.color.action_media_progress'))
+          } else {
+            SymbolGlyph($r('sys.symbol.rectangle_on_rectangle')).fontSize(15)
+              .fontColor([$r('app.color.action_media_icon')])
+          }
+          Text($r('app.string.media_services_label'))
             .fontSize(11)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_secondary'))
+            .fontColor($r('app.color.action_media_text'))
             .maxLines(1)
         }
         .justifyContent(FlexAlign.Center)
         .width('100%')
       }
       .layoutWeight(1)
-      .height(40)
-      .borderRadius(0)
-      .backgroundColor(Color.Transparent)
-      .onClick(this.onCopyIp)
+      .height(44)
+      .padding({ left: 6, right: 6 })
+      .backgroundColor($r('app.color.action_media_surface'))
+      .enabled(this.canUseMedia())
+      .opacity(this.canUseMedia() ? 1 : 0.62)
+      .accessibilityGroup(true)
+      .accessibilityText($r('app.string.media_services_label'))
+      .onClick(() => {
+        if (this.canUseMedia()) {
+          if (this.mediaCount > 0) {
+            this.onMedia();
+          } else {
+            this.onDetectMedia();
+          }
+        }
+      })
+
+      Divider()
+        .vertical(true)
+        .height(24)
+        .color($r('app.color.action_media_border'))
+
+      Row() {
+        Row({ space: 5 }) {
+          SymbolGlyph($r('sys.symbol.doc'))
+            .fontSize(14)
+            .fontColor([$r('sys.color.icon_primary')])
+          Text($r('app.string.peer_copy_ip'))
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .maxLines(1)
+        }
+        .justifyContent(FlexAlign.Center)
+        .width('100%')
+      }
+      .layoutWeight(1)
+      .height(44)
+      .padding({ left: 6, right: 6 })
+      .backgroundColor($r('app.color.action_copy_surface'))
+      .enabled(this.canCopyIp())
+      .opacity(this.canCopyIp() ? 1 : 0.62)
+      .accessibilityGroup(true)
+      .accessibilityText($r('app.string.peer_copy_ip'))
+      .onClick(() => {
+        if (this.canCopyIp()) {
+          this.onCopyIp();
+        }
+      })
     }
     .width('100%')
+    .height(44)
     .alignItems(VerticalAlign.Center)
-    .backgroundColor('#0D000000')
-    .borderRadius(20)
+    .backgroundColor($r('app.color.action_copy_surface'))
+    .border({ width: 1, color: $r('app.color.action_copy_border') })
+    .borderRadius(22)
     .clip(true)
   }
 }

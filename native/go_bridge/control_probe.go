@@ -29,7 +29,9 @@ func (p *controlProbeController) startOrStatus() string {
 		return "OK | control probe running"
 	}
 	if p.result != "" {
-		return p.result
+		result := p.result
+		p.result = ""
+		return result
 	}
 	p.running = true
 	go p.run()
@@ -66,19 +68,18 @@ func runControlProbe() string {
 
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	address := net.JoinHostPort(controlProbeHost, "443")
-	tcpConn, err := dialer.DialContext(context.Background(), "tcp", address)
+	tcpConn, err := dialer.DialContext(ctx, "tcp", address)
 	if err != nil {
 		return fmt.Sprintf(
 			"FAILED | stage=tcp | category=%s | roots=%d | dns=true",
 			classifyControlProbeError(err), rootCount)
 	}
-	_ = tcpConn.Close()
-
-	tlsConn, err := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
+	tlsConn := tls.Client(tcpConn, &tls.Config{
 		ServerName: controlProbeHost,
 		MinVersion: tls.VersionTLS12,
 	})
-	if err != nil {
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		_ = tlsConn.Close()
 		return fmt.Sprintf(
 			"FAILED | stage=tls | category=%s | roots=%d | dns=true | tcp=true",
 			classifyControlProbeError(err), rootCount)

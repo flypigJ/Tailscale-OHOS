@@ -1,4 +1,5 @@
 import { SunshineState } from '../services/StreamingModels';
+import { MotionTokens } from './MotionTokens';
 
 @Component
 export struct SunshineStatusBadge {
@@ -9,9 +10,7 @@ export struct SunshineStatusBadge {
   aboutToAppear(): void {
     if (this.shouldShow(this.state)) {
       this.displayedState = this.state;
-      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
-        this.badgeVisible = true;
-      });
+      this.badgeVisible = true;
     }
   }
 
@@ -21,33 +20,32 @@ export struct SunshineStatusBadge {
 
   private onStateChanged(): void {
     if (this.shouldShow(this.state)) {
-      this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
-        this.displayedState = this.state;
-        this.badgeVisible = true;
-      });
+      this.displayedState = this.state;
+      this.badgeVisible = true;
       return;
     }
     if (this.badgeVisible) {
-      this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseIn }, () => {
-        this.badgeVisible = false;
-      });
+      this.badgeVisible = false;
     }
   }
 
   build() {
     if (this.badgeVisible) {
-      Text(this.displayedState === 'checking' ? 'Sunshine 检测中' : 'Sunshine 可用')
+      Text(this.displayedState === 'checking' ? $r('app.string.sunshine_checking') :
+        $r('app.string.sunshine_available'))
         .fontSize(10)
         .fontWeight(FontWeight.Medium)
-        .fontColor(this.displayedState === 'available' ? '#397A52' : '#667085')
+        .fontColor(this.displayedState === 'available' ? $r('app.color.status_streaming_available') :
+          $r('app.color.status_probe_pending'))
         .padding({ left: 7, right: 7, top: 3, bottom: 3 })
-        .backgroundColor(this.displayedState === 'available' ? '#EAF5ED' : '#EEF1F5')
+        .backgroundColor(this.displayedState === 'available' ? $r('app.color.badge_background_available') :
+          $r('app.color.badge_background_pending'))
         .borderRadius(8)
         .transition(
           TransitionEffect.asymmetric(
-            TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseOut })
+            TransitionEffect.OPACITY.animation({ duration: MotionTokens.NORMAL, curve: Curve.EaseOut })
               .combine(TransitionEffect.translate({ y: -4 })),
-            TransitionEffect.OPACITY.animation({ duration: 160, curve: Curve.EaseIn })
+            TransitionEffect.OPACITY.animation({ duration: MotionTokens.FAST, curve: Curve.EaseIn })
               .combine(TransitionEffect.translate({ y: -3 }))
           )
         )

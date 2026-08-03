@@ -1,6 +1,13 @@
+import {
+  ConnectionPathType as CommonConnectionPathType,
+  PeerPathResult as CommonPeerPathResult,
+  serializePeerPathResult as serializeCommonPeerPathResult
+} from '@tailscale/common';
+
 export type SunshineState = 'unknown' | 'checking' | 'available' | 'unavailable' | 'timeout' | 'error';
 
-export type ConnectionPathType = 'direct' | 'peerRelay' | 'derp' | 'unknown' | 'unreachable';
+/** M1 compatibility adapter: existing Entry imports keep their contract. */
+export type ConnectionPathType = CommonConnectionPathType;
 
 export interface SunshineProbeResult {
   state: SunshineState;
@@ -11,12 +18,11 @@ export interface SunshineProbeResult {
   errorMessage?: string;
 }
 
-export interface PeerPathResult {
-  type: ConnectionPathType;
-  latencyMs?: number;
-  relayRegion?: string;
-  checkedAt: number;
-  errorMessage?: string;
+export type PeerPathResult = CommonPeerPathResult;
+
+/** M1 compatibility adapter for the pre-existing plain-object JSON contract. */
+export function serializePeerPathResult(value: PeerPathResult): string {
+  return serializeCommonPeerPathResult(value);
 }
 
 export interface StreamLaunchProfile {

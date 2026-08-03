@@ -1,6 +1,10 @@
 {
   "string": [
     {
+      "name": "permission_short_term_write_imagevideo_reason",
+      "value": "Save received images and videos to the system gallery."
+    },
+    {
       "name": "transfer_send_interrupted",
       "value": "The network transfer was interrupted after automatic resume attempts. Try again."
     },
@@ -209,20 +213,8 @@
       "value": "Saving cancelled. You can try again."
     },
     {
-      "name": "transfer_receiving_file",
-      "value": "Saving received file"
-    },
-    {
       "name": "transfer_media_ready_to_save",
       "value": "Media is ready to save"
-    },
-    {
-      "name": "transfer_media_ready_title",
-      "value": "Ready to save to Gallery"
-    },
-    {
-      "name": "transfer_media_saving",
-      "value": "Saving to Gallery"
     },
     {
       "name": "transfer_media_save_failed",
@@ -231,14 +223,6 @@
     {
       "name": "transfer_media_save_authorization_failed",
       "value": "Gallery save authorization was not granted."
-    },
-    {
-      "name": "transfer_saving_image",
-      "value": "Saving image to Photos"
-    },
-    {
-      "name": "transfer_copying_text",
-      "value": "Copying received text"
     },
     {
       "name": "transfer_gallery_failed",
@@ -253,6 +237,10 @@
       "value": "Image"
     },
     {
+      "name": "transfer_content_video",
+      "value": "Video"
+    },
+    {
       "name": "transfer_content_text",
       "value": "Text"
     },
@@ -263,10 +251,6 @@
     {
       "name": "transfer_save_action",
       "value": "Save"
-    },
-    {
-      "name": "transfer_save_to_gallery_action",
-      "value": "Save to Photos"
     },
     {
       "name": "transfer_copy_text_action",
@@ -283,10 +267,6 @@
     {
       "name": "transfer_discard_confirm_message",
       "value": "This permanently removes \"%s\" from the Taildrop inbox."
-    },
-    {
-      "name": "transfer_discarding_file",
-      "value": "Discarding received file"
     },
     {
       "name": "transfer_discard_completed",
@@ -457,22 +437,6 @@
       "value": "Adaptive"
     },
     {
-      "name": "glow_exquisite_description",
-      "value": "Richer light and material detail"
-    },
-    {
-      "name": "glow_gentle_description",
-      "value": "Soft and restrained"
-    },
-    {
-      "name": "glow_smooth_description",
-      "value": "Reduced visual effects"
-    },
-    {
-      "name": "glow_adaptive_description",
-      "value": "Uses the device default"
-    },
-    {
       "name": "connection_connected",
       "value": "Connected"
     },
@@ -534,15 +498,19 @@
     },
     {
       "name": "description_vpn_conflict_problem",
-      "value": "Another VPN connection is already active. Choose Connect again to replace it."
+      "value": "Disconnect the other VPN in system settings, then try again."
     },
     {
       "name": "vpn_conflict_title",
-      "value": "Another VPN is active"
+      "value": "Disconnect the other VPN first"
     },
     {
       "name": "vpn_conflict_message",
-      "value": "Another VPN connection is already active. Continuing will disconnect it."
+      "value": "Disconnect other VPNs to connect Tailscale."
+    },
+    {
+      "name": "vpn_conflict_confirm_action",
+      "value": "OK"
     },
     {
       "name": "description_status_problem",
@@ -591,6 +559,14 @@
     {
       "name": "action_login",
       "value": "Sign in to Tailscale"
+    },
+    {
+      "name": "login_loading",
+      "value": "Loading sign-in, please wait"
+    },
+    {
+      "name": "login_browser_prompt",
+      "value": "Complete sign-in in the browser"
     },
     {
       "name": "exit_node_title",
@@ -655,22 +631,6 @@
     {
       "name": "peer_connectivity_latency_range",
       "value": "%d–%d ms latency range"
-    },
-    {
-      "name": "peer_connectivity_offline",
-      "value": "This peer is offline."
-    },
-    {
-      "name": "peer_connectivity_no_address",
-      "value": "This peer has no reachable Tailscale address."
-    },
-    {
-      "name": "peer_connectivity_no_response",
-      "value": "No TSMP response was received."
-    },
-    {
-      "name": "peer_connectivity_unavailable",
-      "value": "Peer connectivity testing is temporarily unavailable."
     },
     {
       "name": "peer_copy_ip",
@@ -809,6 +769,10 @@
       "value": "Technical status for troubleshooting"
     },
     {
+      "name": "diagnostics_unlocked_toast",
+      "value": "Engineering mode enabled; diagnostics opened"
+    },
+    {
       "name": "diagnostic_report_title",
       "value": "Diagnostic report"
     },
@@ -899,6 +863,22 @@
     {
       "name": "control_server_save",
       "value": "Confirm backend server"
+    },
+    {
+      "name": "control_server_http_risk_title",
+      "value": "HTTP backend connection risk"
+    },
+    {
+      "name": "control_server_http_risk_message",
+      "value": "This address uses unencrypted HTTP. Sign-in and connection traffic may be exposed or changed by the network. Save it only if you trust this network and server."
+    },
+    {
+      "name": "control_server_http_risk_cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "control_server_http_risk_confirm",
+      "value": "Save HTTP backend"
     },
     {
       "name": "control_server_saved",
@@ -1005,6 +985,70 @@
       "value": "Engineering action"
     },
     {
+      "name": "diagnostic_probe_title",
+      "value": "Diagnostics"
+    },
+    {
+      "name": "diagnostic_probe_description",
+      "value": "Check application and control-plane status without changing data."
+    },
+    {
+      "name": "diagnostic_refresh_status_action",
+      "value": "Refresh status"
+    },
+    {
+      "name": "diagnostic_probe_engine_action",
+      "value": "Check engine"
+    },
+    {
+      "name": "diagnostic_probe_control_tls_action",
+      "value": "Check control-plane TLS"
+    },
+    {
+      "name": "diagnostic_control_plane_status_title",
+      "value": "Control plane"
+    },
+    {
+      "name": "diagnostic_vpn_extension_status_title",
+      "value": "VPN extension"
+    },
+    {
+      "name": "diagnostic_dangerous_title",
+      "value": "Dangerous operations"
+    },
+    {
+      "name": "diagnostic_dangerous_description",
+      "value": "These operations can clear data, stop services, or simulate failures."
+    },
+    {
+      "name": "diagnostic_fake_media_online_title",
+      "value": "Pretend media service is online"
+    },
+    {
+      "name": "diagnostic_fake_media_online_description",
+      "value": "Temporarily reports Jellyfin as available for this app launch."
+    },
+    {
+      "name": "diagnostic_media_integration_title",
+      "value": "Media integration"
+    },
+    {
+      "name": "diagnostic_media_integration_description",
+      "value": "Use built-in samples to verify Jellyfin, Emby, Plex, and HosPlayer integration."
+    },
+    {
+      "name": "diagnostic_media_self_test_action",
+      "value": "Run offline media self-test"
+    },
+    {
+      "name": "diagnostic_hosplayer_copy_action",
+      "value": "Copy HosPlayer parameter prototype"
+    },
+    {
+      "name": "diagnostic_media_self_test_status",
+      "value": "Media integration self-test"
+    },
+    {
       "name": "settings_appearance_title",
       "value": "Appearance"
     },
@@ -1015,6 +1059,10 @@
     {
       "name": "settings_cache_title",
       "value": "Cache"
+    },
+    {
+      "name": "settings_cache_description",
+      "value": "(Automatically cleared after 7 days)"
     },
     {
       "name": "settings_cache_calculating",
@@ -1047,6 +1095,118 @@
     {
       "name": "settings_clear_cache_failed",
       "value": "Some cached files could not be removed. Try again later."
+    },
+    {
+      "name": "notification_taildrop_receiving_title",
+      "value": "Receiving file"
+    },
+    {
+      "name": "notification_taildrop_receiving_indeterminate",
+      "value": "Receiving"
+    },
+    {
+      "name": "notification_taildrop_received_title",
+      "value": "File received"
+    },
+    {
+      "name": "notification_taildrop_received_message",
+      "value": "Choose how to save the file"
+    },
+    {
+      "name": "notification_taildrop_save_action",
+      "value": "Save"
+    },
+    {
+      "name": "notification_taildrop_open_action",
+      "value": "Open"
+    },
+    {
+      "name": "notification_taildrop_copy_action",
+      "value": "Copy"
+    },
+    {
+      "name": "notification_taildrop_later_action",
+      "value": "Later"
+    },
+    {
+      "name": "device_connection_status",
+      "value": "Connection status"
+    },
+    {
+      "name": "device_connection_path",
+      "value": "Connection path"
+    },
+    {
+      "name": "device_probe_checking",
+      "value": "Checking"
+    },
+    {
+      "name": "device_path_direct",
+      "value": "Direct · %d ms"
+    },
+    {
+      "name": "device_path_peer_relay",
+      "value": "Peer relay · %d ms"
+    },
+    {
+      "name": "device_path_derp_relay",
+      "value": "DERP relay · %d ms"
+    },
+    {
+      "name": "device_path_unreachable",
+      "value": "Unreachable"
+    },
+    {
+      "name": "device_status_unknown",
+      "value": "Not confirmed"
+    },
+    {
+      "name": "streaming_label",
+      "value": "Remote streaming"
+    },
+    {
+      "name": "sunshine_available",
+      "value": "Sunshine available"
+    },
+    {
+      "name": "sunshine_checking",
+      "value": "Checking Sunshine"
+    },
+    {
+      "name": "sunshine_timeout",
+      "value": "Sunshine check timed out"
+    },
+    {
+      "name": "sunshine_unavailable",
+      "value": "Sunshine not found"
+    },
+    {
+      "name": "sunshine_failed",
+      "value": "Sunshine check failed"
+    },
+    {
+      "name": "media_services_label",
+      "value": "Media services"
+    },
+    {
+      "name": "media_services_checking",
+      "value": "Checking media services"
+    },
+    {
+      "name": "media_services_available",
+      "value": "%s available"
+    },
+    {
+      "name": "media_services_unavailable",
+      "value": "No supported media services found"
+    },
+    {
+      "name": "media_services_timeout",
+      "value": "Check timed out"
+    },
+    {
+      "name": "media_services_failed",
+      "value": "Check failed"
     }
   ]
 }

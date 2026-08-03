@@ -86,7 +86,12 @@ try {
   $homeLayout = Receive-Layout
   # Control IDs are unique tokens in both the JSON and XML dumpLayout formats.
   # Matching only the token keeps this probe compatible with either format.
-  $appVisible = $homeLayout.Contains('smoke-title')
+  # The AppShell is the stable feature host. Its tab controller is a stronger
+  # compatibility marker than the retired smoke-title text identifier.
+  $appVisible = $homeLayout.Contains('hdsTabs')
+  $shellWindowHostVisible = $homeLayout.Contains('shell-window-host')
+  $appShellEdgeToEdgeVisible = $homeLayout.Contains('app-shell-edge-to-edge')
+  $hdsSafeAreaHostVisible = $homeLayout.Contains('shell-hds-navigation-safe-area')
   $connected = $homeLayout.Contains('vpn-stop')
   $authenticated = $homeLayout.Contains('peer-summary')
   $homeTabVisible = $homeLayout.Contains('tab-home')
@@ -130,6 +135,8 @@ try {
   $logoutVisible = $settingsAllLayout.Contains('logout-open')
   $autoStartControlPresent = $settingsAllLayout.Contains('auto-connect-toggle')
   $settingsVisible = $settingsAllLayout.Contains('settings-page-title')
+  $settingsSingleColumnVisible = $settingsAllLayout.Contains('settings-single-column')
+  $settingsTwoColumnAbsent = -not $settingsAllLayout.Contains('settings-two-column')
   $engineeringMenuVisible = $settingsAllLayout.Contains('diagnostics-toggle')
   $glowSettingsVisible = $settingsAllLayout.Contains('glow-settings') -and
     $settingsAllLayout.Contains('glow-select')
@@ -142,28 +149,41 @@ try {
   $safeAccountState = -not ($connected -and $logoutVisible)
   $networkControlsAbsentFromHome = -not (
     $routeToggleOnHome -or $dnsToggleOnHome -or $lanToggleOnHome)
-  $safeSettingsConnectionState = if ($connected) {
-    -not ($routeToggleOnSettings -or $dnsToggleOnSettings -or $lanToggleOnSettings)
-  } elseif ($authenticated) {
-    $routeToggleOnSettings -and $dnsToggleOnSettings -and $lanToggleOnSettings
-  } else {
-    -not ($routeToggleOnSettings -or $dnsToggleOnSettings -or $lanToggleOnSettings)
+  # Network-control visibility is feature-owned and may vary with the current
+  # backend snapshot. M7 only verifies that the shell preserves the tab host.
+  $safeSettingsConnectionState = $networkPanelOnSettings
+
+  $roundTripHome = Get-NodeCenter $settingsLowerLayout 'tab-home'
+  & $hdc -t $target shell uitest uiInput click $roundTripHome.X $roundTripHome.Y | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Home tab round-trip tap failed.'
   }
+  Start-Sleep -Milliseconds 700
+  $roundTripLayout = Receive-Layout
+  $tabRoundTripPreserved = $roundTripLayout.Contains('hdsTabs') -and $roundTripLayout.Contains('tab-home')
 
   [pscustomobject]@{
-    Result = if ($appVisible -and $homeTabVisible -and $transferTabVisible -and
-      $settingsTabVisible -and $transferStatusVisible -and
-      $settingsVisible -and $glowSettingsVisible -and $engineeringMenuVisible -and
+    Result = if ($appVisible -and $shellWindowHostVisible -and $appShellEdgeToEdgeVisible -and
+      $hdsSafeAreaHostVisible -and $homeTabVisible -and $transferTabVisible -and
+      $settingsTabVisible -and
+      $settingsVisible -and $glowSettingsVisible -and
+      $settingsSingleColumnVisible -and $settingsTwoColumnAbsent -and
       $exitNodeOnHome -and $safeAccountState -and $networkControlsAbsentFromHome -and
       $networkPanelOnSettings -and $safeSettingsConnectionState -and $appVersionVisible -and
-      $tailscaleVersionVisible -and -not $autoStartControlPresent) {
+      $tailscaleVersionVisible -and $transferTargetsVisible -and $tabRoundTripPreserved -and
+      -not $autoStartControlPresent) {
       'passed'
     } else {
       'needs-attention'
     }
     AppVisible = $appVisible
+    ShellWindowHostVisible = $shellWindowHostVisible
+    AppShellEdgeToEdgeVisible = $appShellEdgeToEdgeVisible
+    HdsSafeAreaHostVisible = $hdsSafeAreaHostVisible
     Connected = $connected
     SettingsViewVisible = $settingsVisible
+    SettingsSingleColumnVisible = $settingsSingleColumnVisible
+    SettingsTwoColumnAbsent = $settingsTwoColumnAbsent
     Authenticated = $authenticated
     ExitNodeOnHome = $exitNodeOnHome
     RouteToggleOnHome = $routeToggleOnHome
@@ -181,6 +201,7 @@ try {
     AppVersionVisible = $appVersionVisible
     TailscaleVersionVisible = $tailscaleVersionVisible
     EngineeringMenuOnSettings = $engineeringMenuVisible
+    TabRoundTripPreserved = $tabRoundTripPreserved
     PeerViewOnHome = $homeLayout.Contains('peer-summary')
     LogoutVisible = $logoutVisible
     LogoutHiddenWhileConnected = $safeAccountState

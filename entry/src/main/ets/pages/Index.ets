@@ -1,12 +1,13 @@
-import { BridgeStatus } from '../components/BridgeStatus';
+import { AppShell } from '../components/AppShell';
 
 @Entry
 @Component
 struct Index {
   build() {
     Column() {
-      BridgeStatus()
+      AppShell()
     }
+    .id('shell-window-host')
     .width('100%')
     .height('100%')
   }

@@ -4,6 +4,7 @@ import { deviceInfo, zlib } from '@kit.BasicServicesKit';
 import { fileIo, fileUri } from '@kit.CoreFileKit';
 import { systemShare } from '@kit.ShareKit';
 import { DiagnosticEvent, DiagnosticEventStore } from './DiagnosticEventStore';
+import { DiagnosticPrivacy } from './DiagnosticPrivacy';
 
 const REPORT_PREFIX: string = 'TailscaleOHOS-Diagnostic-';
 const REPORT_RETENTION_MS: number = 24 * 60 * 60 * 1000;
@@ -97,7 +98,7 @@ interface DiagnosticTunCounters {
   writeErrors: number;
 }
 
-interface DiagnosticPrivacy {
+interface DiagnosticReportPrivacy {
   rawHiLogIncluded: boolean;
   rawBackendSnapshotIncluded: boolean;
   identityFieldsIncluded: boolean;
@@ -114,7 +115,7 @@ interface DiagnosticReport {
   vpnConfig: DiagnosticVpnConfig;
   tunCounters: DiagnosticTunCounters;
   events: DiagnosticEvent[];
-  privacy: DiagnosticPrivacy;
+  privacy: DiagnosticReportPrivacy;
 }
 
 export class DiagnosticReportService {
@@ -131,8 +132,14 @@ export class DiagnosticReportService {
     try {
       fileIo.mkdirSync(workDir, true);
       const report: DiagnosticReport = DiagnosticReportService.buildReport(context.filesDir, generatedAt, input);
-      DiagnosticReportService.writeTextFile(summaryPath, DiagnosticReportService.buildSummary(report));
-      DiagnosticReportService.writeTextFile(jsonPath, JSON.stringify(report, undefined, 2));
+      const summary: string = DiagnosticReportService.buildSummary(report);
+      const reportJson: string = JSON.stringify(report, undefined, 2);
+      if (DiagnosticPrivacy.exceedsByteLimit(summary, DiagnosticPrivacy.MAX_REPORT_SUMMARY_BYTES) ||
+        DiagnosticPrivacy.exceedsByteLimit(reportJson, DiagnosticPrivacy.MAX_REPORT_JSON_BYTES)) {
+        throw new Error('Diagnostic report capacity exceeded');
+      }
+      DiagnosticReportService.writeTextFile(summaryPath, summary);
+      DiagnosticReportService.writeTextFile(jsonPath, reportJson);
       await zlib.compressFiles([summaryPath, jsonPath], zipPath, {
         level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION
       });
@@ -144,12 +151,12 @@ export class DiagnosticReportService {
       };
     } catch (error) {
       DiagnosticReportService.removeWorkDirectory(workDir, summaryPath, jsonPath);
-      if (fileIo.accessSync(zipPath)) {
-        try {
+      try {
+        if (fileIo.accessSync(zipPath)) {
           fileIo.unlinkSync(zipPath);
-        } catch (_cleanupError) {
-          // A partial archive is never shared, even if cleanup is delayed by the file service.
         }
+      } catch (_cleanupError) {
+        // A partial archive is never shared, even if cleanup is delayed by the file service.
       }
       throw new Error('Diagnostic report generation failed');
     }
