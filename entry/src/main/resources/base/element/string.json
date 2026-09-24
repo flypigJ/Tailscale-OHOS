@@ -2583,6 +2583,10 @@
     {
       "name": "notification_vpn_background_title",
       "value": "VPN connected"
+    },
+    {
+      "name": "notification_vpn_background_connecting",
+      "value": "Connecting VPN"
     }
   ]
 }
