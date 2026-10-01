@@ -504,12 +504,12 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     }
 
     try {
-      this.writeVpnConfigSummary(config);
       this.writeStatus('VPN probe TUN creation pending');
       this.tunFd = await this.createTunWithConflictReplacement(config);
       if (this.tunFd < 0 || this.destroying) {
         return;
       }
+      this.writeVpnConfigSummary(config);
       this.recordDiagnosticEvent('vpn_tun_created', 'create');
       const probeStatus: string = nativeBridge.tunFdProbe(this.tunFd);
       if (backendReady && probeStatus.startsWith('OK')) {
@@ -716,8 +716,18 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     const hasDefaultIPv6: boolean = routes.some((route: vpnExtension.RouteInfo) =>
       route.destination.address.address === '::' && route.destination.prefixLength === 0 &&
       route.isDefaultRoute);
+    const subnetRouteCount: number = routes.filter((route: vpnExtension.RouteInfo) => {
+      const address: string = route.destination.address.address;
+      const prefixLength: number = route.destination.prefixLength;
+      const isTailnetRoute: boolean =
+        (address === '100.64.0.0' && prefixLength === 10) ||
+        (address === 'fd7a:115c:a1e0::' && prefixLength === 48);
+      const isPlaceholderRoute: boolean = address === '192.0.2.0' && prefixLength === 24;
+      return !isTailnetRoute && !isPlaceholderRoute && !route.isDefaultRoute && prefixLength > 0;
+    }).length;
     this.writeTextFile(`${this.context.filesDir}/${VPN_CONFIG_SUMMARY_FILE_NAME}`,
       `addressCount=${addresses.length} | routeCount=${routes.length} | ` +
+      `subnetRouteCount=${subnetRouteCount} | createdAtMs=${Date.now()} | ` +
       `hasIPv4Address=${hasIPv4Address} | hasIPv6Address=${hasIPv6Address} | ` +
       `hasTailnetIPv4=${hasTailnetIPv4} | hasTailnetIPv6=${hasTailnetIPv6} | ` +
       `hasDefaultIPv4=${hasDefaultIPv4} | hasDefaultIPv6=${hasDefaultIPv6} | ` +
@@ -766,7 +776,14 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       if (this.destroying) {
         return 'FAILED | VPN config | extension stopped';
       }
-      configStatus = nativeBridge.backendVpnConfig();
+      try {
+        configStatus = await nativeBridge.backendVpnConfigAsync();
+      } catch (_error) {
+        configStatus = 'FAILED | VPN config | status unavailable';
+      }
+      if (this.destroying) {
+        return 'FAILED | VPN config | extension stopped';
+      }
       if (!configStatus.startsWith('FAILED')) {
         return configStatus;
       }

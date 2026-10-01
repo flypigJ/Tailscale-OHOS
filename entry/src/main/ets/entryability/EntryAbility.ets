@@ -11,7 +11,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { APP_FOREGROUND_EVENT } from '../services/AppLifecycleEvents';
 import { AppShellFeatureAction, AppShellIntentAdapter } from '../services/AppShellIntentAdapter';
-import { VpnBackgroundTaskManager } from '../services/VpnBackgroundTaskManager';
+import { vpnBackgroundTaskManager } from '../services/VpnBackgroundTaskManager';
 import { DiagnosticPrivacy } from '../services/DiagnosticPrivacy';
 import { WindowEnvironment } from '../services/WindowEnvironment';
 
@@ -20,7 +20,7 @@ const TAG = 'TailscaleOHOS';
 
 export default class EntryAbility extends UIAbility {
   private mainWindow?: window.Window;
-  private readonly vpnBackgroundTask: VpnBackgroundTaskManager = new VpnBackgroundTaskManager();
+  private readonly vpnBackgroundTask = vpnBackgroundTaskManager;
   private readonly appShellIntentAdapter: AppShellIntentAdapter = new AppShellIntentAdapter();
   private readonly windowEnvironment: WindowEnvironment = new WindowEnvironment();
   private appShellContentReady: boolean = false;
