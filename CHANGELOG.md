@@ -1,5 +1,11 @@
 # MeshArc changelog
 
+## 未发布
+
+- 优化 VPN 后台长时任务：连接请求时提前申请保护，恢复已有任务，并更新显示实际流量的实况通知。
+- 等待有效网络配置后再创建 VPN 接口，记录已应用的子网路由；启动失败或重启时及时释放旧 TUN 句柄。
+- 修复 UI 延迟读取 VPN 终止状态时后台任务与“已连接”通知残留的问题，同时防止旧会话的终止记录中断新连接。
+
 ## 1.1.0 (100000003) · September 23, 2026
 
 Tailscale OHOS is now MeshArc. The repository retains the name Tailscale-OHOS.
