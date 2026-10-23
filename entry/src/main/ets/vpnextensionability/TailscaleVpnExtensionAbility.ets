@@ -433,6 +433,10 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     if (this.destroying) {
       return;
     }
+    if (backendConfigText.startsWith('FAILED')) {
+      this.writeStatus(backendConfigText);
+      return;
+    }
     if (!backendConfigText.startsWith('FAILED')) {
       const configParts: string[] = backendConfigText.split('|');
       if (configParts.length >= 2 && configParts[0].length > 0) {
@@ -503,13 +507,18 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       }
     }
 
+    if (!backendReady) {
+      this.writeStatus('FAILED | VPN config | invalid address payload');
+      return;
+    }
+
     try {
-      this.writeVpnConfigSummary(config);
       this.writeStatus('VPN probe TUN creation pending');
       this.tunFd = await this.createTunWithConflictReplacement(config);
       if (this.tunFd < 0 || this.destroying) {
         return;
       }
+      this.writeVpnConfigSummary(config);
       this.recordDiagnosticEvent('vpn_tun_created', 'create');
       const probeStatus: string = nativeBridge.tunFdProbe(this.tunFd);
       if (backendReady && probeStatus.startsWith('OK')) {
@@ -530,7 +539,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
         }
         if (!handoffStatus.startsWith('OK')) {
           this.writeStatus(handoffStatus);
-          await this.destroyProbeTun();
+          await this.rollbackVpnStartup();
           return;
         }
         this.writeStatus('VPN interface established | backend starting');
@@ -552,11 +561,14 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
             return;
           }
           this.writePeerStatus(peerStatus);
+        } else {
+          await this.rollbackVpnStartup();
         }
       } else {
         const backendState: string = backendConfigText.startsWith('FAILED') ?
           backendConfigText : 'FAILED | VPN config | invalid address payload';
         this.writeStatus(`${probeStatus} | ${backendState}`);
+        await this.rollbackVpnStartup();
       }
       hilog.info(DOMAIN, TAG, 'VPN probe TUN created. bridge=%{public}s', probeStatus);
     } catch (error) {
@@ -571,6 +583,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       }
       hilog.error(DOMAIN, TAG, 'VPN probe TUN creation failed. code=%{public}d',
         errorCode);
+      await this.rollbackVpnStartup();
     }
   }
 
@@ -580,7 +593,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
       return -1;
     }
     try {
-      return await connection.create(config);
+      return await this.createCurrentTun(connection, config);
     } catch (error) {
       const businessError = error as BusinessError;
       const errorCode: number = businessError.code ?? -1;
@@ -607,6 +620,20 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     return -1;
   }
 
+  private async createCurrentTun(connection: vpnExtension.VpnConnection,
+    config: vpnExtension.VpnConfig): Promise<number> {
+    const fd: number = await connection.create(config);
+    if (this.destroying || this.vpnConnection !== connection) {
+      try {
+        await connection.destroy();
+      } catch (_error) {
+        this.recordDiagnosticEvent('vpn_tun_destroy_failed', 'late_create');
+      }
+      return -1;
+    }
+    return fd;
+  }
+
   private async replaceExistingVpn(connection: vpnExtension.VpnConnection,
     config: vpnExtension.VpnConfig): Promise<number> {
     this.recordDiagnosticEvent('vpn_replacement_approved', 'destroy_existing');
@@ -624,7 +651,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
         return -1;
       }
       try {
-        return await connection.create(config);
+        return await this.createCurrentTun(connection, config);
       } catch (error) {
         const businessError = error as BusinessError;
         const errorCode: number = businessError.code ?? -1;
@@ -686,6 +713,15 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     });
   }
 
+  private async rollbackVpnStartup(): Promise<void> {
+    try {
+      nativeBridge.backendStop();
+    } catch (_error) {
+      this.recordDiagnosticEvent('vpn_backend_stop_failed', 'rollback');
+    }
+    await this.destroyProbeTun();
+  }
+
   private async destroyProbeTun(): Promise<void> {
     const connection: vpnExtension.VpnConnection | undefined = this.vpnConnection;
     this.tunFd = -1;
@@ -716,8 +752,18 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     const hasDefaultIPv6: boolean = routes.some((route: vpnExtension.RouteInfo) =>
       route.destination.address.address === '::' && route.destination.prefixLength === 0 &&
       route.isDefaultRoute);
+    const subnetRouteCount: number = routes.filter((route: vpnExtension.RouteInfo) => {
+      const address: string = route.destination.address.address;
+      const prefixLength: number = route.destination.prefixLength;
+      const isTailnetRoute: boolean =
+        (address === '100.64.0.0' && prefixLength === 10) ||
+        (address === 'fd7a:115c:a1e0::' && prefixLength === 48);
+      const isPlaceholderRoute: boolean = address === '192.0.2.0' && prefixLength === 24;
+      return !isTailnetRoute && !isPlaceholderRoute && !route.isDefaultRoute && prefixLength > 0;
+    }).length;
     this.writeTextFile(`${this.context.filesDir}/${VPN_CONFIG_SUMMARY_FILE_NAME}`,
       `addressCount=${addresses.length} | routeCount=${routes.length} | ` +
+      `subnetRouteCount=${subnetRouteCount} | createdAtMs=${Date.now()} | ` +
       `hasIPv4Address=${hasIPv4Address} | hasIPv6Address=${hasIPv6Address} | ` +
       `hasTailnetIPv4=${hasTailnetIPv4} | hasTailnetIPv6=${hasTailnetIPv6} | ` +
       `hasDefaultIPv4=${hasDefaultIPv4} | hasDefaultIPv6=${hasDefaultIPv6} | ` +
@@ -762,11 +808,19 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     nativeBridge.backendStart(
       stateDir, this.deviceModel(), this.harmonyOSVersion(), controlSettings.controlURL);
     let configStatus: string = 'FAILED | VPN config | backend restore timeout';
-    for (let attempt: number = 0; attempt < 60; attempt++) {
+    const deadlineMs: number = Date.now() + 15000;
+    for (let attempt: number = 0; attempt < 60 && Date.now() < deadlineMs; attempt++) {
       if (this.destroying) {
         return 'FAILED | VPN config | extension stopped';
       }
-      configStatus = nativeBridge.backendVpnConfig();
+      try {
+        configStatus = await nativeBridge.backendVpnConfigAsync();
+      } catch (_error) {
+        configStatus = 'FAILED | VPN config | status unavailable';
+      }
+      if (this.destroying) {
+        return 'FAILED | VPN config | extension stopped';
+      }
       if (!configStatus.startsWith('FAILED')) {
         return configStatus;
       }
