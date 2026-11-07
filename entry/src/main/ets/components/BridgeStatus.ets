@@ -100,6 +100,7 @@ import {
   ControlServerSettings,
   DEFAULT_CONTROL_SERVER_URL
 } from '../services/ControlServerConfig';
+import { DnsSettings, DnsSettingsStore, MAX_DNS_SEARCH_DOMAINS } from '../services/DnsSettings';
 import {
   SettingsPreferencesGateway,
   SettingsRequestGuard
@@ -524,6 +525,11 @@ export struct BridgeStatus {
     exitNodeAllowLANAccess: false
   };
   @State networkSettingStatus: string = '';
+  @State dnsSettingsEnabled: boolean = false;
+  @State dnsPrimaryInput: string = '';
+  @State dnsSecondaryInput: string = '';
+  @State dnsSearchDomainsInput: string = '';
+  @State dnsSettingsStatus: string = '';
   @State accountSummary: AccountSummary = {
     displayName: '',
     loginName: '',
@@ -1230,6 +1236,12 @@ export struct BridgeStatus {
     this.controlServerTipMessage = context.resourceManager.getStringSync(
       $r('app.string.control_server_first_run_tip').id);
     this.controlServerStatus = '';
+    const dnsSettings: DnsSettings = DnsSettingsStore.load(context.filesDir);
+    this.dnsSettingsEnabled = dnsSettings.enabled;
+    this.dnsPrimaryInput = dnsSettings.primary;
+    this.dnsSecondaryInput = dnsSettings.secondary;
+    this.dnsSearchDomainsInput = DnsSettingsStore.formatSearchDomains(dnsSettings.searchDomains);
+    this.dnsSettingsStatus = '';
     const requestGeneration: number = this.settingsRequestGuard.begin();
     this.settingsPreferencesGateway.loadConnectedHomeLayout(context)
       .then((mode: ConnectedHomeLayoutMode) => {
@@ -2046,6 +2058,68 @@ export struct BridgeStatus {
     }
     if (!this.routeAllUpdateInProgress && !this.exitNodeLanUpdateInProgress) {
       this.refreshNetworkSettings();
+    }
+  }
+
+  private saveDnsSettings(): void {
+    const primary: string = this.dnsPrimaryInput.trim();
+    const secondary: string = this.dnsSecondaryInput.trim();
+    if ((primary.length > 0 && !DnsSettingsStore.isValidAddress(primary)) ||
+      (this.dnsSettingsEnabled && primary.length === 0)) {
+      this.dnsSettingsStatus = 'invalid_primary';
+      return;
+    }
+    if (secondary.length > 0 && !DnsSettingsStore.isValidAddress(secondary)) {
+      this.dnsSettingsStatus = 'invalid_secondary';
+      return;
+    }
+    const rawSearchDomains: string[] = this.dnsSearchDomainsInput.split(',');
+    let searchDomainCount: number = 0;
+    for (const rawDomain of rawSearchDomains) {
+      const domain: string = rawDomain.trim();
+      if (domain.length === 0) {
+        continue;
+      }
+      if (!DnsSettingsStore.isValidSearchDomain(domain)) {
+        this.dnsSettingsStatus = 'invalid_search_domains';
+        return;
+      }
+      searchDomainCount++;
+    }
+    if (searchDomainCount > MAX_DNS_SEARCH_DOMAINS) {
+      this.dnsSettingsStatus = 'invalid_search_domains';
+      return;
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const settings: DnsSettings = {
+      enabled: this.dnsSettingsEnabled,
+      primary: primary,
+      secondary: secondary,
+      searchDomains: DnsSettingsStore.parseSearchDomains(this.dnsSearchDomainsInput)
+    };
+    const saved: DnsSettings | undefined = DnsSettingsStore.save(context.filesDir, settings);
+    if (saved === undefined) {
+      this.dnsSettingsStatus = 'failed';
+      return;
+    }
+    this.dnsPrimaryInput = saved.primary;
+    this.dnsSecondaryInput = saved.secondary;
+    this.dnsSearchDomainsInput = DnsSettingsStore.formatSearchDomains(saved.searchDomains);
+    this.dnsSettingsStatus = 'saved';
+  }
+
+  private dnsSettingsStatusText(): ResourceStr {
+    switch (this.dnsSettingsStatus) {
+      case 'saved':
+        return $r('app.string.setting_dns_saved');
+      case 'invalid_primary':
+        return $r('app.string.setting_dns_invalid_primary');
+      case 'invalid_secondary':
+        return $r('app.string.setting_dns_invalid_secondary');
+      case 'invalid_search_domains':
+        return $r('app.string.setting_dns_invalid_search_domains');
+      default:
+        return $r('app.string.setting_dns_save_failed');
     }
   }
 
@@ -10271,6 +10345,124 @@ export struct BridgeStatus {
     .animation({ duration: MotionTokens.EXPAND, curve: MotionTokens.curve() })
   }
 
+  @Builder
+  private DnsSettingsPanel() {
+    Column({ space: 10 }) {
+      Row() {
+        Column({ space: 2 }) {
+          Text($r('app.string.setting_dns_override'))
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+          Text($r('app.string.setting_dns_override_description'))
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .lineHeight(17)
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        Toggle({ type: ToggleType.Switch, isOn: this.dnsSettingsEnabled })
+          .id('dns-override-toggle')
+          .selectedColor($r('app.color.emphasize'))
+          .enabled(!this.isConnected() && !this.isConnecting())
+          .opacity(!this.isConnected() && !this.isConnecting() ? 1 : 0.4)
+          .onChange((enabled: boolean) => {
+            this.dnsSettingsEnabled = enabled;
+            this.dnsSettingsStatus = '';
+          })
+      }
+        .width('100%')
+
+      if (this.dnsSettingsEnabled) {
+        this.DnsInputField($r('app.string.setting_dns_primary'),
+          $r('app.string.setting_dns_primary_placeholder'), this.dnsPrimaryInput,
+          (value: string) => {
+            this.dnsPrimaryInput = value;
+            this.dnsSettingsStatus = '';
+          })
+        this.DnsInputField($r('app.string.setting_dns_secondary'),
+          $r('app.string.setting_dns_secondary_placeholder'), this.dnsSecondaryInput,
+          (value: string) => {
+            this.dnsSecondaryInput = value;
+            this.dnsSettingsStatus = '';
+          })
+        this.DnsInputField($r('app.string.setting_dns_search_domains'),
+          $r('app.string.setting_dns_search_domains_placeholder'), this.dnsSearchDomainsInput,
+          (value: string) => {
+            this.dnsSearchDomainsInput = value;
+            this.dnsSettingsStatus = '';
+          })
+        Text($r('app.string.setting_dns_ipv6_note'))
+          .fontSize(11)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+      }
+
+      // Keep Save visible when the override is switched off so the disabled
+      // state can be persisted instead of only changing in-memory state.
+      Button($r('app.string.setting_dns_save'), {
+        type: ButtonType.ROUNDED_RECTANGLE,
+        stateEffect: true,
+        buttonStyle: ButtonStyleMode.NORMAL,
+        controlSize: ControlSize.NORMAL
+      })
+        .id('dns-settings-save')
+        .width('100%')
+        .visualEffect(this.immersivePressEffect())
+        .enabled(!this.isConnected() && !this.isConnecting())
+        .opacity(!this.isConnected() && !this.isConnecting() ? 1 : 0.4)
+        .onClick(() => this.saveDnsSettings())
+
+      if (this.dnsSettingsStatus.length > 0) {
+        Text(this.dnsSettingsStatusText())
+          .id('dns-settings-status')
+          .fontSize(12)
+          .fontColor(this.dnsSettingsStatus === 'saved' ? $r('app.color.status_success') :
+            $r('app.color.status_error'))
+          .width('100%')
+      }
+
+      if (this.isConnected()) {
+        Text($r('app.string.network_settings_disconnect_first'))
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+      }
+    }
+      .id('dns-settings-panel')
+      .width('100%')
+      .padding(14)
+      .backgroundColor(this.groupBackground())
+      .borderRadius(16)
+      .animation({ duration: MotionTokens.EXPAND, curve: MotionTokens.curve() })
+  }
+
+  @Builder
+  private DnsInputField(label: ResourceStr, placeholder: ResourceStr, value: string,
+    onChange: (value: string) => void) {
+    Column({ space: 4 }) {
+      Text(label)
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
+      TextInput({ text: value, placeholder: placeholder })
+        .width('100%')
+        .height(42)
+        .padding({ left: 12, right: 12 })
+        .fontSize(15)
+        .fontColor($r('sys.color.font_primary'))
+        .placeholderColor($r('sys.color.font_secondary'))
+        .backgroundColor(this.glowSurface())
+        .border({ width: 1, color: $r('sys.color.comp_divider') })
+        .borderRadius(12)
+        .selectionMenuHidden(false)
+        .enabled(!this.isConnected() && !this.isConnecting())
+        .onChange(onChange)
+    }
+      .width('100%')
+  }
+
   private selectableExitNodes(): ExitNodeChoice[] {
     return this.exitNodes.filter((choice: ExitNodeChoice) => choice.online || choice.selected);
   }
@@ -14076,6 +14268,8 @@ export struct BridgeStatus {
       Column({ space: 14 }) {
         this.SettingsGroupHeader($r('app.string.settings_network_preferences_title'))
         this.NetworkSettingsPanel()
+        this.SettingsGroupHeader($r('app.string.settings_dns_title'))
+        this.DnsSettingsPanel()
         this.SettingsGroupHeader($r('app.string.exit_node_title'))
         this.ExitNodePanel()
       }

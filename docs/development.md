@@ -29,7 +29,7 @@ ArkTS / ArkUI application
 - The OpenHarmony Go port uses Linux build tags, but app processes cannot use tailscaled's Linux socket-mark / network-namespace bypass. The bridge disables it with `netns.SetEnabled(false)`.
 - A local `tsnet.Server` patch accepts an externally owned `tun.Device`. HarmonyOS owns interface and route creation; the platform interface is `vpn-tun`.
 - The VPN Extension restores the persistent backend in its own process and restarts the engine with the HarmonyOS TUN descriptor. File-service operations use that running backend through the existing request protocol.
-- MagicDNS is disabled. VPN DNS-server and search-domain arrays remain empty.
+- MagicDNS is disabled. The optional app-level DNS override fills the VPN config's DNS-server and search-domain arrays; without it, both arrays remain empty.
 - Tailscale is pinned to `1.86.5` to match the Go 1.24 toolchain used by the OpenHarmony port.
 - Diagnostics must redact authentication URLs, keys, node identities, tailnet addresses, local paths and signing information.
 

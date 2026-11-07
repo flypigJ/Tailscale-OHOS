@@ -114,6 +114,8 @@ interface DiagnosticVpnConfig {
   hasTailnetIPv6: boolean;
   hasDefaultIPv4: boolean;
   hasDefaultIPv6: boolean;
+  dnsCount: number;
+  searchDomainCount: number;
   ipv4Accepted: boolean;
   ipv6Accepted: boolean;
   mtu: number;
@@ -415,6 +417,8 @@ export class DiagnosticReportService {
       hasTailnetIPv6: false,
       hasDefaultIPv4: false,
       hasDefaultIPv6: false,
+      dnsCount: 0,
+      searchDomainCount: 0,
       ipv4Accepted: false,
       ipv6Accepted: false,
       mtu: 0
@@ -438,6 +442,8 @@ export class DiagnosticReportService {
         hasTailnetIPv6: DiagnosticReportService.statusBoolean(summary, 'hasTailnetIPv6'),
         hasDefaultIPv4: DiagnosticReportService.statusBoolean(summary, 'hasDefaultIPv4'),
         hasDefaultIPv6: DiagnosticReportService.statusBoolean(summary, 'hasDefaultIPv6'),
+        dnsCount: DiagnosticReportService.statusNumber(summary, 'dnsCount'),
+        searchDomainCount: DiagnosticReportService.statusNumber(summary, 'searchDomainCount'),
         ipv4Accepted: DiagnosticReportService.statusBoolean(summary, 'ipv4Accepted'),
         ipv6Accepted: DiagnosticReportService.statusBoolean(summary, 'ipv6Accepted'),
         mtu: DiagnosticReportService.statusNumber(summary, 'mtu')
@@ -513,6 +519,8 @@ export class DiagnosticReportService {
       `Tailnet IPv6 route submitted: ${report.vpnConfig.hasTailnetIPv6}`,
       `Default IPv4 route submitted: ${report.vpnConfig.hasDefaultIPv4}`,
       `Default IPv6 route submitted: ${report.vpnConfig.hasDefaultIPv6}`,
+      `DNS servers submitted: ${report.vpnConfig.dnsCount}`,
+      `DNS search domains submitted: ${report.vpnConfig.searchDomainCount}`,
       `IPv4 accepted: ${report.vpnConfig.ipv4Accepted}`,
       `IPv6 accepted: ${report.vpnConfig.ipv6Accepted}`,
       `MTU: ${report.vpnConfig.mtu}`,

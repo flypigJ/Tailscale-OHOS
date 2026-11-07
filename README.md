@@ -17,7 +17,8 @@ Connect your HarmonyOS device to your tailnet. Reach your computers and NAS, mov
 3. **File sharing:** send and receive files with Taildrop through MeshSend; browse, upload and download authorized Taildrive shares.
 4. **Media integration:** discover Jellyfin, Emby and Plex servers and open them in HosPlayer.
 5. **Local privacy:** protect app access and Taildrive folders with system authentication.
-6. **Native experience:** adaptive ArkUI layouts, light and dark themes, and English and Chinese app interfaces.
+6. **Custom DNS:** use primary and backup resolvers for apps routed through the VPN, with optional DNS search domains.
+7. **Native experience:** adaptive ArkUI layouts, light and dark themes, and English and Chinese app interfaces.
 
 ## Compatibility
 

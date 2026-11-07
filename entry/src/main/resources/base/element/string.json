@@ -1661,6 +1661,66 @@
       "value": "The setting could not be saved. Try again"
     },
     {
+      "name": "setting_dns_override",
+      "value": "Custom DNS"
+    },
+    {
+      "name": "setting_dns_override_description",
+      "value": "Use your own DNS servers for apps routed through the VPN"
+    },
+    {
+      "name": "setting_dns_primary",
+      "value": "Primary DNS"
+    },
+    {
+      "name": "setting_dns_primary_placeholder",
+      "value": "e.g. 223.5.5.5"
+    },
+    {
+      "name": "setting_dns_secondary",
+      "value": "Backup DNS (optional)"
+    },
+    {
+      "name": "setting_dns_secondary_placeholder",
+      "value": "e.g. 119.29.29.29"
+    },
+    {
+      "name": "setting_dns_search_domains",
+      "value": "Search domains (optional)"
+    },
+    {
+      "name": "setting_dns_search_domains_placeholder",
+      "value": "Comma separated, e.g. corp.example.com"
+    },
+    {
+      "name": "setting_dns_ipv6_note",
+      "value": "IPv6 DNS is used only when the VPN has an IPv6 address"
+    },
+    {
+      "name": "setting_dns_save",
+      "value": "Save DNS settings"
+    },
+    {
+      "name": "setting_dns_saved",
+      "value": "Saved. Reconnect the VPN to apply"
+    },
+    {
+      "name": "setting_dns_invalid_primary",
+      "value": "Enter a valid primary DNS address"
+    },
+    {
+      "name": "setting_dns_invalid_secondary",
+      "value": "Enter a valid backup DNS address"
+    },
+    {
+      "name": "setting_dns_invalid_search_domains",
+      "value": "Enter valid search domains separated by commas"
+    },
+    {
+      "name": "setting_dns_save_failed",
+      "value": "Could not save DNS settings. Try again"
+    },
+    {
       "name": "setting_enabled",
       "value": "Enabled"
     },
@@ -1887,6 +1947,10 @@
     {
       "name": "settings_network_preferences_title",
       "value": "Connection preferences"
+    },
+    {
+      "name": "settings_dns_title",
+      "value": "DNS"
     },
     {
       "name": "settings_appearance_navigation_title",

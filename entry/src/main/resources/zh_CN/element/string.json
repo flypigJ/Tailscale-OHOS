@@ -410,6 +410,21 @@
     { "name": "setting_exit_node_lan_description", "value": "使用出口节点时仍可访问附近设备" },
     { "name": "network_settings_disconnect_first", "value": "断开连接后可更改网络设置" },
     { "name": "network_setting_failed", "value": "设置未能保存，请重试" },
+    { "name": "setting_dns_override", "value": "自定义 DNS" },
+    { "name": "setting_dns_override_description", "value": "VPN 连接后被代理的应用使用指定 DNS 服务器解析域名" },
+    { "name": "setting_dns_primary", "value": "主 DNS" },
+    { "name": "setting_dns_primary_placeholder", "value": "例如 223.5.5.5" },
+    { "name": "setting_dns_secondary", "value": "备用 DNS（可选）" },
+    { "name": "setting_dns_secondary_placeholder", "value": "例如 119.29.29.29" },
+    { "name": "setting_dns_search_domains", "value": "搜索域（可选）" },
+    { "name": "setting_dns_search_domains_placeholder", "value": "逗号分隔，例如 corp.example.com" },
+    { "name": "setting_dns_ipv6_note", "value": "仅在 VPN 分配 IPv6 地址时使用 IPv6 DNS" },
+    { "name": "setting_dns_save", "value": "保存 DNS 设置" },
+    { "name": "setting_dns_saved", "value": "已保存，重新连接 VPN 后生效" },
+    { "name": "setting_dns_invalid_primary", "value": "请输入有效的主 DNS 地址" },
+    { "name": "setting_dns_invalid_secondary", "value": "请输入有效的备用 DNS 地址" },
+    { "name": "setting_dns_invalid_search_domains", "value": "请输入有效的搜索域，用逗号分隔" },
+    { "name": "setting_dns_save_failed", "value": "DNS 设置保存失败，请重试" },
     { "name": "setting_enabled", "value": "已开启" },
     { "name": "setting_disabled", "value": "已关闭" },
     { "name": "setting_unavailable", "value": "暂不可用" },
@@ -562,6 +577,7 @@
     ,{ "name": "navigation_move_down", "value": "\u4e0b\u79fb\u6807\u7b7e" }
     ,{ "name": "settings_network_connection_title", "value": "\u7f51\u7edc\u4e0e\u8fde\u63a5" }
     ,{ "name": "settings_network_preferences_title", "value": "\u8fde\u63a5\u504f\u597d" }
+    ,{ "name": "settings_dns_title", "value": "DNS" }
     ,{ "name": "settings_appearance_navigation_title", "value": "\u5916\u89c2\u4e0e\u5bfc\u822a" }
     ,{ "name": "settings_storage_cache_title", "value": "\u5b58\u50a8\u4e0e\u7f13\u5b58" }
     ,{ "name": "settings_about_help_title", "value": "\u5173\u4e8e\u4e0e\u5e2e\u52a9" }
