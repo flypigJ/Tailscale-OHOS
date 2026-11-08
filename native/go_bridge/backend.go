@@ -321,6 +321,7 @@ func (b *backendController) stop() string {
 	b.cancelTaildriveTransfer("disconnected")
 	b.mu.Lock()
 	server := b.server
+	tunDevice := b.tunDevice
 	cancelStart := b.cancelStart
 	cancelTaildropWatch := b.taildropWatchStop
 	cancelMeshArcDeviceSync := b.meshArcDeviceSyncStop
@@ -353,8 +354,14 @@ func (b *backendController) stop() string {
 	}
 	if server != nil {
 		if err := server.Close(); err != nil {
+			if tunDevice != nil {
+				_ = tunDevice.Close()
+			}
 			return "FAILED | backend stop"
 		}
+	}
+	if tunDevice != nil {
+		_ = tunDevice.Close()
 	}
 	return "OK | backend stopped"
 }
@@ -390,6 +397,12 @@ func (b *backendController) logout() string {
 }
 
 func (b *backendController) startWithDevice(stateDir, deviceModel, controlURL string, device *harmonyTunDevice) string {
+	keepDevice := false
+	defer func() {
+		if !keepDevice && device != nil {
+			_ = device.Close()
+		}
+	}()
 	normalizedControlURL, err := normalizeControlURL(controlURL)
 	if err != nil {
 		return "FAILED | backend start | invalid control server"
@@ -442,9 +455,10 @@ func (b *backendController) startWithDevice(stateDir, deviceModel, controlURL st
 	b.stateDir = profileStateDir
 	b.cancelStart = cancelStart
 	b.meshArcReceiverStatus = meshArcReceiverStatus{State: "idle"}
+	keepDevice = true
 	b.mu.Unlock()
 
-	go b.startAsync(server, profileStateDir, generation, startContext)
+	go b.startAsync(server, profileStateDir, generation, startContext, device)
 	if device != nil {
 		return "OK | VPN backend starting | persistent private state"
 	}
@@ -463,6 +477,7 @@ func (b *backendController) restartWithTun(
 	b.mu.Lock()
 	b.osVersion = strings.TrimSpace(osVersion)
 	oldServer := b.server
+	oldTunDevice := b.tunDevice
 	cancelStart := b.cancelStart
 	cancelTaildropWatch := b.taildropWatchStop
 	cancelMeshArcDeviceSync := b.meshArcDeviceSyncStop
@@ -495,8 +510,14 @@ func (b *backendController) restartWithTun(
 	if oldServer != nil {
 		if err := oldServer.Close(); err != nil {
 			_ = device.Close()
+			if oldTunDevice != nil {
+				_ = oldTunDevice.Close()
+			}
 			return "FAILED | VPN backend | previous backend close"
 		}
+	}
+	if oldTunDevice != nil {
+		_ = oldTunDevice.Close()
 	}
 	return b.startWithDevice(stateDir, deviceModel, controlURL, device)
 }
@@ -549,15 +570,20 @@ func stripHuaweiBrand(deviceName string) string {
 // log this value.
 func (b *backendController) vpnConfig() string {
 	b.mu.Lock()
+	server := b.server
 	client := b.client
 	starting := b.starting
 	stateDir := b.stateDir
+	generation := b.generation
 	b.mu.Unlock()
-	if client == nil || starting {
+	if server == nil || client == nil || starting {
 		return "FAILED | VPN config | backend not ready"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	if _, err := waitForCurrentNetMap(ctx, client); err != nil {
+		return "FAILED | VPN config | current network map unavailable"
+	}
 	status, err := client.Status(ctx)
 	if err != nil || status.BackendState != "Running" {
 		return "FAILED | VPN config | backend not running"
@@ -591,9 +617,14 @@ func (b *backendController) vpnConfig() string {
 		return "FAILED | VPN config | exit route unavailable"
 	}
 	b.mu.Lock()
+	if b.server != server || b.client != client || b.generation != generation {
+		b.mu.Unlock()
+		return "FAILED | VPN config | stale backend"
+	}
 	b.subnetRoutes = subnetRoutes
+	config := fmt.Sprintf("%s|%s|%s", v4.String(), v6Text, strings.Join(routes, ","))
 	b.mu.Unlock()
-	return fmt.Sprintf("%s|%s|%s", v4.String(), v6Text, strings.Join(routes, ","))
+	return config
 }
 
 // exitNodes returns the exit-node choices intended for direct rendering in the
@@ -2637,26 +2668,31 @@ func (b *backendController) clearInteractiveLoginStart(generation uint64) {
 
 func (b *backendController) startAsync(
 	server *tsnet.Server, stateDir string, generation uint64, startContext context.Context,
+	device *harmonyTunDevice,
 ) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			b.setStartErrorFor(server, generation, fmt.Errorf("panic: %v\n%s", recovered, debug.Stack()))
+			b.releaseTunFor(server, generation, device)
 		}
 	}()
 
 	if err := server.Start(); err != nil {
 		b.setStartErrorFor(server, generation, err)
+		b.releaseTunFor(server, generation, device)
 		return
 	}
 	client, err := server.LocalClient()
 	if err != nil {
 		b.setStartErrorFor(server, generation, err)
+		b.releaseTunFor(server, generation, device)
 		return
 	}
 
 	b.mu.Lock()
 	if b.server != server || b.generation != generation || startContext.Err() != nil {
 		b.mu.Unlock()
+		b.releaseTunFor(server, generation, device)
 		return
 	}
 	b.client = client
@@ -2670,12 +2706,27 @@ func (b *backendController) startAsync(
 	b.mu.Lock()
 	if b.server != server || b.generation != generation || startContext.Err() != nil {
 		b.mu.Unlock()
+		b.releaseTunFor(server, generation, device)
 		return
 	}
 	b.starting = false
 	b.cancelStart = nil
 	b.phase = "ready"
 	b.mu.Unlock()
+}
+
+// Close only the descriptor captured by this start, never a newer TUN.
+func (b *backendController) releaseTunFor(server *tsnet.Server, generation uint64, device *harmonyTunDevice) {
+	if device == nil {
+		return
+	}
+	b.mu.Lock()
+	if b.server == server && b.generation == generation && b.tunDevice == device {
+		b.tunDevice = nil
+		b.externalTun = false
+	}
+	b.mu.Unlock()
+	_ = device.Close()
 }
 
 func (b *backendController) setStartErrorFor(server *tsnet.Server, generation uint64, err error) {

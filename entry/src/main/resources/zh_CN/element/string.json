@@ -646,5 +646,6 @@
     ,{ "name": "security_settings_authentication_title", "value": "\u9a8c\u8bc1\u5b89\u5168\u8bbe\u7f6e" }
     ,{ "name": "security_settings_save_failed", "value": "\u65e0\u6cd5\u4fdd\u5b58\u5b89\u5168\u8bbe\u7f6e\uff0c\u8bf7\u91cd\u8bd5" }
     ,{ "name": "notification_vpn_background_title", "value": "VPN 已连接" }
+    ,{ "name": "notification_vpn_background_connecting", "value": "VPN 连接中" }
   ]
 }

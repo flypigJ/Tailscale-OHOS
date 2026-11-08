@@ -29,6 +29,7 @@ import {
   VpnCommandStateMachine,
   VpnCoreCommand
 } from '../services/VpnCommandGateway';
+import { vpnBackgroundTaskManager } from '../services/VpnBackgroundTaskManager';
 import {
   NetworkSettingKey,
   NetworkSettingsGateway,
@@ -983,7 +984,9 @@ export struct BridgeStatus {
       this.backendInitializationVisible = false;
       this.devicesLoading = false;
       if (vpnIsLive) {
-        this.vpnCommandGateway.stopVpnExtension(this.vpnWant()).catch(() => {
+        this.vpnCommandGateway.stopVpnExtension(this.vpnWant()).then(() => {
+          this.markVpnBackgroundStopped();
+        }).catch(() => {
           // The extension also refuses to restore its backend without a confirmed server.
         });
       }
@@ -2360,6 +2363,12 @@ export struct BridgeStatus {
     if (this.connectCommandId === 0) {
       return;
     }
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      vpnBackgroundTaskManager.onVpnConnectionRequested(context);
+    } catch (_error) {
+      // A missing UI context must not prevent the VPN request itself.
+    }
     this.setConnectInProgress(true);
     void this.beginVpnConnectionAfterExitNodeUpdate();
   }
@@ -2518,6 +2527,7 @@ export struct BridgeStatus {
     this.stopVpnStopPolling();
     this.vpnStopRequestId = Date.now();
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.markVpnBackgroundStopped();
     this.vpnCommandGateway.writeCommandFile(context.filesDir, VPN_STOP_RESPONSE_FILE_NAME, '');
     const request: VpnStopRequest = { requestId: this.vpnStopRequestId };
     if (!this.vpnCommandGateway.writeCommandFile(context.filesDir, VPN_STOP_REQUEST_FILE_NAME,
@@ -2526,6 +2536,15 @@ export struct BridgeStatus {
       return;
     }
     this.pollVpnStopResponse(0, this.disconnectCommandId);
+  }
+
+  private markVpnBackgroundStopped(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      vpnBackgroundTaskManager.onVpnDisconnected(context);
+    } catch (_error) {
+      // The extension stop remains authoritative if the UI context is gone.
+    }
   }
 
   private pollVpnStopResponse(attempt: number, commandId: number): void {
@@ -2593,6 +2612,10 @@ export struct BridgeStatus {
           this.disconnectInProgress = false;
           return;
         }
+        try {
+          const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+          vpnBackgroundTaskManager.onVpnStopFailed(context);
+        } catch (_error) { }
         this.recordDiagnosticEvent('disconnect_failed', 'system', error.code);
         this.vpnStatus = `FAILED | VPN stop | code=${error.code}`;
         this.disconnectInProgress = false;
@@ -3469,6 +3492,7 @@ export struct BridgeStatus {
         if (generation !== this.vpnCommandStateMachine.currentLifecycleGeneration()) {
           return;
         }
+        this.markVpnBackgroundStopped();
         this.recordDiagnosticEvent('vpn_failed_extension_stopped', 'recovery');
         this.vpnStatus = failedStatus;
         this.startBackend(false);
@@ -4328,7 +4352,10 @@ export struct BridgeStatus {
     this.vpnStatus = 'Stopping this app VPN after system VPN conflict';
     this.recordDiagnosticEvent('vpn_conflict_self_disconnect_requested', 'cleanup');
     this.vpnCommandGateway.stopVpnExtension(this.vpnWant())
-      .then(() => this.finishVpnConflictCleanup())
+      .then(() => {
+        this.markVpnBackgroundStopped();
+        this.finishVpnConflictCleanup();
+      })
       .catch((error: BusinessError) => {
         this.recordDiagnosticEvent('vpn_conflict_self_disconnect_failed', 'cleanup', error.code);
         this.finishVpnConflictCleanup();
@@ -4373,6 +4400,7 @@ export struct BridgeStatus {
     this.recordDiagnosticEvent('vpn_conflict_confirm_disconnect_requested', 'cleanup');
     this.vpnCommandGateway.stopVpnExtension(this.vpnWant())
       .then(() => {
+        this.markVpnBackgroundStopped();
         this.recordDiagnosticEvent('vpn_conflict_confirm_disconnect_completed', 'cleanup');
         this.finishVpnConflictCancellation(restoreBackend);
       })
@@ -14697,6 +14725,7 @@ export struct BridgeStatus {
     try {
       try {
         await this.vpnCommandGateway.stopVpnExtension(this.vpnWant());
+        this.markVpnBackgroundStopped();
       } catch (_vpnError) {
         // A stopped extension is already in the desired state.
       }
@@ -14770,6 +14799,7 @@ export struct BridgeStatus {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
       await this.vpnCommandGateway.stopVpnExtension(this.vpnWant());
+      this.markVpnBackgroundStopped();
       if (!this.diagnosticActionRequestGuard.isCurrent(requestGeneration)) {
         return;
       }
@@ -14831,6 +14861,7 @@ export struct BridgeStatus {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
       await this.vpnCommandGateway.stopVpnExtension(this.vpnWant());
+      this.markVpnBackgroundStopped();
       if (!this.diagnosticActionRequestGuard.isCurrent(requestGeneration)) {
         return;
       }
