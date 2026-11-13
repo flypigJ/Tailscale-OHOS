@@ -2,6 +2,7 @@ import { Want } from '@kit.AbilityKit';
 import { vpnExtension, VpnExtensionAbility } from '@kit.NetworkKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { rpc } from '@kit.IPCKit';
 import { fileIo } from '@kit.CoreFileKit';
 import nativeBridge from 'libtailscale_ohos.so';
 import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
@@ -303,6 +304,25 @@ function emptyTaildropTransfer(): TaildropTransferSummary {
 }
 
 export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
+  // Created on the first bind and kept alive for the life of the Extension.
+  private bindStub: rpc.RemoteObject | undefined = undefined;
+
+  /**
+   * The UI process binds this Extension (VpnBackgroundTaskManager.bindVpnExtension)
+   * so that the system records an app process as connected to it: an unbound
+   * Extension sits in the lowest low-memory-kill tier (oom_score_adj 500, 300 once
+   * bound). The returned object carries no calls. It must exist, though: the
+   * framework's native OnConnect throws, and the process is ended with a JS error,
+   * if onConnect is missing or returns no remote object.
+   */
+  onConnect(_want: Want): rpc.RemoteObject {
+    if (this.bindStub === undefined) {
+      this.bindStub = new rpc.RemoteObject('io.github.tailscaleohos.vpn.bind');
+    }
+    this.recordDiagnosticEvent('vpn_extension_bound', 'lifecycle');
+    return this.bindStub;
+  }
+
   private vpnConnection?: vpnExtension.VpnConnection;
   private tunFd: number = -1;
   private statusTimer: number = -1;
