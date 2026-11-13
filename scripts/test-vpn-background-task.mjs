@@ -22,11 +22,17 @@ function fixture() {
     now: 1000000, status: '', starts: [], stops: 0, stoppedIds: [], notifications: [], canceledNotifications: [],
     events: [], systemTasks: [],
     callbacks: new Map(), startGate: null, publishGate: null, startError: null, startTaskResult: null,
-    stopGate: null, readError: false
+    stopGate: null, readError: false, binds: [], unbinds: [], bindError: null
   };
   const context = { filesDir: '/files', resourceManager: {
     getStringByNameSync: name => name.includes('connecting') ? 'Connecting VPN' : 'VPN connected'
-  } };
+  },
+  connectServiceExtensionAbility: (want, options) => {
+    if (f.bindError) throw f.bindError;
+    f.binds.push({ want, options });
+    return f.binds.length;
+  },
+  disconnectServiceExtensionAbility: async id => { f.unbinds.push(id); } };
   const sandbox = {
     Date: { now: () => f.now }, setInterval: () => 1, clearInterval: () => {},
     wantAgent: { OperationType: { START_ABILITY: 1 }, WantAgentFlags: { UPDATE_PRESENT_FLAG: 1 },
@@ -304,4 +310,62 @@ test('reconnect waits for in-flight stop before starting the next task', async (
   const stopping = f.tick(); await flush(); f.live(); await f.tick();
   assert.equal(f.starts.length, 1);
   f.stopGate.resolve(); await stopping; await f.tick(); assert.equal(f.starts.length, 2);
+});
+
+// The VPN Extension is launched by the system VPN service, so no app process counts
+// as connected to it and it sits in the lowest low-memory-kill tier. Binding the
+// protected UI process to it lifts that tier (oom_score_adj 500 -> 300 on device).
+const eventNames = f => f.events.map(args => args[2]);
+
+test('binds the UI process to the live VPN Extension once and releases it on disconnect', async () => {
+  const f = fixture(); await f.start();
+  assert.equal(f.binds.length, 1);
+  assert.equal(f.binds[0].want.bundleName, 'io.github.tailscaleohos');
+  assert.equal(f.binds[0].want.abilityName, 'TailscaleVpnExtensionAbility');
+  f.binds[0].options.onConnect({}, {});
+  f.now += 1000; f.live(); await f.tick();
+  assert.equal(f.binds.length, 1);
+  f.manager.onVpnDisconnected(f.context); await flush();
+  assert.deepEqual(f.unbinds, [1]);
+  assert.ok(eventNames(f).includes('vpn_extension_bind_connected'));
+});
+
+test('never binds against a heartbeat that is not fresh enough to prove a live Extension', async () => {
+  const f = fixture();
+  f.status = `OK | state=Running | tun=true | txBytes=1 | rxBytes=1 | heartbeatMs=${f.now - 5000}`;
+  f.manager.register(f.context); await flush();
+  assert.equal(f.starts.length, 1); // still within the 15 s protection window
+  assert.equal(f.binds.length, 0);  // but binding could launch a dead Extension
+});
+
+test('a lost bind waits for a newer heartbeat before binding again', async () => {
+  const f = fixture(); await f.start();
+  f.binds[0].options.onDisconnect({});
+  await f.tick();
+  assert.equal(f.binds.length, 1); // same heartbeat: the Extension may be gone
+  f.now += 1000; f.live(); await f.tick();
+  assert.equal(f.binds.length, 2); // a newer heartbeat proves a live Extension
+  assert.deepEqual(f.unbinds, []);
+});
+
+test('a refused bind is retried only after its backoff', async () => {
+  const f = fixture(); f.bindError = Object.assign(Error('refused'), { code: 16000002 });
+  await f.start();
+  assert.equal(f.binds.length, 0);
+  assert.ok(f.events.some(args => args[2] === 'vpn_extension_bind_error' && args[4] === 16000002));
+  f.bindError = null;
+  f.now += 1000; f.live(); await f.tick();
+  assert.equal(f.binds.length, 0);
+  f.now += 10000; f.live(); await f.tick();
+  assert.equal(f.binds.length, 1);
+  f.binds[0].options.onFailed(16000050);
+  f.now += 1000; f.live(); await f.tick();
+  assert.equal(f.binds.length, 1);
+  f.now += 10000; f.live(); await f.tick();
+  assert.equal(f.binds.length, 2);
+});
+
+test('destroying the Ability releases the Extension binding', async () => {
+  const f = fixture(); await f.start(); f.manager.unregister(); await flush();
+  assert.deepEqual(f.unbinds, [1]);
 });

@@ -52,3 +52,45 @@ After the lock test, wake/unlock the device and rerun `device-vpn-data-probe.ps1
 to verify actual browser traffic while the VPN app remains in the background.
 Redacted per-sample results are written under the ignored `.codex/background-vpn/`
 directory. Do not upload app sandbox files, account state or signing materials.
+
+## Milestone 2 — low-memory kills of the VPN Extension process
+
+Reported failure: the VPN drops within seconds to minutes of backgrounding the app,
+mostly while other apps are in use. Evidence from `/data/log/hilog` (decoded with the
+SDK's `hilogtool parse`) on a phone running HarmonyOS 7.0.0.111 (API 26):
+
+- The Extension process (`<bundle>:vpn`) is ended with SIGKILL, `Kill Reason:
+  LowMemoryKill` or a kernel-level kill, in the same sweep as other small background
+  Extensions and services. It never runs `onDestroy`, so its status file still reads
+  `state=Running`.
+- `/proc/<pid>/oom_score_adj`: UI process **200** (it holds the continuous task),
+  ordinary background apps 400, VPN Extension **500** — the first tier to be killed
+  once available memory falls below the system buffer (1800–2100 MB observed).
+- The continuous task does not cover the Extension: the system VPN service launches
+  it, so no app process counts as connected to it.
+
+Measured on the same device and found **not** to change the Extension's tier:
+Huawei's published VPN keep-alive sample
+(<https://developer.huawei.com/consumer/cn/blog/topic/03228079102148956>: task
+requested only in `onBackground`, legacy `BackgroundMode.DATA_TRANSFER` overload,
+WantAgent targeting the Extension), and `extensionProcessMode: "runWithMainProcess"`
+on the vpn Extension (accepted by the build and by installation, ignored at run time).
+
+Implementation: once a live session is confirmed, `VpnBackgroundTaskManager` binds
+the UI process to the VPN Extension with `connectServiceExtensionAbility`, and the
+Extension implements `onConnect` returning an `rpc.RemoteObject`. The connection
+carries no calls. The Extension's `oom_score_adj` becomes **300** with the app in the
+background and **100** in the foreground.
+
+- `onConnect` is mandatory: without it the framework throws while reading the result
+  and ends the Extension with `Js Error`.
+- A bind starts its target if it is not running. The manager therefore binds only
+  against a heartbeat younger than 3 s and, after a lost or refused bind, only once a
+  newer heartbeat appears (refusals also back off for 10 s).
+- The binding is released on disconnect and when the Ability is destroyed.
+- This relies on behaviour the documentation does not describe for vpn Extensions;
+  re-verify it on new system versions.
+
+Result: sixteen processes, nine of them ordinary apps, were killed in a two-minute
+window while the Extension stayed up at tier 300. Manual disconnect and reconnect
+behave as before. Long-duration and screen-off soak runs are still to be done.
