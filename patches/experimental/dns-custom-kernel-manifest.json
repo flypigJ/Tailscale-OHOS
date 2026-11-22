@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 1,
+  "milestone": "custom-dns",
+  "version": "1.104.5",
+  "baselineTree": "dd1bdb460fb8c7cae08862f57b0448d2602434e8",
+  "d3ManifestSha256": "AD808CEB20092E51FEDF61BAD2A449FFA8FF7575C72CE9E6A003305F6F1298B8",
+  "patch": {
+    "path": "patches/experimental/dns-custom-policy.patch",
+    "sha256": "F6C5A5E57F70FB937495D1ECEC50A58DD0698F87AA783D2A199079000A2EDB4E"
+  },
+  "incrementalFiles": [
+    "net/dns/manager.go",
+    "net/dns/mesharc_custom_test.go"
+  ],
+  "deltaFiles": [
+    "ipn/ipnlocal/d3_dns_control_test.go",
+    "ipn/ipnlocal/node_backend.go",
+    "net/dns/config.go",
+    "net/dns/d3_routing_test.go",
+    "net/dns/dns_clone.go",
+    "net/dns/dns_view.go",
+    "net/dns/manager.go",
+    "net/dns/mesharc_custom_test.go",
+    "net/dns/resolver/d3_provenance_test.go",
+    "net/dns/resolver/forwarder.go",
+    "tsnet/mesharc_cold_peer_test.go",
+    "tsnet/mesharc_dns.go",
+    "tsnet/mesharc_dns_test.go",
+    "tsnet/tsnet.go",
+    "types/dnstype/d3_physical_test.go",
+    "types/dnstype/dnstype.go",
+    "types/dnstype/dnstype_clone.go",
+    "types/dnstype/dnstype_test.go",
+    "types/dnstype/dnstype_view.go",
+    "types/dnstype/mesharc_physical.go"
+  ],
+  "files": [
+    {
+      "path": "client/tailscale/apitype/apitype.go",
+      "sha256": "C47020DDE7E03408F6DDE7167F8ED83CC5DA040CDB28ABEDD538AAF7928F0B7C"
+    },
+    {
+      "path": "feature/taildrop/mesharc_test.go",
+      "sha256": "22A3421E47F86C85A43E9161FC76BC7EEDD2EC1A429BB1058B5F5A671552FE11"
+    },
+    {
+      "path": "feature/taildrop/retrieve.go",
+      "sha256": "3FD534387A17C5F381B1CADF0BA66B2323FD2979E02C3AE641B8450F285C0BDF"
+    },
+    {
+      "path": "ipn/ipnlocal/d3_dns_control_test.go",
+      "sha256": "EA970EA52043684688260FB62F9A69C531FB211C6B4EB6B7AD4B10DBC1ABDF90"
+    },
+    {
+      "path": "ipn/ipnlocal/local.go",
+      "sha256": "40FA2434C9C66BEEC3D86500B3688E2C9C5C0E247A9E7AEA63424B37D1F48708"
+    },
+    {
+      "path": "ipn/ipnlocal/node_backend.go",
+      "sha256": "7EA61F25E921B352FE4FFBFB152A0AB6D1D93D6F1A47EE92C30B347F45F50AED"
+    },
+    {
+      "path": "ipn/ipnstate/ipnstate.go",
+      "sha256": "5091B9ABBB3D9E99245B4A358CC9385363100DFFCA2425BBDAD7E9C355613B4D"
+    },
+    {
+      "path": "ipn/ipnstate/mesharc_test.go",
+      "sha256": "2FAF526F2DCB57A1091E085D608EC5EF28FC6E97C083241B26BA497194F74A62"
+    },
+    {
+      "path": "net/dns/config.go",
+      "sha256": "6D4E2FBD06A2EE77D08D5B11B7E20646CC43377E79C5B1532D6CFB4523581107"
+    },
+    {
+      "path": "net/dns/d3_routing_test.go",
+      "sha256": "1B2A1B4E1B27842FB05109ECA5F69538732D87BCCC2EE4A6D840B3EA0C4D4989"
+    },
+    {
+      "path": "net/dns/dns_clone.go",
+      "sha256": "DC0163A7AC3E6F0BD1B6B4D40CCB1317B161A1AAE5E32340FF0DFE9E447EBC96"
+    },
+    {
+      "path": "net/dns/dns_view.go",
+      "sha256": "D5E677594FDB3AC8198EFB00366A60358C60274DCEEF110CDC092D4F0888B13F"
+    },
+    {
+      "path": "net/dns/manager.go",
+      "sha256": "CAF5D5639F3F19AAB02690D738B4B86D3A46AD85AB56C6B3543F8BD7ECD8D414"
+    },
+    {
+      "path": "net/dns/mesharc_custom_test.go",
+      "sha256": "E3A02A4F0538D7E8B652FBFD11249E36600A16B6BEF3E22425D8595257F380B8"
+    },
+    {
+      "path": "net/dns/resolver/d3_provenance_test.go",
+      "sha256": "66DEE98071959460E84590E1F3EAA5B8C88BAC5EF9CFBFF1C1FAA15224259AF8"
+    },
+    {
+      "path": "net/dns/resolver/forwarder.go",
+      "sha256": "B23EB475457B732C7ECC9D06F766B29D131F1D7FD3D85911B4CA609BA993C5AD"
+    },
+    {
+      "path": "net/netcheck/netcheck.go",
+      "sha256": "73784578048A3FF48CAB1FDDD4C0A14B5BBF3547834C51B944424C507C763CAB"
+    },
+    {
+      "path": "net/netmon/hostroute_openharmony.go",
+      "sha256": "436ACA035F52CB9B34C41485A387548ADFC4D2E1AF564949F7D9F82A7FC7033C"
+    },
+    {
+      "path": "net/netmon/hostroute_other.go",
+      "sha256": "49DB494C9E227C7554588362C0717F53452CA04F7CA2300ADEF2906F240D4C84"
+    },
+    {
+      "path": "net/netmon/hostroute_test.go",
+      "sha256": "04AB4E192724E0EAFB36477E3CE0E8FA092BC5B4A7B6583C18A463F1371FBFD0"
+    },
+    {
+      "path": "net/netmon/interfaces_linux.go",
+      "sha256": "E7958735F55E8BC848EBEF3AAFE287674685059AF17108ED2A47A18CDF0758E3"
+    },
+    {
+      "path": "net/netmon/state.go",
+      "sha256": "7C8DCE1E71F738299B00D8457846B13D0C0EAAD8645EBCC3CD27CE0856558A19"
+    },
+    {
+      "path": "tsnet/mesharc.go",
+      "sha256": "75FDD4F3DAF2FA5AEC1AF1797F0485FF5DECAD9D993499D898A8C9BD2BF13DC0"
+    },
+    {
+      "path": "tsnet/mesharc_cold_peer_test.go",
+      "sha256": "E71F00A31DD5DFC36A6C7ABB1045372D96C7AE7CEC948ADB4FDA05F20DF1B215"
+    },
+    {
+      "path": "tsnet/mesharc_dns.go",
+      "sha256": "E9414186175ACF965770C91FBB7A762624BE3C54026ECB7E0007A3844DCAE557"
+    },
+    {
+      "path": "tsnet/mesharc_dns_test.go",
+      "sha256": "F3BFA3F793E919CE2DCE3F8843478DB2D350A03A613C403774C6B85CAB9161B7"
+    },
+    {
+      "path": "tsnet/mesharc_test.go",
+      "sha256": "CAD7D4B517260D03EC4F609414A79FD400CED77F86C91A6A781F1527EE88818F"
+    },
+    {
+      "path": "tsnet/tsnet.go",
+      "sha256": "E11B2A993C61E566A97787BD869133C291224ED30EE52A17D6A0055137D4B03F"
+    },
+    {
+      "path": "types/dnstype/d3_physical_test.go",
+      "sha256": "AB3935004791F8605683CCBC6F2F935634DECB8D6B2456C3BA33558247EC0478"
+    },
+    {
+      "path": "types/dnstype/dnstype.go",
+      "sha256": "1DF8C2D6849D370BE651ED23AE328AA1B008398C037D0864FB1692524D1BAD9E"
+    },
+    {
+      "path": "types/dnstype/dnstype_clone.go",
+      "sha256": "AF9E54684BA43E6823C7C6FE535BE9935ED3050895B3285AAB73CE4695ABCD02"
+    },
+    {
+      "path": "types/dnstype/dnstype_test.go",
+      "sha256": "2008E78AE7C8458CF7C8C1A532D0904A1A5DDC5E21C5689DA13B65C86F63ACF8"
+    },
+    {
+      "path": "types/dnstype/dnstype_view.go",
+      "sha256": "F096B927B26C4D110D8FAF743694DF409489EB5D22BEDAA7A1191E00EF89A474"
+    },
+    {
+      "path": "types/dnstype/mesharc_physical.go",
+      "sha256": "C1045CEC1FDB2C09EA535092FC9C213F2BC69B520FFD21DD1B8556CDBA8DC747"
+    },
+    {
+      "path": "util/mesharcdiag/mesharcdiag.go",
+      "sha256": "5AF145BFA62DA10FF566F81F49FC2EC3A8A95DE6CBFDF2C85EA9D84D7B2F4901"
+    },
+    {
+      "path": "util/mesharcdiag/mesharcdiag_test.go",
+      "sha256": "EECE2FDA082BB3CE58F4651EDB8C03DEDFA8037853ADF40064ED27858F10DD94"
+    },
+    {
+      "path": "wgengine/magicsock/endpoint.go",
+      "sha256": "42DB2FF7530FA8E7878568D8EC3E2A085B0D1DA9AE92D942BD4ACF6FB13C1149"
+    },
+    {
+      "path": "wgengine/magicsock/magicsock.go",
+      "sha256": "72044AE0B3A5A911C0C7DB9B7117E22E44AD182B545D4DD1BDBC17044AB28D63"
+    },
+    {
+      "path": "wgengine/magicsock/path_diagnostics.go",
+      "sha256": "7C20C27304253699E143CBBC07F13443F04F788C0D4424BA7BEEC23F9E1DED2A"
+    },
+    {
+      "path": "wgengine/magicsock/path_diagnostics_test.go",
+      "sha256": "57603F7F65E001BCB83E14792C63CCC85D0B1C76B768FCF2554DE4FA32497E69"
+    }
+  ]
+}

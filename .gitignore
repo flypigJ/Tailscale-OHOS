@@ -5,8 +5,11 @@ oh_modules/
 .tooling/
 .hvigor-user/
 .tools/
+.work/
 third_party/ohos-go/
+third_party/ohos-go*/
 third_party/tailscale/
+third_party/tailscale*/
 native/go_bridge/dist/
 build/
 entry/build/
@@ -20,6 +23,7 @@ AGENTS.md
 .codex/
 *.hap
 *.app
+/artifacts/
 
 # Release signing secrets (public .cer certificates may be tracked)
 certs/release/*.p12

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
@@ -17,11 +16,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime/debug"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"tailscale.com/util/mesharcdiag"
 	"time"
 
 	"tailscale.com/client/local"
@@ -38,15 +38,26 @@ import (
 	"tailscaleohos.local/go_bridge/vpnroute"
 )
 
+// Lock hierarchy: lifecycleMu -> (taildriveWarmMu | peerHostinfoMu | mu).
+// Never acquire lifecycleMu while holding mu, taildriveWarmMu, or peerHostinfoMu.
 type backendController struct {
+	lifecycleMu            sync.Mutex
 	mu                     sync.Mutex
 	loginMu                sync.Mutex
+	authKeyMu              sync.Mutex
 	taildropMu             sync.Mutex
 	taildriveMu            sync.Mutex
 	taildriveWarmMu        sync.Mutex
 	taildriveWarmAt        map[string]time.Time
 	taildriveDAVReadyAt    map[string]time.Time
+	peerHostinfoMu         sync.Mutex
+	peerHostinfoGen        uint64
+	peerHostinfo           map[key.NodePublic]cachedPeerHostinfo
+	whoIsLookup            func(context.Context, key.NodePublic) (*apitype.WhoIsResponse, error)
+	nowFn                  func() time.Time
+	onStopBeforeLeaseClose func()
 	server                 *tsnet.Server
+	engineLease            *engineStateLease
 	client                 *local.Client
 	starting               bool
 	startErr               string
@@ -56,6 +67,10 @@ type backendController struct {
 	stateDir               string
 	subnetRoutes           int
 	generation             uint64
+	dnsObservation         dnsConfigObservation
+	dnsInput               dnsStartupInput
+	dnsRuntime             *harmonyDNSConfigurator
+	dnsUpdateMu            sync.Mutex
 	cancelStart            context.CancelFunc
 	taildropStop           context.CancelFunc
 	taildropTask           taildropTransferSnapshot
@@ -74,8 +89,46 @@ type backendController struct {
 	loginGeneration        uint64
 }
 
-var harmonyBackend backendController
-var hostinfoModelOnce sync.Once
+type harmonyHostinfoMetadata struct {
+	osVersion string
+	model     string
+}
+
+type cachedPeerHostinfo struct {
+	osName      string
+	osVersion   string
+	deviceModel string
+	negative    bool
+	expiresAt   time.Time
+}
+
+const maxPeerHostinfoCacheEntries = 512
+
+var (
+	harmonyBackend        backendController
+	hostinfoModelOnce     sync.Once
+	activeHarmonyHostinfo atomic.Pointer[harmonyHostinfoMetadata]
+
+	peerHostinfoCacheTTL = 5 * time.Minute
+	peerHostinfoErrorTTL = 15 * time.Second
+)
+
+func updateActiveHarmonyHostinfo(osVersion, deviceModel string) string {
+	trimmedModel := stripHuaweiBrand(deviceModel)
+	hostinfo.SetOSVersion(osVersion)
+	activeHarmonyHostinfo.Store(&harmonyHostinfoMetadata{
+		osVersion: osVersion,
+		model:     trimmedModel,
+	})
+	hostinfoModelOnce.Do(func() {
+		hostinfo.RegisterHostinfoNewHook(func(info *tailcfg.Hostinfo) {
+			if meta := activeHarmonyHostinfo.Load(); meta != nil {
+				applyHarmonyHostinfo(info, meta.osVersion, meta.model)
+			}
+		})
+	})
+	return trimmedModel
+}
 
 type exitNodeChoice struct {
 	ID       string `json:"id"`
@@ -113,15 +166,6 @@ type peerConnectivityResult struct {
 	RelayRegion  string `json:"relayRegion"`
 }
 
-type sunshineProbeResult struct {
-	State         string `json:"state"`
-	CheckedAt     int64  `json:"checkedAt"`
-	LatencyMS     int    `json:"latencyMs,omitempty"`
-	ServerName    string `json:"serverName,omitempty"`
-	ServerVersion string `json:"serverVersion,omitempty"`
-	ErrorMessage  string `json:"errorMessage,omitempty"`
-}
-
 type mediaServiceResult struct {
 	Type      string `json:"type"`
 	Name      string `json:"name"`
@@ -148,12 +192,6 @@ type plexIdentity struct {
 	XMLName           xml.Name `xml:"MediaContainer"`
 	MachineIdentifier string   `xml:"machineIdentifier,attr"`
 	Version           string   `xml:"version,attr"`
-}
-
-type gameStreamServerInfo struct {
-	AppVersion string `xml:"appversion"`
-	GFEVersion string `xml:"GfeVersion"`
-	HostName   string `xml:"hostname"`
 }
 
 type accountSummary struct {
@@ -292,6 +330,8 @@ const (
 	taildropMaxSendFiles    = 100
 )
 
+var taildropSendStallTimeout = 90 * time.Second
+
 type taildropProgressReader struct {
 	reader io.Reader
 	onRead func(int)
@@ -305,27 +345,106 @@ func (r *taildropProgressReader) Read(buffer []byte) (int, error) {
 	return read, err
 }
 
-func (b *backendController) start(stateDir, deviceModel, osVersion, controlURL string) string {
-	b.mu.Lock()
-	b.osVersion = strings.TrimSpace(osVersion)
-	b.mu.Unlock()
+func runWithStallWatchdog(
+	parent context.Context,
+	stallTimeout time.Duration,
+	fn func(ctx context.Context, touch func()) error,
+) error {
+	if stallTimeout <= 0 {
+		return fn(parent, func() {})
+	}
+	attemptCtx, attemptCancel := context.WithCancel(parent)
+	var lastProgress atomic.Int64
+	lastProgress.Store(time.Now().UnixNano())
+	var stalled atomic.Bool
+
+	var timerMu sync.Mutex
+	stopped := false
+	var timer *time.Timer
+	var onTimer func()
+	onTimer = func() {
+		timerMu.Lock()
+		defer timerMu.Unlock()
+		if stopped {
+			return
+		}
+		elapsed := time.Duration(time.Now().UnixNano() - lastProgress.Load())
+		if elapsed >= stallTimeout {
+			stalled.Store(true)
+			attemptCancel()
+			return
+		}
+		timer.Reset(stallTimeout - elapsed)
+	}
+	timerMu.Lock()
+	timer = time.AfterFunc(stallTimeout, onTimer)
+	timerMu.Unlock()
+
+	defer func() {
+		timerMu.Lock()
+		stopped = true
+		if timer != nil {
+			timer.Stop()
+		}
+		timerMu.Unlock()
+		attemptCancel()
+	}()
+
+	touch := func() {
+		lastProgress.Store(time.Now().UnixNano())
+	}
+	err := fn(attemptCtx, touch)
+	if err != nil && stalled.Load() && parent.Err() == nil {
+		return fmt.Errorf("taildrop send stalled: %w", context.DeadlineExceeded)
+	}
+	return err
+}
+
+func (b *backendController) clearWarmAndPeerCaches() {
 	b.taildriveWarmMu.Lock()
 	b.taildriveWarmAt = nil
 	b.taildriveDAVReadyAt = nil
 	b.taildriveWarmMu.Unlock()
-	return b.startWithDevice(stateDir, deviceModel, controlURL, nil)
+
+	b.peerHostinfoMu.Lock()
+	b.peerHostinfoGen = 0
+	b.peerHostinfo = nil
+	b.peerHostinfoMu.Unlock()
+}
+
+func (b *backendController) start(stateDir, deviceModel, osVersion, controlURL string) string {
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	b.mu.Lock()
+	b.osVersion = strings.TrimSpace(osVersion)
+	b.mu.Unlock()
+	b.clearWarmAndPeerCaches()
+	return b.startWithDeviceLocked(stateDir, deviceModel, controlURL, nil)
 }
 
 func (b *backendController) stop() string {
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	mesharcdiag.Stop()
 	b.cancelTaildropTransfer("disconnected")
 	b.cancelTaildriveTransfer("disconnected")
+	b.clearWarmAndPeerCaches()
 	b.mu.Lock()
 	server := b.server
+	engineLease := b.engineLease
+	b.engineLease = nil
 	cancelStart := b.cancelStart
 	cancelTaildropWatch := b.taildropWatchStop
 	cancelMeshArcDeviceSync := b.meshArcDeviceSyncStop
 	b.generation++
 	b.server = nil
+	b.dnsObservation = dnsConfigObservation{}
+	b.dnsRuntime = nil
+	b.dnsInput.enabled = false
+	b.dnsInput.resolvers = nil
+	b.dnsInput.tailnetEnabled = false
+	b.dnsInput.customResolvers = nil
+	b.dnsInput.searchDomains = nil
 	b.client = nil
 	b.starting = false
 	b.startErr = ""
@@ -341,7 +460,11 @@ func (b *backendController) stop() string {
 	b.meshArcDeviceSyncReady = false
 	b.meshArcReceiverStatus = meshArcReceiverStatus{State: "idle"}
 	b.taildropIncoming = nil
+	onBeforeLeaseClose := b.onStopBeforeLeaseClose
 	b.mu.Unlock()
+	if engineLease != nil {
+		defer engineLease.Close()
+	}
 	if cancelStart != nil {
 		cancelStart()
 	}
@@ -352,9 +475,13 @@ func (b *backendController) stop() string {
 		cancelMeshArcDeviceSync()
 	}
 	if server != nil {
-		if err := server.Close(); err != nil {
-			return "FAILED | backend stop"
-		}
+		server.Close()
+	}
+	if onBeforeLeaseClose != nil {
+		onBeforeLeaseClose()
+	}
+	if engineLease != nil {
+		_ = engineLease.Close()
 	}
 	return "OK | backend stopped"
 }
@@ -390,41 +517,96 @@ func (b *backendController) logout() string {
 }
 
 func (b *backendController) startWithDevice(stateDir, deviceModel, controlURL string, device *harmonyTunDevice) string {
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	return b.startWithDeviceLocked(stateDir, deviceModel, controlURL, device)
+}
+
+func (b *backendController) startWithDeviceLocked(
+	stateDir, deviceModel, controlURL string, device *harmonyTunDevice,
+) string {
+	// This method consumes the adapted TUN, even when no server accepts it.
+	// The original platform descriptor is owned by the caller, not this duplicate.
 	normalizedControlURL, err := normalizeControlURL(controlURL)
 	if err != nil {
+		if device != nil {
+			_ = device.Close()
+		}
 		return "FAILED | backend start | invalid control server"
 	}
 	profileStateDir := controlServerStateDir(stateDir, normalizedControlURL)
 	b.mu.Lock()
 	if b.server != nil || b.starting {
 		b.mu.Unlock()
+		if device != nil {
+			_ = device.Close()
+		}
 		return b.status()
 	}
+	osVersion := b.osVersion
+	b.mu.Unlock()
+
+	// Run private state upgrade / fsync outside b.mu while serialized by lifecycleMu
+	// so status() and snapshot() never stall on filesystem I/O.
+	engineLease, err := prepareEngineStateUpgrade(profileStateDir)
+	if err != nil {
+		if device != nil {
+			_ = device.Close()
+		}
+		return "FAILED | backend start | private state upgrade"
+	}
+
 	// The OpenHarmony Go port intentionally matches Linux build tags, but an
 	// application process cannot use tailscaled's Linux socket marks/network
 	// namespace bypass. Use the ordinary system dialer for control traffic.
 	netns.SetEnabled(false)
-	osVersion := b.osVersion
-	hostinfo.SetOSVersion(osVersion)
-	trimmedModel := stripHuaweiBrand(deviceModel)
-	hostinfoModelOnce.Do(func() {
-		hostinfo.RegisterHostinfoNewHook(func(info *tailcfg.Hostinfo) {
-			applyHarmonyHostinfo(info, osVersion, trimmedModel)
-		})
-	})
+	trimmedModel := updateActiveHarmonyHostinfo(osVersion, deviceModel)
 
+	b.mu.Lock()
+	if b.server != nil || b.starting {
+		b.mu.Unlock()
+		_ = engineLease.Close()
+		if device != nil {
+			_ = device.Close()
+		}
+		return b.status()
+	}
+	b.engineLease = engineLease
 	b.generation++
 	generation := b.generation
+	b.resetDNSLocked()
 	startContext, cancelStart := context.WithCancel(context.Background())
 	server := &tsnet.Server{
-		Port:                   41641,
-		Dir:                    profileStateDir,
-		Hostname:               harmonyHostname(trimmedModel),
-		ControlURL:             normalizedControlURL,
-		Ephemeral:              false,
-		UserLogf:               b.userLogf,
-		Logf:                   b.backendLogf,
-		UseNetstackForPeerDial: device != nil,
+		Port:       41641,
+		Dir:        profileStateDir,
+		Hostname:   harmonyHostname(trimmedModel),
+		ControlURL: normalizedControlURL,
+		Ephemeral:  false,
+		UserLogf:   b.userLogf,
+		Logf:       b.backendLogf,
+	}
+	b.dnsRuntime = nil
+	if b.dnsInput.enabled {
+		adapter := &harmonyDNSConfigurator{}
+		var dnsErr error
+		if len(b.dnsInput.customResolvers) > 0 {
+			adapter.customResolvers = slices.Clone(b.dnsInput.customResolvers)
+			adapter.customSearchDomains, dnsErr = validatedCustomSearchDomains(b.dnsInput.searchDomains)
+		} else {
+			dnsErr = adapter.replaceBase(b.dnsInput.resolvers)
+		}
+		if dnsErr != nil {
+			b.engineLease = nil
+			cancelStart()
+			b.mu.Unlock()
+			_ = engineLease.Close()
+			if device != nil {
+				_ = device.Close()
+			}
+			return "FAILED | backend start | DNS base unavailable"
+		}
+		b.dnsRuntime = adapter
+		server.DNSOSConfigurator = adapter
 	}
 	// Assigning a nil *harmonyTunDevice directly to the tun.Device interface
 	// creates a non-nil interface containing a nil pointer. wireguard-go then
@@ -444,6 +626,11 @@ func (b *backendController) startWithDevice(stateDir, deviceModel, controlURL st
 	b.meshArcReceiverStatus = meshArcReceiverStatus{State: "idle"}
 	b.mu.Unlock()
 
+	b.peerHostinfoMu.Lock()
+	b.peerHostinfoGen = generation
+	b.peerHostinfo = nil
+	b.peerHostinfoMu.Unlock()
+
 	go b.startAsync(server, profileStateDir, generation, startContext)
 	if device != nil {
 		return "OK | VPN backend starting | persistent private state"
@@ -459,15 +646,22 @@ func (b *backendController) restartWithTun(
 		return "FAILED | VPN backend | TUN descriptor adaptation"
 	}
 
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
 	b.cancelTaildriveTransfer("vpn_restart")
+	b.clearWarmAndPeerCaches()
 	b.mu.Lock()
 	b.osVersion = strings.TrimSpace(osVersion)
 	oldServer := b.server
+	oldEngineLease := b.engineLease
+	b.engineLease = nil
 	cancelStart := b.cancelStart
 	cancelTaildropWatch := b.taildropWatchStop
 	cancelMeshArcDeviceSync := b.meshArcDeviceSyncStop
 	b.generation++
 	b.server = nil
+	b.dnsObservation = dnsConfigObservation{}
+	b.dnsRuntime = nil
 	b.client = nil
 	b.starting = false
 	b.startErr = ""
@@ -483,6 +677,9 @@ func (b *backendController) restartWithTun(
 	b.meshArcReceiverStatus = meshArcReceiverStatus{State: "idle"}
 	b.taildropIncoming = nil
 	b.mu.Unlock()
+	if oldEngineLease != nil {
+		defer oldEngineLease.Close()
+	}
 	if cancelStart != nil {
 		cancelStart()
 	}
@@ -493,12 +690,12 @@ func (b *backendController) restartWithTun(
 		cancelMeshArcDeviceSync()
 	}
 	if oldServer != nil {
-		if err := oldServer.Close(); err != nil {
-			_ = device.Close()
-			return "FAILED | VPN backend | previous backend close"
-		}
+		oldServer.Close()
 	}
-	return b.startWithDevice(stateDir, deviceModel, controlURL, device)
+	if oldEngineLease != nil {
+		_ = oldEngineLease.Close()
+	}
+	return b.startWithDeviceLocked(stateDir, deviceModel, controlURL, device)
 }
 
 func normalizeControlURL(rawURL string) (string, error) {
@@ -650,6 +847,7 @@ func (b *backendController) exitNodes() string {
 func (b *backendController) peers() string {
 	b.mu.Lock()
 	client := b.client
+	generation := b.generation
 	localSendStatuses := b.meshArcDeviceStatusesSnapshotLocked()
 	localSendStatusReady := b.meshArcDeviceSyncReady
 	b.mu.Unlock()
@@ -662,7 +860,7 @@ func (b *backendController) peers() string {
 	if err != nil || status.BackendState != "Running" {
 		return "[]"
 	}
-	peers := buildPeerSummariesWithLocalSend(ctx, client, status, localSendStatuses, localSendStatusReady)
+	peers := b.buildPeerSummariesCached(ctx, generation, client, status, localSendStatuses, localSendStatusReady)
 	sort.Slice(peers, func(i, j int) bool {
 		if peers[i].Online != peers[j].Online {
 			return peers[i].Online
@@ -688,12 +886,13 @@ func classifyPeerDevice(osName, deviceModel string) string {
 	if containsAny(model, "mate x", "pocket", "magic v", "galaxy z fold", "galaxy z flip", "pixel fold", "foldable") {
 		return "foldable"
 	}
+	// Match known laptop names before the generic "pad " tablet token (ThinkPad X1).
+	if containsAny(model, "matebook", "macbook", "thinkpad", "notebook", "laptop", "chromebook") {
+		return "laptop"
+	}
 	if containsAny(model, "ipad", "tablet", "matepad", "mediapad", "galaxy tab", "surface go", "surface pro", "pad ") ||
 		strings.HasSuffix(model, " pad") {
 		return "tablet"
-	}
-	if containsAny(model, "matebook", "macbook", "thinkpad", "notebook", "laptop", "chromebook") {
-		return "laptop"
 	}
 	if containsAny(model, "desktop", "imac", "mac mini", "mac studio", "workstation") {
 		return "desktop"
@@ -756,8 +955,19 @@ func (b *backendController) account() string {
 }
 
 func (b *backendController) snapshot() string {
+	return b.snapshotForDisplay(true)
+}
+
+// peerSnapshot excludes file-service queries so device discovery can publish
+// independently of Taildrop targets, metadata and inbox timeouts.
+func (b *backendController) peerSnapshot() string {
+	return b.snapshotForDisplay(false)
+}
+
+func (b *backendController) snapshotForDisplay(includeFileServices bool) string {
 	b.mu.Lock()
 	client := b.client
+	generation := b.generation
 	starting := b.starting
 	startErr := b.startErr
 	phase := b.phase
@@ -817,10 +1027,12 @@ func (b *backendController) snapshot() string {
 
 	snapshot.ExitNodes = buildExitNodeChoices(status, stateDir)
 	metadataCtx, metadataCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	snapshot.Peers = buildPeerSummariesWithLocalSend(metadataCtx, client, status, localSendStatuses,
+	snapshot.Peers = b.buildPeerSummariesCached(metadataCtx, generation, client, status, localSendStatuses,
 		localSendStatusReady)
 	metadataCancel()
-	snapshot.Taildrop = buildTaildropSnapshot(client, b.taildropTransferSnapshot(), b.taildropIncomingSnapshot())
+	if includeFileServices {
+		snapshot.Taildrop = b.buildTaildropSnapshotCached(generation, client, b.taildropTransferSnapshot(), b.taildropIncomingSnapshot())
+	}
 	snapshot.Taildrive = taildriveSnapshot{State: "ready", Transfer: b.taildriveTransferSnapshot()}
 	if prefsErr == nil && prefs != nil {
 		snapshot.NetworkSettings = networkPreferences{
@@ -833,6 +1045,29 @@ func (b *backendController) snapshot() string {
 
 func buildTaildropSnapshot(
 	client *local.Client, transfer taildropTransferSnapshot, incoming []taildropIncomingFile,
+) taildropSnapshot {
+	return buildTaildropSnapshotWithResolver(client, transfer, incoming, func(
+		ctx context.Context, peerKey key.NodePublic, osName, osVersion, deviceModel string,
+	) (string, string, string) {
+		return mergePeerHostinfo(ctx, client, peerKey, osName, osVersion, deviceModel)
+	})
+}
+
+func (b *backendController) buildTaildropSnapshotCached(
+	generation uint64, client *local.Client, transfer taildropTransferSnapshot, incoming []taildropIncomingFile,
+) taildropSnapshot {
+	return buildTaildropSnapshotWithResolver(client, transfer, incoming, func(
+		ctx context.Context, peerKey key.NodePublic, osName, osVersion, deviceModel string,
+	) (string, string, string) {
+		return b.resolvePeerHostinfo(ctx, generation, client, peerKey, osName, osVersion, deviceModel)
+	})
+}
+
+func buildTaildropSnapshotWithResolver(
+	client *local.Client,
+	transfer taildropTransferSnapshot,
+	incoming []taildropIncomingFile,
+	resolveHostinfo peerHostinfoResolverFunc,
 ) taildropSnapshot {
 	snapshot := taildropSnapshot{
 		State: "ready", Targets: []taildropTargetSummary{},
@@ -852,7 +1087,7 @@ func buildTaildropSnapshot(
 		return snapshot
 	}
 	metadataCtx, metadataCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	snapshot.Targets = summarizeTaildropTargets(metadataCtx, client, targets)
+	snapshot.Targets = summarizeTaildropTargetsWithResolver(metadataCtx, targets, resolveHostinfo)
 	metadataCancel()
 	inboxCtx, inboxCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	waitingFiles, err := client.WaitingFiles(inboxCtx)
@@ -884,8 +1119,22 @@ func summarizeTaildropWaitingFiles(files []apitype.WaitingFile) []taildropWaitin
 	return summaries
 }
 
+type peerHostinfoResolverFunc func(
+	ctx context.Context, peerKey key.NodePublic, osName, osVersion, deviceModel string,
+) (string, string, string)
+
 func summarizeTaildropTargets(
 	ctx context.Context, client *local.Client, targets []apitype.FileTarget,
+) []taildropTargetSummary {
+	return summarizeTaildropTargetsWithResolver(ctx, targets, func(
+		callCtx context.Context, peerKey key.NodePublic, osName, osVersion, deviceModel string,
+	) (string, string, string) {
+		return mergePeerHostinfo(callCtx, client, peerKey, osName, osVersion, deviceModel)
+	})
+}
+
+func summarizeTaildropTargetsWithResolver(
+	ctx context.Context, targets []apitype.FileTarget, resolveHostinfo peerHostinfoResolverFunc,
 ) []taildropTargetSummary {
 	summaries := make([]taildropTargetSummary, 0, len(targets))
 	for _, target := range targets {
@@ -900,8 +1149,8 @@ func summarizeTaildropTargets(
 			name = "Unnamed device"
 		}
 		online := target.Node.Online != nil && *target.Node.Online
-		osName, osVersion, deviceModel := mergePeerHostinfo(
-			ctx, client, target.Node.Key, target.Node.Hostinfo.OS(),
+		osName, osVersion, deviceModel := resolveHostinfo(
+			ctx, target.Node.Key, target.Node.Hostinfo.OS(),
 			target.Node.Hostinfo.OSVersion(), target.Node.Hostinfo.DeviceModel())
 		summaries = append(summaries, taildropTargetSummary{
 			Key:         peerStableKey(target.Node.StableID),
@@ -967,7 +1216,11 @@ func (b *backendController) startTaildropIncomingWatch(
 		previousCancel()
 	}
 
-	go b.watchTaildropIncomingFiles(watchContext, server, generation, client)
+	go func() {
+		guardGoroutine("backend.watchTaildropIncomingFiles", nil, func() {
+			b.watchTaildropIncomingFiles(watchContext, server, generation, client)
+		})
+	}()
 }
 
 func (b *backendController) watchTaildropIncomingFiles(
@@ -1117,16 +1370,19 @@ func (b *backendController) taildropSend(requestText string) string {
 				snapshot.FileSize = file.Size
 				snapshot.BytesSent = completedBytes
 			})
-			progressReader := &taildropProgressReader{
-				reader: handle,
-				onRead: func(read int) {
-					b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
-						snapshot.FileBytes += int64(read)
-						snapshot.BytesSent = completedBytes + snapshot.FileBytes
-					})
-				},
-			}
-			pushErr = client.PushFile(ctx, targetID, file.Size, file.Name, progressReader)
+			pushErr = runWithStallWatchdog(ctx, taildropSendStallTimeout, func(attemptCtx context.Context, touch func()) error {
+				progressReader := &taildropProgressReader{
+					reader: handle,
+					onRead: func(read int) {
+						touch()
+						b.updateTaildropTransfer(request.RequestID, func(snapshot *taildropTransferSnapshot) {
+							snapshot.FileBytes += int64(read)
+							snapshot.BytesSent = completedBytes + snapshot.FileBytes
+						})
+					},
+				}
+				return client.PushFile(attemptCtx, targetID, file.Size, file.Name, progressReader)
+			})
 			closeErr := handle.Close()
 			if pushErr == nil && closeErr != nil {
 				pushErr = closeErr
@@ -1584,6 +1840,29 @@ func buildPeerSummariesWithLocalSend(
 	ctx context.Context, client *local.Client, status *ipnstate.Status,
 	localSendStatuses map[string]meshArcDeviceStatus, localSendStatusReady bool,
 ) []peerSummary {
+	return buildPeerSummariesWithResolver(ctx, status, localSendStatuses, localSendStatusReady, func(
+		callCtx context.Context, peerKey key.NodePublic, osName, osVersion, deviceModel string,
+	) (string, string, string) {
+		return mergePeerHostinfo(callCtx, client, peerKey, osName, osVersion, deviceModel)
+	})
+}
+
+func (b *backendController) buildPeerSummariesCached(
+	ctx context.Context, generation uint64, client *local.Client, status *ipnstate.Status,
+	localSendStatuses map[string]meshArcDeviceStatus, localSendStatusReady bool,
+) []peerSummary {
+	return buildPeerSummariesWithResolver(ctx, status, localSendStatuses, localSendStatusReady, func(
+		callCtx context.Context, peerKey key.NodePublic, osName, osVersion, deviceModel string,
+	) (string, string, string) {
+		return b.resolvePeerHostinfo(callCtx, generation, client, peerKey, osName, osVersion, deviceModel)
+	})
+}
+
+func buildPeerSummariesWithResolver(
+	ctx context.Context, status *ipnstate.Status,
+	localSendStatuses map[string]meshArcDeviceStatus, localSendStatusReady bool,
+	resolveHostinfo peerHostinfoResolverFunc,
+) []peerSummary {
 	peers := make([]peerSummary, 0, len(status.Peer))
 	for peerKey, peer := range status.Peer {
 		if peer == nil {
@@ -1609,8 +1888,8 @@ func buildPeerSummariesWithLocalSend(
 		} else {
 			localSend.State = "offline"
 		}
-		osName, osVersion, deviceModel := mergePeerHostinfo(
-			ctx, client, peerKey, peer.OS, peer.OSVersion, peer.DeviceModel)
+		osName, osVersion, deviceModel := resolveHostinfo(
+			ctx, peerKey, peer.OS, peer.OSVersion, peer.DeviceModel)
 		peers = append(peers, peerSummary{
 			Key:             key,
 			Name:            name,
@@ -1633,6 +1912,114 @@ func buildPeerSummariesWithLocalSend(
 		return peers[i].Name < peers[j].Name
 	})
 	return peers
+}
+
+func (b *backendController) resolvePeerHostinfo(
+	ctx context.Context, generation uint64, client *local.Client, peerKey key.NodePublic,
+	osName, osVersion, deviceModel string,
+) (string, string, string) {
+	if peerKey.IsZero() || (client == nil && b.whoIsLookup == nil) ||
+		(strings.TrimSpace(osName) != "" && strings.TrimSpace(osVersion) != "" &&
+			strings.TrimSpace(deviceModel) != "") {
+		return osName, osVersion, deviceModel
+	}
+
+	now := time.Now()
+	if b.nowFn != nil {
+		now = b.nowFn()
+	}
+
+	b.peerHostinfoMu.Lock()
+	if b.peerHostinfoGen != generation {
+		b.peerHostinfoGen = generation
+		b.peerHostinfo = nil
+	}
+	if entry, ok := b.peerHostinfo[peerKey]; ok && now.Before(entry.expiresAt) {
+		b.peerHostinfoMu.Unlock()
+		if entry.negative {
+			return osName, osVersion, deviceModel
+		}
+		return mergeCachedHostinfoValues(osName, osVersion, deviceModel, entry)
+	}
+	b.peerHostinfoMu.Unlock()
+
+	lookup := b.whoIsLookup
+	if lookup == nil {
+		lookup = client.WhoIsNodeKey
+	}
+	whoIs, err := lookup(ctx, peerKey)
+
+	var newEntry cachedPeerHostinfo
+	if err != nil || whoIs == nil || whoIs.Node == nil || !whoIs.Node.Hostinfo.Valid() {
+		newEntry = cachedPeerHostinfo{
+			negative:  true,
+			expiresAt: now.Add(peerHostinfoErrorTTL),
+		}
+	} else {
+		hi := whoIs.Node.Hostinfo
+		newEntry = cachedPeerHostinfo{
+			osName:      hi.OS(),
+			osVersion:   hi.OSVersion(),
+			deviceModel: hi.DeviceModel(),
+			expiresAt:   now.Add(peerHostinfoCacheTTL),
+		}
+	}
+
+	b.peerHostinfoMu.Lock()
+	if b.peerHostinfoGen == generation {
+		if b.peerHostinfo == nil {
+			b.peerHostinfo = make(map[key.NodePublic]cachedPeerHostinfo)
+		}
+		if _, exists := b.peerHostinfo[peerKey]; !exists && len(b.peerHostinfo) >= maxPeerHostinfoCacheEntries {
+			evictPeerHostinfoLocked(b.peerHostinfo, now)
+		}
+		b.peerHostinfo[peerKey] = newEntry
+	}
+	b.peerHostinfoMu.Unlock()
+
+	if newEntry.negative {
+		return osName, osVersion, deviceModel
+	}
+	return mergeCachedHostinfoValues(osName, osVersion, deviceModel, newEntry)
+}
+
+func evictPeerHostinfoLocked(cache map[key.NodePublic]cachedPeerHostinfo, now time.Time) {
+	for k, v := range cache {
+		if !now.Before(v.expiresAt) {
+			delete(cache, k)
+		}
+	}
+	if len(cache) < maxPeerHostinfoCacheEntries {
+		return
+	}
+	var oldestKey key.NodePublic
+	var oldestTime time.Time
+	hasOldest := false
+	for k, v := range cache {
+		if !hasOldest || v.expiresAt.Before(oldestTime) {
+			oldestKey = k
+			oldestTime = v.expiresAt
+			hasOldest = true
+		}
+	}
+	if hasOldest {
+		delete(cache, oldestKey)
+	}
+}
+
+func mergeCachedHostinfoValues(
+	osName, osVersion, deviceModel string, cached cachedPeerHostinfo,
+) (string, string, string) {
+	if strings.TrimSpace(osName) == "" {
+		osName = cached.osName
+	}
+	if strings.TrimSpace(osVersion) == "" {
+		osVersion = cached.osVersion
+	}
+	if strings.TrimSpace(deviceModel) == "" {
+		deviceModel = cached.deviceModel
+	}
+	return osName, osVersion, deviceModel
 }
 
 // mergePeerHostinfo supplements the local Status peer projection with the
@@ -1899,7 +2286,7 @@ func writeExitNodeChoice(stateDir, id string) error {
 // in one LocalBackend transaction. Applying them separately forces tsnet to
 // process two preference changes during every UI/VPN process handoff and keeps
 // callers in the "starting" state longer than necessary.
-func restoreBackendPreferences(ctx context.Context, client *local.Client, stateDir string) {
+func restoreBackendPreferences(ctx context.Context, client *local.Client, stateDir string, acceptDNS bool) {
 	settings, err := readNetworkPreferences(stateDir)
 	if err != nil {
 		settings = defaultNetworkPreferences()
@@ -1929,7 +2316,7 @@ func restoreBackendPreferences(ctx context.Context, client *local.Client, stateD
 			maskedPrefs := &ipn.MaskedPrefs{
 				Prefs: ipn.Prefs{
 					RouteAll:               settings.RouteAll,
-					CorpDNS:                false,
+					CorpDNS:                acceptDNS,
 					ExitNodeAllowLANAccess: settings.ExitNodeAllowLANAccess,
 					ExitNodeID:             selectedID,
 				},
@@ -2138,11 +2525,10 @@ func (b *backendController) peerConnectivity(peerKey string) string {
 	return marshalPeerConnectivity(result)
 }
 
-// sunshineProbe verifies the GameStream serverinfo response over the actual
-// Tailscale path. A listening TCP port alone is deliberately not considered a
-// Sunshine result. The self-signed server certificate is expected on a LAN or
-// tailnet host, so response identity is confirmed from the XML payload instead.
+// sunshineProbe discovers GameStream through the encrypted Tailscale path.
 func (b *backendController) sunshineProbe(peerKey string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2800*time.Millisecond)
+	defer cancel()
 	result := sunshineProbeResult{State: "error", CheckedAt: time.Now().UnixMilli()}
 	b.mu.Lock()
 	client := b.client
@@ -2152,7 +2538,7 @@ func (b *backendController) sunshineProbe(peerKey string) string {
 		result.ErrorMessage = "backend_unavailable"
 		return marshalSunshineProbe(result)
 	}
-	statusCtx, statusCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	statusCtx, statusCancel := context.WithTimeout(ctx, 2*time.Second)
 	status, err := client.Status(statusCtx)
 	statusCancel()
 	if err != nil {
@@ -2181,79 +2567,7 @@ func (b *backendController) sunshineProbe(peerKey string) string {
 		return marshalSunshineProbe(result)
 	}
 
-	startedAt := time.Now()
-	requestCtx, requestCancel := context.WithTimeout(context.Background(), 2200*time.Millisecond)
-	defer requestCancel()
-	// The VPN extension excludes its own bundle from the system VPN route so
-	// control and DERP traffic keep using the physical network. A default HTTP
-	// transport would therefore send this 100.x request outside Tailscale and
-	// wait until its deadline. tsnet.Server.Dial selects the embedded netstack
-	// for a tailnet destination and reserves a return path through the external
-	// TUN, while leaving all non-tailnet traffic alone.
-	var sunshineCertificateSeen atomic.Bool
-	transport := &http.Transport{
-		DialContext: server.Dial,
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, // #nosec G402 -- GameStream hosts use self-signed certificates.
-			VerifyPeerCertificate: func(rawCertificates [][]byte, _ [][]*x509.Certificate) error {
-				for _, rawCertificate := range rawCertificates {
-					certificate, err := x509.ParseCertificate(rawCertificate)
-					if err == nil && strings.EqualFold(strings.TrimSpace(certificate.Subject.CommonName), "Sunshine Gamestream Host") {
-						sunshineCertificateSeen.Store(true)
-						break
-					}
-				}
-				return nil
-			},
-		},
-	}
-	defer transport.CloseIdleConnections()
-	httpClient := &http.Client{Transport: transport}
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet,
-		"https://"+target.String()+":47984/serverinfo", nil)
-	if err != nil {
-		result.ErrorMessage = "request_invalid"
-		return marshalSunshineProbe(result)
-	}
-	response, err := httpClient.Do(request)
-	if err != nil {
-		// Sunshine can require a paired client certificate before it serves
-		// /serverinfo. Seeing its self-signed GameStream certificate proves that
-		// the service is present and reachable; an unauthenticated HTTP request
-		// then ends with TLS's "certificate required" alert by design.
-		if sunshineCertificateSeen.Load() && strings.Contains(strings.ToLower(err.Error()), "certificate required") {
-			result.State = "available"
-			result.LatencyMS = int(time.Since(startedAt).Milliseconds())
-			result.ServerName = "Sunshine Gamestream Host"
-			return marshalSunshineProbe(result)
-		}
-		if requestCtx.Err() == context.DeadlineExceeded {
-			result.State = "timeout"
-			result.ErrorMessage = "timeout"
-		} else {
-			result.State = "unavailable"
-			result.ErrorMessage = "serverinfo_unreachable"
-		}
-		return marshalSunshineProbe(result)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		result.State = "unavailable"
-		result.ErrorMessage = "serverinfo_http_status"
-		return marshalSunshineProbe(result)
-	}
-	var info gameStreamServerInfo
-	decoder := xml.NewDecoder(io.LimitReader(response.Body, 64*1024))
-	if err := decoder.Decode(&info); err != nil || strings.TrimSpace(info.AppVersion) == "" {
-		result.State = "unavailable"
-		result.ErrorMessage = "serverinfo_invalid"
-		return marshalSunshineProbe(result)
-	}
-	result.State = "available"
-	result.LatencyMS = int(time.Since(startedAt).Milliseconds())
-	result.ServerName = strings.TrimSpace(info.HostName)
-	result.ServerVersion = strings.TrimSpace(info.AppVersion)
-	return marshalSunshineProbe(result)
+	return marshalSunshineProbe(probeGameStream(ctx, target.String(), server.Dial))
 }
 
 // mediaServiceProbe checks only the default ports for three supported media
@@ -2323,11 +2637,13 @@ func (b *backendController) mediaServiceProbe(peerKey string) string {
 		probes.Add(1)
 		go func(item mediaProbeTarget) {
 			defer probes.Done()
-			if item.kind == "plex" {
-				serviceChannel <- probePlexService(probeCtx, server, item.baseURL)
-				return
-			}
-			serviceChannel <- probeSystemMediaService(probeCtx, server, item.baseURL)
+			guardGoroutine("backend.mediaServiceProbe", nil, func() {
+				if item.kind == "plex" {
+					serviceChannel <- probePlexService(probeCtx, server, item.baseURL)
+					return
+				}
+				serviceChannel <- probeSystemMediaService(probeCtx, server, item.baseURL)
+			})
 		}(probeTarget)
 	}
 	probes.Wait()
@@ -2638,44 +2954,45 @@ func (b *backendController) clearInteractiveLoginStart(generation uint64) {
 func (b *backendController) startAsync(
 	server *tsnet.Server, stateDir string, generation uint64, startContext context.Context,
 ) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			b.setStartErrorFor(server, generation, fmt.Errorf("panic: %v\n%s", recovered, debug.Stack()))
+	guardGoroutine("backend.startAsync", func() {
+		b.setStartErrorFor(server, generation, errors.New("backend startup internal panic"))
+	}, func() {
+		if err := server.Start(); err != nil {
+			b.setStartErrorFor(server, generation, err)
+			return
 		}
-	}()
+		client, err := server.LocalClient()
+		if err != nil {
+			b.setStartErrorFor(server, generation, err)
+			return
+		}
 
-	if err := server.Start(); err != nil {
-		b.setStartErrorFor(server, generation, err)
-		return
-	}
-	client, err := server.LocalClient()
-	if err != nil {
-		b.setStartErrorFor(server, generation, err)
-		return
-	}
-
-	b.mu.Lock()
-	if b.server != server || b.generation != generation || startContext.Err() != nil {
+		b.mu.Lock()
+		if b.server != server || b.generation != generation || startContext.Err() != nil {
+			b.mu.Unlock()
+			return
+		}
+		b.client = client
 		b.mu.Unlock()
-		return
-	}
-	b.client = client
-	b.mu.Unlock()
-	b.startTaildropIncomingWatch(server, generation, client)
-	b.startMeshArcDeviceSync(server, generation, client)
+		b.startTaildropIncomingWatch(server, generation, client)
+		b.startMeshArcDeviceSync(server, generation, client)
 
-	b.setPhase("restoring-preferences")
-	restoreBackendPreferences(startContext, client, stateDir)
-
-	b.mu.Lock()
-	if b.server != server || b.generation != generation || startContext.Err() != nil {
+		b.setPhase("restoring-preferences")
+		b.mu.Lock()
+		acceptDNS := b.server == server && b.generation == generation && b.dnsInput.tailnetEnabled
 		b.mu.Unlock()
-		return
-	}
-	b.starting = false
-	b.cancelStart = nil
-	b.phase = "ready"
-	b.mu.Unlock()
+		restoreBackendPreferences(startContext, client, stateDir, acceptDNS)
+
+		b.mu.Lock()
+		if b.server != server || b.generation != generation || startContext.Err() != nil {
+			b.mu.Unlock()
+			return
+		}
+		b.starting = false
+		b.cancelStart = nil
+		b.phase = "ready"
+		b.mu.Unlock()
+	})
 }
 
 func (b *backendController) setStartErrorFor(server *tsnet.Server, generation uint64, err error) {
@@ -2772,6 +3089,10 @@ func (b *backendController) formatRunningStatus(
 }
 
 func (b *backendController) authURL() string {
+	if !b.authKeyMu.TryLock() {
+		return "PENDING | login URL | key authentication in progress"
+	}
+	defer b.authKeyMu.Unlock()
 	b.mu.Lock()
 	client := b.client
 	starting := b.starting
@@ -2814,4 +3135,31 @@ func (b *backendController) authURL() string {
 		return "FAILED | login URL | rejected unexpected origin"
 	}
 	return status.AuthURL
+}
+
+func (b *backendController) loginWithAuthKey(value string) string {
+	if !b.authKeyMu.TryLock() {
+		return "FAILED | auth key | busy"
+	}
+	defer b.authKeyMu.Unlock()
+	b.mu.Lock()
+	client, server, starting, generation := b.client, b.server, b.starting, b.generation
+	b.mu.Unlock()
+	if client == nil || server == nil || starting {
+		return "FAILED | auth key | backend_not_ready"
+	}
+	authKey, reason := normalizeDeviceAuthKey(value, server.ControlURL != "https://controlplane.tailscale.com")
+	if reason != "" {
+		return "FAILED | auth key | " + reason
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	result := authenticateDeviceWithKey(ctx, client, authKey, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.client == client && b.generation == generation
+	})
+	// No changes to persisted identity or preferences, including on failure.
+	b.clearInteractiveLoginStart(generation)
+	return result
 }

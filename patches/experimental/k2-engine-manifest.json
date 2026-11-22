@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 1,
+  "vendorFiles": [
+    {
+      "sha256": "C47020DDE7E03408F6DDE7167F8ED83CC5DA040CDB28ABEDD538AAF7928F0B7C",
+      "path": "client/tailscale/apitype/apitype.go"
+    },
+    {
+      "sha256": "22A3421E47F86C85A43E9161FC76BC7EEDD2EC1A429BB1058B5F5A671552FE11",
+      "path": "feature/taildrop/mesharc_test.go"
+    },
+    {
+      "sha256": "3FD534387A17C5F381B1CADF0BA66B2323FD2979E02C3AE641B8450F285C0BDF",
+      "path": "feature/taildrop/retrieve.go"
+    },
+    {
+      "sha256": "40FA2434C9C66BEEC3D86500B3688E2C9C5C0E247A9E7AEA63424B37D1F48708",
+      "path": "ipn/ipnlocal/local.go"
+    },
+    {
+      "sha256": "5091B9ABBB3D9E99245B4A358CC9385363100DFFCA2425BBDAD7E9C355613B4D",
+      "path": "ipn/ipnstate/ipnstate.go"
+    },
+    {
+      "sha256": "2FAF526F2DCB57A1091E085D608EC5EF28FC6E97C083241B26BA497194F74A62",
+      "path": "ipn/ipnstate/mesharc_test.go"
+    },
+    {
+      "sha256": "73784578048A3FF48CAB1FDDD4C0A14B5BBF3547834C51B944424C507C763CAB",
+      "path": "net/netcheck/netcheck.go"
+    },
+    {
+      "sha256": "436ACA035F52CB9B34C41485A387548ADFC4D2E1AF564949F7D9F82A7FC7033C",
+      "path": "net/netmon/hostroute_openharmony.go"
+    },
+    {
+      "sha256": "49DB494C9E227C7554588362C0717F53452CA04F7CA2300ADEF2906F240D4C84",
+      "path": "net/netmon/hostroute_other.go"
+    },
+    {
+      "sha256": "04AB4E192724E0EAFB36477E3CE0E8FA092BC5B4A7B6583C18A463F1371FBFD0",
+      "path": "net/netmon/hostroute_test.go"
+    },
+    {
+      "sha256": "E7958735F55E8BC848EBEF3AAFE287674685059AF17108ED2A47A18CDF0758E3",
+      "path": "net/netmon/interfaces_linux.go"
+    },
+    {
+      "sha256": "7C8DCE1E71F738299B00D8457846B13D0C0EAAD8645EBCC3CD27CE0856558A19",
+      "path": "net/netmon/state.go"
+    },
+    {
+      "sha256": "75FDD4F3DAF2FA5AEC1AF1797F0485FF5DECAD9D993499D898A8C9BD2BF13DC0",
+      "path": "tsnet/mesharc.go"
+    },
+    {
+      "sha256": "CAD7D4B517260D03EC4F609414A79FD400CED77F86C91A6A781F1527EE88818F",
+      "path": "tsnet/mesharc_test.go"
+    },
+    {
+      "sha256": "9BF091A2FA05CC7843F98E5BDE4F5FA1F876F7996D09CC9BC318D74CFAD649EF",
+      "path": "tsnet/tsnet.go"
+    },
+    {
+      "sha256": "5AF145BFA62DA10FF566F81F49FC2EC3A8A95DE6CBFDF2C85EA9D84D7B2F4901",
+      "path": "util/mesharcdiag/mesharcdiag.go"
+    },
+    {
+      "sha256": "EECE2FDA082BB3CE58F4651EDB8C03DEDFA8037853ADF40064ED27858F10DD94",
+      "path": "util/mesharcdiag/mesharcdiag_test.go"
+    },
+    {
+      "sha256": "42DB2FF7530FA8E7878568D8EC3E2A085B0D1DA9AE92D942BD4ACF6FB13C1149",
+      "path": "wgengine/magicsock/endpoint.go"
+    },
+    {
+      "sha256": "72044AE0B3A5A911C0C7DB9B7117E22E44AD182B545D4DD1BDBC17044AB28D63",
+      "path": "wgengine/magicsock/magicsock.go"
+    },
+    {
+      "sha256": "7C20C27304253699E143CBBC07F13443F04F788C0D4424BA7BEEC23F9E1DED2A",
+      "path": "wgengine/magicsock/path_diagnostics.go"
+    },
+    {
+      "sha256": "57603F7F65E001BCB83E14792C63CCC85D0B1C76B768FCF2554DE4FA32497E69",
+      "path": "wgengine/magicsock/path_diagnostics_test.go"
+    }
+  ],
+  "goVersion": "go1.27.3",
+  "bridgeBaseline": [
+    {
+      "sha256": "AB64989C4AEDE09D67FB68CAFBFDECAFB9BD7AC585F2A22D188ADA949935B294",
+      "path": "auth_key_test.go"
+    },
+    {
+      "sha256": "6A51DA4DD5F6B86EBB6485E6B5D3A496773697A9E6ACBB889793B69BCF318527",
+      "path": "auth_key.go"
+    },
+    {
+      "sha256": "926FBBB58CF56CCD6F3FA81CC9C53D148C246C85B9C237608FADA6CEB1CFCEAD",
+      "path": "backend_lifecycle_test.go"
+    },
+    {
+      "sha256": "9DE144DA907E03DC4E4B99B40F0E19B807F10FDCF8C2253E954C59C51A97C7CF",
+      "path": "backend_test.go"
+    },
+    {
+      "sha256": "E5D49C25C481F726B808D7DCE9823931CF0666C39A2390404D4CF21FDA2B08CC",
+      "path": "backend.go"
+    },
+    {
+      "sha256": "78FD29AFC5DF9DEA7D522983A08CCC45608E6BBC8EF1F754750AE1103FD7690C",
+      "path": "control_probe_test.go"
+    },
+    {
+      "sha256": "54BE154ECF5F137E74FA63BDFC5EB34DB15A1A1E98574DC1C02DD1DFE7EF21D8",
+      "path": "control_probe.go"
+    },
+    {
+      "sha256": "8E6CFAE6E4B0BEDD5BE3F91A70BA79579F12796AEBF2DA7567315C8D450B62AE",
+      "path": "engine_upgrade_test.go"
+    },
+    {
+      "sha256": "6372FA8BD64E031A0AEAF6790C11F1F632C1AAA2ADE0C5B1E545A2F81A0170E2",
+      "path": "engine_upgrade.go"
+    },
+    {
+      "sha256": "43F34B0000D8D51C67A33E4FCF7FBA678C9270BDF3085C756497785793542E9A",
+      "path": "go.mod"
+    },
+    {
+      "sha256": "43501023CA78D653CFC2685A01688F72FE118A1E04CD33AF65BB52C661A6826E",
+      "path": "go.sum"
+    },
+    {
+      "sha256": "A66B110344A839C955F15944C068432A00CF3158071ED479600950F8444CA9A9",
+      "path": "harmony_tun_test.go"
+    },
+    {
+      "sha256": "7355E23E04AAB6622061801CF591A8C95A3F9BDFC7F22BD8B072CADAF1313445",
+      "path": "harmony_tun.go"
+    },
+    {
+      "sha256": "6AA284CDD95DF15E50A0E24160CE6B6977DB7D375FBD2B5959F584CD810077D4",
+      "path": "main.go"
+    },
+    {
+      "sha256": "427E0CD3FCBB2060C8DBE82DAECE968B02190C77F9349897FA3CFDABDBA7954B",
+      "path": "mesharc_devices_test.go"
+    },
+    {
+      "sha256": "B649328DC9AFA3C6B9F3EA53ECC1ECC53F7D9819ACBACFC6D513AA63A1A6205F",
+      "path": "mesharc_devices.go"
+    },
+    {
+      "sha256": "39D3E8EEA8F2A750BE0D36E2628EEF369EF5FBC1A87E74815D6D49098E4859C8",
+      "path": "path_diagnostics.go"
+    },
+    {
+      "sha256": "26AF74A881BA1C739D53C57B2BE3E6E9F8F73EC24E97122B75D63C0B73D75699",
+      "path": "taildrive.go"
+    },
+    {
+      "sha256": "1B85B29095CB301AB73D9AFA75F3A4918FE19B63EC4A0336B527F4B99B07364B",
+      "path": "tun_probe.go"
+    },
+    {
+      "sha256": "AA3C1E0920125A914D1D8F64F7BE2FF0C0BB5284622D238A1B8A30A658B9E6C6",
+      "path": "vpnroute/routes_test.go"
+    },
+    {
+      "sha256": "DB228D028D83F46E1D25AC7F0C2AB470F83396101BB50A518FD3F4C0696D8487",
+      "path": "vpnroute/routes.go"
+    }
+  ],
+  "bridgeFiles": [
+    {
+      "sha256": "AB64989C4AEDE09D67FB68CAFBFDECAFB9BD7AC585F2A22D188ADA949935B294",
+      "path": "auth_key_test.go"
+    },
+    {
+      "sha256": "6A51DA4DD5F6B86EBB6485E6B5D3A496773697A9E6ACBB889793B69BCF318527",
+      "path": "auth_key.go"
+    },
+    {
+      "sha256": "926FBBB58CF56CCD6F3FA81CC9C53D148C246C85B9C237608FADA6CEB1CFCEAD",
+      "path": "backend_lifecycle_test.go"
+    },
+    {
+      "sha256": "9DE144DA907E03DC4E4B99B40F0E19B807F10FDCF8C2253E954C59C51A97C7CF",
+      "path": "backend_test.go"
+    },
+    {
+      "sha256": "AD95884C9DFBC9CDC8786D21C88CF0EA3A903A0219B16E71426F66DA642684C9",
+      "path": "backend.go"
+    },
+    {
+      "sha256": "78FD29AFC5DF9DEA7D522983A08CCC45608E6BBC8EF1F754750AE1103FD7690C",
+      "path": "control_probe_test.go"
+    },
+    {
+      "sha256": "54BE154ECF5F137E74FA63BDFC5EB34DB15A1A1E98574DC1C02DD1DFE7EF21D8",
+      "path": "control_probe.go"
+    },
+    {
+      "sha256": "8E6CFAE6E4B0BEDD5BE3F91A70BA79579F12796AEBF2DA7567315C8D450B62AE",
+      "path": "engine_upgrade_test.go"
+    },
+    {
+      "sha256": "6372FA8BD64E031A0AEAF6790C11F1F632C1AAA2ADE0C5B1E545A2F81A0170E2",
+      "path": "engine_upgrade.go"
+    },
+    {
+      "sha256": "BA9467277D6F5E52FE1178FDBC883AB96ECB87E0EB4515243E656F35A29EC660",
+      "path": "go.mod"
+    },
+    {
+      "sha256": "05179C731B37F797519A51ED3B71CDC9B13EC9AEE26388124248EB3720B8F540",
+      "path": "go.sum"
+    },
+    {
+      "sha256": "9CAB9747859EECA1F0D7A08ACD268743777BF686D96CC77833B3C5FE238095A2",
+      "path": "harmony_tun_test.go"
+    },
+    {
+      "sha256": "8B10E025A336708D6C719A67FF7F653BAD879B9BC9520411BB3920AEE94FA73F",
+      "path": "harmony_tun.go"
+    },
+    {
+      "sha256": "2FBAAB70EE4BDC1E815C7787C2F6CD12AE684C80A49D755232C152211FE05F71",
+      "path": "main.go"
+    },
+    {
+      "sha256": "427E0CD3FCBB2060C8DBE82DAECE968B02190C77F9349897FA3CFDABDBA7954B",
+      "path": "mesharc_devices_test.go"
+    },
+    {
+      "sha256": "B649328DC9AFA3C6B9F3EA53ECC1ECC53F7D9819ACBACFC6D513AA63A1A6205F",
+      "path": "mesharc_devices.go"
+    },
+    {
+      "sha256": "AA5C83B92266A200A945A95B37519FCC62686D93C51954E9E82055A3EA59D9B8",
+      "path": "path_diagnostics.go"
+    },
+    {
+      "sha256": "26AF74A881BA1C739D53C57B2BE3E6E9F8F73EC24E97122B75D63C0B73D75699",
+      "path": "taildrive.go"
+    },
+    {
+      "sha256": "1B85B29095CB301AB73D9AFA75F3A4918FE19B63EC4A0336B527F4B99B07364B",
+      "path": "tun_probe.go"
+    },
+    {
+      "sha256": "AA3C1E0920125A914D1D8F64F7BE2FF0C0BB5284622D238A1B8A30A658B9E6C6",
+      "path": "vpnroute/routes_test.go"
+    },
+    {
+      "sha256": "DB228D028D83F46E1D25AC7F0C2AB470F83396101BB50A518FD3F4C0696D8487",
+      "path": "vpnroute/routes.go"
+    }
+  ],
+  "upstreamCommit": "73a48057aaf5f60e4f770b398e9b7af576b01dbe",
+  "milestone": "K2",
+  "patches": [
+    {
+      "sha256": "BA04CF9399D7C4922BA5C70D09F4539C5DC34730518AF1E73811B641D61F1B6B",
+      "path": "patches/experimental/tailscale-v1.104.5-ohos.patch"
+    },
+    {
+      "sha256": "4AB5DEA758C92979CEC1D36ABFF41EEB8B61BA937A695FA1607A9885E60E601E",
+      "path": "patches/experimental/go-bridge-v1.104.5.patch"
+    }
+  ],
+  "tailscaleVersion": "1.104.5",
+  "k1AcceptanceSha256": "54C7B7138C7952FADA2BF99ACDE656D2E24C5AA7417DF64786DB12C7D6BC6DB7"
+}

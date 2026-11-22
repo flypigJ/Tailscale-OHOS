@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -301,5 +304,152 @@ func TestMediaServiceResponseClassification(t *testing.T) {
 func TestMediaProbeSelfTest(t *testing.T) {
 	if result := mediaProbeSelfTest(); !strings.Contains(result, `"state":"passed"`) {
 		t.Fatalf("media probe self-test failed: %s", result)
+	}
+}
+
+func TestTaildropStallWatchdogAllowsSteadyProgressAndTimesOutStalls(t *testing.T) {
+	const stallWindow = 40 * time.Millisecond
+
+	// 1. Steady slow reads making progress shorter than stallWindow succeed even
+	// when total transfer duration exceeds 3 * stallWindow.
+	steadyErr := runWithStallWatchdog(context.Background(), stallWindow, func(ctx context.Context, touch func()) error {
+		reader := &taildropProgressReader{
+			reader: strings.NewReader("abcdefghij"),
+			onRead: func(_ int) { touch() },
+		}
+		buf := make([]byte, 1)
+		for i := 0; i < 10; i++ {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(15 * time.Millisecond):
+			}
+			if _, err := reader.Read(buf); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if steadyErr != nil {
+		t.Fatalf("steady slow transfer failed unexpectedly: %v", steadyErr)
+	}
+
+	// 2. A stalled transfer making zero progress past stallWindow cancels promptly
+	// and classifies as "timeout" (never "cancelled").
+	started := time.Now()
+	stallErr := runWithStallWatchdog(context.Background(), stallWindow, func(ctx context.Context, touch func()) error {
+		touch()
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	elapsed := time.Since(started)
+	if !errors.Is(stallErr, context.DeadlineExceeded) {
+		t.Fatalf("stall error = %v, want context.DeadlineExceeded", stallErr)
+	}
+	if got := classifyTaildropSendError(stallErr); got != "timeout" {
+		t.Fatalf("classifyTaildropSendError(stallErr) = %q, want timeout", got)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("stall watchdog took too long to cancel: %v", elapsed)
+	}
+
+	// 3. Explicit caller cancellation still classifies as "cancelled".
+	parentCtx, parentCancel := context.WithCancel(context.Background())
+	cancelErr := runWithStallWatchdog(parentCtx, time.Second, func(ctx context.Context, _ func()) error {
+		parentCancel()
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if got := classifyTaildropSendError(cancelErr); got != "cancelled" {
+		t.Fatalf("classifyTaildropSendError(cancelErr) = %q, want cancelled", got)
+	}
+}
+
+func TestPeerHostinfoCacheDeduplicatesEmptyModelAndNegativeResponsesPerGeneration(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	var linuxCalls atomic.Int32
+	var failingCalls atomic.Int32
+
+	failingKey := key.NewNode().Public()
+	status := &ipnstate.Status{
+		Peer: make(map[key.NodePublic]*ipnstate.PeerStatus, 21),
+	}
+	for i := 0; i < 20; i++ {
+		k := key.NewNode().Public()
+		status.Peer[k] = &ipnstate.PeerStatus{
+			ID:       tailcfg.StableNodeID(fmt.Sprintf("linux-node-%02d", i)),
+			HostName: fmt.Sprintf("linux-%02d", i),
+			OS:       "linux",
+			// OSVersion and DeviceModel intentionally empty, matching Linux/Windows/Headscale peers.
+			Online: true,
+		}
+	}
+	status.Peer[failingKey] = &ipnstate.PeerStatus{
+		ID:       tailcfg.StableNodeID("flaky-node"),
+		HostName: "flaky",
+		OS:       "windows",
+		Online:   true,
+	}
+
+	controller := &backendController{
+		nowFn: func() time.Time { return now },
+		whoIsLookup: func(_ context.Context, peerKey key.NodePublic) (*apitype.WhoIsResponse, error) {
+			if peerKey == failingKey {
+				failingCalls.Add(1)
+				return nil, errors.New("temporary localapi error")
+			}
+			linuxCalls.Add(1)
+			return &apitype.WhoIsResponse{
+				Node: &tailcfg.Node{
+					Key: peerKey,
+					Hostinfo: (&tailcfg.Hostinfo{
+						OS:          "linux",
+						OSVersion:   "6.12.0",
+						DeviceModel: "", // Empty DeviceModel must still be cached positively!
+					}).View(),
+				},
+			}, nil
+		},
+	}
+
+	// 10 polls across 20 empty-model Linux peers + 1 failing peer within error TTL:
+	// expect exactly 20 positive calls (not 200) and 1 negative call (not 10).
+	for poll := 0; poll < 10; poll++ {
+		peers := controller.buildPeerSummariesCached(context.Background(), 1, nil, status, nil, false)
+		if len(peers) != 21 {
+			t.Fatalf("poll %d peers len = %d, want 21", poll, len(peers))
+		}
+		for _, p := range peers {
+			if strings.HasPrefix(p.Name, "linux-") && p.OSVersion != "6.12.0" {
+				t.Fatalf("poll %d peer %s OSVersion = %q, want 6.12.0", poll, p.Name, p.OSVersion)
+			}
+		}
+		now = now.Add(time.Second)
+	}
+	if got := linuxCalls.Load(); got != 20 {
+		t.Fatalf("linux WhoIsNodeKey calls = %d, want 20 across 10 polls", got)
+	}
+	if got := failingCalls.Load(); got != 1 {
+		t.Fatalf("failing WhoIsNodeKey calls within error TTL = %d, want 1", got)
+	}
+
+	// Advance past peerHostinfoErrorTTL (15s) while still inside peerHostinfoCacheTTL (5m):
+	// only the negative entry should retry; the 20 Linux peers remain cached.
+	now = now.Add(peerHostinfoErrorTTL)
+	_ = controller.buildPeerSummariesCached(context.Background(), 1, nil, status, nil, false)
+	if got := linuxCalls.Load(); got != 20 {
+		t.Fatalf("linux WhoIsNodeKey calls after error TTL = %d, want still 20", got)
+	}
+	if got := failingCalls.Load(); got != 2 {
+		t.Fatalf("failing WhoIsNodeKey calls after error TTL = %d, want 2", got)
+	}
+
+	// Advancing backend generation invalidates all cached entries cleanly.
+	_ = controller.buildPeerSummariesCached(context.Background(), 2, nil, status, nil, false)
+	if got := linuxCalls.Load(); got != 40 {
+		t.Fatalf("linux WhoIsNodeKey calls after generation bump = %d, want 40", got)
+	}
+	if got := failingCalls.Load(); got != 3 {
+		t.Fatalf("failing WhoIsNodeKey calls after generation bump = %d, want 3", got)
 	}
 }

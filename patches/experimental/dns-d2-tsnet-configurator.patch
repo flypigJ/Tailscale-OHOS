@@ -1,0 +1,112 @@
+--- a/tsnet/tsnet.go
++++ b/tsnet/tsnet.go
+@@ -197,6 +197,7 @@
+ 	"tailscale.com/logpolicy"
+ 	"tailscale.com/logtail"
+ 	"tailscale.com/logtail/filch"
++	"tailscale.com/net/dns"
+ 	"tailscale.com/net/memnet"
+ 	"tailscale.com/net/netmon"
+ 	"tailscale.com/net/proxymux"
+@@ -334,8 +335,14 @@
+ 	// Tun, if non-nil, specifies a custom tun.Device to use for packet I/O.
+ 	//
+ 	// This field must be set before calling Start.
+-	Tun         tun.Device
+-	taildriveFS *driveimpl.FileSystemForLocal
++	Tun tun.Device
++	// DNSOSConfigurator, if non-nil, provides platform DNS base and output.
++	// Set before Start; nil retains the upstream no-op behavior.
++	DNSOSConfigurator dns.OSConfigurator
++	taildriveFS       *driveimpl.FileSystemForLocal
++	dnsOpMu           sync.Mutex
++	dnsRecompiler     dnsConfigRecompiler
++	dnsClosing        bool
+ 
+ 	initOnce            sync.Once
+ 	initErr             error
+@@ -654,6 +661,10 @@
+ }
+ 
+ func (s *Server) close() {
++	s.dnsOpMu.Lock()
++	s.dnsClosing = true
++	s.dnsRecompiler = nil
++	s.dnsOpMu.Unlock()
+ 	// Close listeners under s.mu, then release before the heavy shutdown
+ 	// operations. We must not hold s.mu during netstack.Close, lb.Shutdown,
+ 	// etc. because callbacks from gVisor (e.g. getTCPHandlerForFlow)
+@@ -904,6 +915,7 @@
+ 	closePool.add(s.taildriveFS)
+ 	eng, err := wgengine.NewUserspaceEngine(tsLogf, wgengine.Config{
+ 		Tun:           s.Tun,
++		DNS:           s.DNSOSConfigurator,
+ 		DriveForLocal: s.taildriveFS,
+ 		EventBus:      sys.Bus.Get(),
+ 		ListenPort:    s.Port,
+@@ -1056,6 +1068,9 @@
+ 		}
+ 	}()
+ 	closePool.add(s.localAPIListener)
++	s.dnsOpMu.Lock()
++	s.dnsRecompiler = sys.DNSManager.Get()
++	s.dnsOpMu.Unlock()
+ 	return nil
+ }
+ 
+--- /dev/null
++++ b/tsnet/mesharc_dns.go
+@@ -0,0 +1,23 @@
++package tsnet
++
++import (
++	"errors"
++	"net"
++)
++
++type dnsConfigRecompiler interface{ RecompileDNSConfig() error }
++
++// RecompileDNSConfig refreshes a successfully initialized engine's DNS base.
++// It never starts a server. Close waits for in-flight recompilation without
++// holding s.mu, which is also acquired by callbacks from the network stack.
++func (s *Server) RecompileDNSConfig() error {
++	s.dnsOpMu.Lock()
++	defer s.dnsOpMu.Unlock()
++	if s.dnsClosing {
++		return net.ErrClosed
++	}
++	if s.dnsRecompiler == nil {
++		return errors.New("tsnet: DNS not ready")
++	}
++	return s.dnsRecompiler.RecompileDNSConfig()
++}
+--- /dev/null
++++ b/tsnet/mesharc_dns_test.go
+@@ -0,0 +1,27 @@
++package tsnet
++
++import (
++	"errors"
++	"net"
++	"testing"
++)
++
++type dnsTestRecompiler struct{ calls int }
++
++func (d *dnsTestRecompiler) RecompileDNSConfig() error { d.calls++; return nil }
++
++func TestMeshArcDNSDoesNotStartServer(t *testing.T) {
++	s := &Server{}
++	if s.RecompileDNSConfig() == nil || s.sys != nil || s.lb != nil {
++		t.Fatal("uninitialized DNS request started a server")
++	}
++	r := &dnsTestRecompiler{}
++	s.dnsRecompiler = r
++	if err := s.RecompileDNSConfig(); err != nil || r.calls != 1 {
++		t.Fatal("ready manager was not recompiled")
++	}
++	s.dnsClosing, s.dnsRecompiler = true, nil
++	if !errors.Is(s.RecompileDNSConfig(), net.ErrClosed) || r.calls != 1 {
++		t.Fatal("closed server allowed DNS work")
++	}
++}

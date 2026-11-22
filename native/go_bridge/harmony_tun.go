@@ -37,16 +37,16 @@ func newHarmonyTunDevice(fd, mtu int) (*harmonyTunDevice, error) {
 	if fd < 0 {
 		return nil, errors.New("invalid TUN descriptor")
 	}
-	duplicate, err := unix.Dup(fd)
+	duplicate, err := unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
-	// wireguard-go's TUN reader treats any read error other than its own
-	// special cases as fatal. In particular, it closes the device on EAGAIN.
-	// Harmony's VPN descriptor may be returned as non-blocking, so explicitly
-	// clear O_NONBLOCK on our duplicate and let the reader block for the next
-	// packet. This also prevents a busy-loop while the tunnel is idle.
-	if err := unix.SetNonblock(duplicate, false); err != nil {
+	// NewFile registers an inherited descriptor with Go's runtime poller only
+	// when O_NONBLOCK is set. File.Read then waits in the poller (not a busy
+	// EAGAIN loop), and Close evicts idle reads and releases the duplicated fd.
+	// A blocking inherited fd can keep a destroyed TUN alive until traffic
+	// arrives, preventing a subsequent system VPN creation in the same process.
+	if err := unix.SetNonblock(duplicate, true); err != nil {
 		_ = unix.Close(duplicate)
 		return nil, err
 	}
@@ -62,16 +62,21 @@ func newHarmonyTunDevice(fd, mtu int) (*harmonyTunDevice, error) {
 
 func (d *harmonyTunDevice) File() *os.File { return d.file }
 
-func (d *harmonyTunDevice) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
-	if len(bufs) == 0 || len(sizes) == 0 || offset < 0 || offset >= len(bufs[0]) {
+func (d *harmonyTunDevice) Read(slab []byte, packets []tun.ReadPacket) (int, error) {
+	// The upstream slab API reserves headroom and tailroom around each packet.
+	// Our single-queue descriptor still produces one complete IP packet per read.
+	const spacing = tun.ReadPacketSpacing
+	if len(packets) == 0 || len(slab) <= 2*spacing {
 		return 0, errors.New("invalid TUN read buffer")
 	}
-	n, err := readTunPacket(d.file, bufs[0][offset:])
+	packets[0] = tun.ReadPacket{}
+	buffer := slab[spacing : len(slab)-spacing]
+	n, err := readTunPacket(d.file, buffer)
 	if n > 0 {
-		sizes[0] = n
+		packets[0] = tun.ReadPacket{Offset: spacing, Size: n}
 		d.readCount.Add(1)
 		d.readByteCount.Add(uint64(n))
-		d.observeDNSPacket(bufs[0][offset:offset+n], true)
+		d.observeDNSPacket(buffer[:n], true)
 		return 1, nil
 	}
 	if err != nil && !isRetriableTunError(err) {
@@ -81,13 +86,17 @@ func (d *harmonyTunDevice) Read(bufs [][]byte, sizes []int, offset int) (int, er
 }
 
 func (d *harmonyTunDevice) Write(bufs [][]byte, offset int) (int, error) {
+	return d.writePackets(d.file, bufs, offset)
+}
+
+func (d *harmonyTunDevice) writePackets(writer io.Writer, bufs [][]byte, offset int) (int, error) {
 	written := 0
 	for _, buf := range bufs {
 		if offset < 0 || offset > len(buf) {
 			return written, errors.New("invalid TUN write buffer")
 		}
 		packet := buf[offset:]
-		n, err := writeTunPacket(d.file, packet)
+		n, err := writeTunPacket(writer, packet)
 		if err != nil {
 			if !isRetriableTunError(err) {
 				d.writeErrorCount.Add(1)
@@ -119,28 +128,35 @@ func readTunPacket(reader io.Reader, packet []byte) (int, error) {
 	}
 }
 
-// writeTunPacket preserves packet boundaries even when the underlying VPN
-// descriptor accepts only a partial write. A short write must never be
-// reported as a successfully written packet: doing so would silently drop
-// the rest of a decrypted TCP segment.
+// writeTunPacket writes one complete IP packet in a single datagram-preserving
+// Write call. Retrying packet[n:] after a partial write on an IFF_NO_PI TUN
+// descriptor would inject a headerless tail fragment as a corrupt second packet.
 func writeTunPacket(writer io.Writer, packet []byte) (int, error) {
-	written := 0
-	for written < len(packet) {
-		n, err := writer.Write(packet[written:])
+	if len(packet) == 0 {
+		return 0, nil
+	}
+	for {
+		n, err := writer.Write(packet)
+		if n == 0 && err != nil && isRetriableTunError(err) {
+			continue
+		}
+		if n == len(packet) {
+			if err != nil && !isRetriableTunError(err) {
+				return n, err
+			}
+			return n, nil
+		}
 		if n > 0 {
-			written += n
+			if err != nil && !isRetriableTunError(err) {
+				return n, err
+			}
+			return n, io.ErrShortWrite
 		}
 		if err != nil {
-			if isRetriableTunError(err) {
-				continue
-			}
-			return written, err
+			return 0, err
 		}
-		if n == 0 {
-			return written, io.ErrNoProgress
-		}
+		return 0, io.ErrNoProgress
 	}
-	return written, nil
 }
 
 func (d *harmonyTunDevice) MTU() (int, error) { return d.mtu, nil }

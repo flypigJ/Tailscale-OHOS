@@ -6,14 +6,20 @@ export const backendStart: (stateDir: string, deviceModel: string,
 export const backendStop: () => string;
 export const backendLogout: () => string;
 export const backendStatus: () => string;
+export const backendStatusAsync: () => Promise<string>;
 export const backendNetworkChangedAsync: (interfaceName: string) => Promise<string>;
 export const backendSnapshot: () => Promise<string>;
+export const backendPeerSnapshot: () => Promise<string>;
 export const backendLocalSendRefreshAsync: () => Promise<string>;
 export const backendTaildropIncomingSnapshot: () => Promise<string>;
 export const backendStopAsync: () => Promise<string>;
 export const backendLogoutAsync: () => Promise<string>;
 export const backendAuthURLAsync: () => Promise<string>;
+export const backendLoginWithAuthKeyAsync: (authKey: string) => Promise<string>;
 export const backendVpnConfigAsync: () => Promise<string>;
+// Private DNS policy snapshot for the VPN Extension; never log or persist it.
+export const backendDnsConfigAsync: () => Promise<string>;
+export const backendDnsRuntimeAsync: (command: string) => Promise<string>;
 export const backendAuthURL: () => string;
 export const backendVpnConfig: () => string;
 export const backendExitNodes: () => string;
@@ -44,5 +50,10 @@ export const backendTaildriveTransferSnapshotAsync: () => Promise<string>;
 export const backendTaildriveCancelAsync: () => Promise<string>;
 export const backendRestartWithTun: (stateDir: string, deviceModel: string,
   osVersion: string, controlURL: string, fd: number) => string;
+export const backendRestartWithTunAsync: (stateDir: string, deviceModel: string,
+  osVersion: string, controlURL: string, fd: number) => Promise<string>;
 export const controlProbe: () => string;
 export const tunFdProbe: (fd: number) => string;
+
+export const backendPathDiagnosticAsync: (command: string) => Promise<string>;
+export const createExclusiveFile: (path: string) => number;

@@ -1,0 +1,924 @@
+--- /dev/null
++++ b/ipn/ipnlocal/d3_dns_control_test.go
+@@ -0,0 +1,54 @@
++package ipnlocal
++
++import (
++	"encoding/json"
++	"net/netip"
++	"testing"
++
++	"tailscale.com/ipn"
++	"tailscale.com/tailcfg"
++	"tailscale.com/types/netmap"
++)
++
++// Exercise the wire DNSConfig format shared by control servers, including
++// null authoritative routes. This is not a live Headscale deployment test.
++func TestD3ControlDNSConfigAndExitContext(t *testing.T) {
++	var response tailcfg.MapResponse
++	payload := []byte(`{"DNSConfig":{"Proxied":true,"Domains":["mesh.test"],"Routes":{"private.test":[{"Addr":"100.64.0.53","UseWithExitNode":true}],"mesh.test":null},"ExtraRecords":[{"Name":"service.mesh.test","Type":"A","Value":"192.0.2.9"}]}}`)
++	if err := json.Unmarshal(payload, &response); err != nil {
++		t.Fatal(err)
++	}
++	if response.DNSConfig == nil {
++		t.Fatal("missing wire DNS config")
++	}
++	nm := &netmap.NetworkMap{DNS: *response.DNSConfig, SelfNode: (&tailcfg.Node{Name: "phone.mesh.test.", Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.1/32")}}).View()}
++	for _, tc := range []struct {
++		name  string
++		prefs ipn.Prefs
++		exit  bool
++	}{
++		{"off", ipn.Prefs{CorpDNS: true}, false},
++		{"stable-id", ipn.Prefs{CorpDNS: true, ExitNodeID: "legacy"}, true},
++		{"legacy-ip", ipn.Prefs{CorpDNS: true, ExitNodeIP: netip.MustParseAddr("100.64.0.2")}, true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			cfg := dnsConfigForNetmap(nm, nil, tc.prefs.View(), false, t.Logf, "openharmony")
++			if cfg.UsingExitNode != tc.exit {
++				t.Fatal("exit context does not match the prefs used for compilation")
++			}
++			rs, ok := cfg.Routes["private.test."]
++			if !ok || len(rs) != 1 || rs[0].Addr != "100.64.0.53" || rs[0].UsesPhysicalNetwork() {
++				t.Fatal("control split resolver changed provenance")
++			}
++			if rs, ok := cfg.Routes["mesh.test."]; !ok || len(rs) != 0 {
++				t.Fatal("null authoritative route lost")
++			}
++			if len(cfg.SearchDomains) != 1 || cfg.SearchDomains[0] != "mesh.test." {
++				t.Fatal("control search domain lost")
++			}
++			if len(cfg.Hosts["service.mesh.test."]) != 1 {
++				t.Fatal("extra record lost")
++			}
++		})
++	}
++}
+--- a/ipn/ipnlocal/node_backend.go
++++ b/ipn/ipnlocal/node_backend.go
+@@ -1453,9 +1453,10 @@
+ 	}
+ 
+ 	dcfg := &dns.Config{
+-		AcceptDNS: prefs.CorpDNS(),
+-		Routes:    map[dnsname.FQDN][]*dnstype.Resolver{},
+-		Hosts:     map[dnsname.FQDN][]netip.Addr{},
++		AcceptDNS:     prefs.CorpDNS(),
++		UsingExitNode: buildfeatures.HasUseExitNode && (!prefs.ExitNodeID().IsZero() || prefs.ExitNodeIP().IsValid()),
++		Routes:        map[dnsname.FQDN][]*dnstype.Resolver{},
++		Hosts:         map[dnsname.FQDN][]netip.Addr{},
+ 	}
+ 
+ 	var addrFlags magicDNSAddrsFlags
+--- a/net/dns/config.go
++++ b/net/dns/config.go
+@@ -26,6 +26,9 @@
+ 
+ // Config is a DNS configuration.
+ type Config struct {
++	// UsingExitNode is local context from the same prefs as this DNS compilation.
++	UsingExitNode bool `json:"-"`
++
+ 	// AcceptDNS true if [Prefs.CorpDNS] is enabled (or --accept-dns=true).
+ 	// This should be used for error handling and health reporting
+ 	// purposes only.
+--- /dev/null
++++ b/net/dns/d3_routing_test.go
+@@ -0,0 +1,268 @@
++package dns
++
++import (
++	"context"
++	"encoding/binary"
++	"fmt"
++	"io"
++	"net"
++	"net/netip"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	dns "golang.org/x/net/dns/dnsmessage"
++	"tailscale.com/control/controlknobs"
++	"tailscale.com/health"
++	"tailscale.com/net/netmon"
++	"tailscale.com/net/tsdial"
++	"tailscale.com/types/dnstype"
++	"tailscale.com/util/dnsname"
++	"tailscale.com/util/eventbus/eventbustest"
++)
++
++// Both fixtures are loopback-only and answer every legal name, so an accidental
++// root leak cannot hide behind a root server rejecting the private question.
++type d3Server struct {
++	addr  string
++	mu    sync.Mutex
++	names map[string]int
++	tcp   int
++	wg    sync.WaitGroup
++}
++
++func d3Serve(t *testing.T, private bool) *d3Server {
++	t.Helper()
++	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	udp, err := net.ListenPacket("udp4", tcp.Addr().String())
++	if err != nil {
++		tcp.Close()
++		t.Fatal(err)
++	}
++	s := &d3Server{addr: tcp.Addr().String(), names: map[string]int{}}
++	reply := func(packet []byte, isTCP bool) []byte {
++		var q dns.Message
++		if q.Unpack(packet) != nil || len(q.Questions) != 1 {
++			return nil
++		}
++		name := q.Questions[0].Name.String()
++		if !strings.HasSuffix(name, ".test.") {
++			t.Errorf("fixture received unexpected name %q", name)
++			return nil
++		}
++		s.mu.Lock()
++		s.names[name]++
++		if isTCP {
++			s.tcp++
++		}
++		s.mu.Unlock()
++		code := dns.RCodeSuccess
++		if private {
++			switch strings.Split(name, ".")[0] {
++			case "timeout":
++				return nil
++			case "nxdomain":
++				code = dns.RCodeNameError
++			case "servfail":
++				code = dns.RCodeServerFailure
++			case "refused":
++				code = dns.RCodeRefused
++			}
++		}
++		out := dns.Message{Header: dns.Header{ID: q.ID, Response: true, RecursionAvailable: true, RCode: code}, Questions: q.Questions}
++		if private && strings.HasPrefix(name, "tcp.") && !isTCP {
++			out.Truncated = true
++		} else if code == dns.RCodeSuccess {
++			h := dns.ResourceHeader{Name: q.Questions[0].Name, Class: dns.ClassINET, TTL: 0}
++			switch q.Questions[0].Type {
++			case dns.TypeA:
++				out.Answers = []dns.Resource{{Header: h, Body: &dns.AResource{A: [4]byte{192, 0, 2, 9}}}}
++			case dns.TypeAAAA:
++				out.Answers = []dns.Resource{{Header: h, Body: &dns.AAAAResource{AAAA: [16]byte{0x20, 1, 0xd, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9}}}}
++			}
++		}
++		raw, err := out.Pack()
++		if err != nil {
++			t.Error(err)
++		}
++		return raw
++	}
++	s.wg.Go(func() {
++		b := make([]byte, 4096)
++		for {
++			n, a, e := udp.ReadFrom(b)
++			if e != nil {
++				return
++			}
++			if r := reply(b[:n], false); r != nil {
++				_, _ = udp.WriteTo(r, a)
++			}
++		}
++	})
++	s.wg.Go(func() {
++		for {
++			c, e := tcp.Accept()
++			if e != nil {
++				return
++			}
++			s.wg.Go(func() {
++				defer c.Close()
++				_ = c.SetDeadline(time.Now().Add(4 * time.Second))
++				var n uint16
++				if binary.Read(c, binary.BigEndian, &n) != nil {
++					return
++				}
++				b := make([]byte, n)
++				if _, e := io.ReadFull(c, b); e != nil {
++					return
++				}
++				r := reply(b, true)
++				if r == nil {
++					return
++				}
++				_ = binary.Write(c, binary.BigEndian, uint16(len(r)))
++				_, _ = c.Write(r)
++			})
++		}
++	})
++	t.Cleanup(func() { tcp.Close(); udp.Close(); s.wg.Wait() })
++	return s
++}
++
++func (s *d3Server) count(name string) int { s.mu.Lock(); defer s.mu.Unlock(); return s.names[name] }
++
++func d3Manager(t *testing.T, root, split *d3Server) (*Manager, *fakeOSConfigurator) {
++	t.Helper()
++	bus := eventbustest.NewBus(t)
++	d := tsdial.NewDialer(netmon.NewStatic())
++	d.SetBus(bus)
++	allowed := map[string]bool{root.addr: true, split.addr: true}
++	d.SetSystemDialerForTest(func(ctx context.Context, n, a string) (net.Conn, error) {
++		if !allowed[a] {
++			return nil, fmt.Errorf("external DNS forbidden: %s", a)
++		}
++		return new(net.Dialer).DialContext(ctx, n, a)
++	})
++	os := &fakeOSConfigurator{BaseConfig: OSConfig{Resolvers: []*dnstype.Resolver{dnstype.PhysicalNetworkResolver(&dnstype.Resolver{Addr: root.addr})}}}
++	m := NewManager(t.Logf, os, health.NewTracker(bus), d, nil, &controlknobs.Knobs{}, "linux", bus)
++	t.Cleanup(func() { _ = m.Down(); _ = d.Close() })
++	return m, os
++}
++
++func d3Config(split *d3Server) Config {
++	return Config{AcceptDNS: true, Routes: map[dnsname.FQDN][]*dnstype.Resolver{
++		"private.test.": {{Addr: split.addr}}, "magic.test.": nil,
++	}, SearchDomains: []dnsname.FQDN{"magic.test."}, Hosts: map[dnsname.FQDN][]netip.Addr{"known.magic.test.": {netip.MustParseAddr("192.0.2.9")}}}
++}
++
++func d3Query(m *Manager, name string, tp dns.Type, family string) (dns.Message, error) {
++	ctx, cancel := context.WithTimeout(context.Background(), 1300*time.Millisecond)
++	defer cancel()
++	raw, err := m.Query(ctx, mkDNSRequest(dnsname.FQDN(name), tp, nil), family, netip.MustParseAddrPort("192.0.2.10:12345"))
++	var res dns.Message
++	if err == nil {
++		err = res.Unpack(raw)
++	}
++	return res, err
++}
++
++func TestD3PrivateFailuresNeverUseRoot(t *testing.T) {
++	for _, family := range []string{"udp", "tcp"} {
++		t.Run(family, func(t *testing.T) {
++			root, split := d3Serve(t, false), d3Serve(t, true)
++			m, _ := d3Manager(t, root, split)
++			if err := m.Set(d3Config(split)); err != nil {
++				t.Fatal(err)
++			}
++			for _, typ := range []dns.Type{dns.TypeA, dns.TypeAAAA} {
++				for _, tc := range []struct {
++					prefix  string
++					code    dns.RCode
++					timeout bool
++				}{
++					{"ok", dns.RCodeSuccess, false}, {"nxdomain", dns.RCodeNameError, false},
++					{"servfail", dns.RCodeServerFailure, false}, {"refused", dns.RCodeRefused, false},
++					{"timeout", 0, true},
++				} {
++					name := tc.prefix + ".private.test."
++					reply, err := d3Query(m, name, typ, family)
++					if tc.timeout {
++						if err == nil && reply.RCode != dns.RCodeServerFailure {
++							t.Fatalf("silent private server unexpectedly answered: %+v", reply)
++						}
++					} else if err != nil || reply.RCode != tc.code {
++						t.Fatalf("%s %s: rcode=%v err=%v", family, name, reply.RCode, err)
++					}
++					if split.count(name) == 0 {
++						t.Fatalf("private query did not reach split server: %s", name)
++					}
++					if root.count(name) != 0 {
++						t.Fatalf("private query leaked to root: %s", name)
++					}
++					public := "after-" + tc.prefix + ".public.test."
++					p, e := d3Query(m, public, typ, family)
++					if e != nil || p.RCode != 0 || len(p.Answers) != 1 || root.count(public) == 0 || split.count(public) != 0 {
++						t.Fatalf("public query after %s failed: %v %+v", name, e, p)
++					}
++				}
++			}
++			name := "missing.magic.test."
++			p, e := d3Query(m, name, dns.TypeA, family)
++			if e != nil || p.RCode != dns.RCodeNameError || root.count(name) != 0 || split.count(name) != 0 {
++				t.Fatalf("authoritative empty route escaped: %v %+v", e, p)
++			}
++			p, e = d3Query(m, "tcp.private.test.", dns.TypeA, "tcp")
++			if e != nil || p.RCode != 0 || len(p.Answers) != 1 {
++				t.Fatalf("TCP retry failed: %v %+v", e, p)
++			}
++			split.mu.Lock()
++			tcpCount := split.tcp
++			split.mu.Unlock()
++			if tcpCount == 0 {
++				t.Fatal("TCP path was never exercised")
++			}
++		})
++	}
++}
++
++func TestD3ExitAndRecompileProvenance(t *testing.T) {
++	root, split := d3Serve(t, false), d3Serve(t, true)
++	m, os := d3Manager(t, root, split)
++	cfg := d3Config(split)
++	for _, exit := range []bool{false, true, false} {
++		cfg.UsingExitNode = exit
++		rc, _, err := m.compileConfig(cfg)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if got := rc.Routes["."][0].UsesPhysicalNetwork(); got == exit {
++			t.Fatalf("exit=%v physical=%v", exit, got)
++		}
++		if !os.BaseConfig.Resolvers[0].UsesPhysicalNetwork() {
++			t.Fatal("compiler mutated base resolver")
++		}
++	}
++	if err := m.Set(cfg); err != nil {
++		t.Fatal(err)
++	}
++	// Reuse the already-allowed split server as the new public base.
++	os.setBaseConfig(OSConfig{Resolvers: []*dnstype.Resolver{dnstype.PhysicalNetworkResolver(&dnstype.Resolver{Addr: split.addr})}})
++	if err := m.RecompileDNSConfig(); err != nil {
++		t.Fatal(err)
++	}
++	p, e := d3Query(m, "changed.public.test.", dns.TypeA, "udp")
++	if e != nil || p.RCode != 0 || split.count("changed.public.test.") == 0 || root.count("changed.public.test.") != 0 {
++		t.Fatalf("base recompile failed: %v", e)
++	}
++	cfg.SearchDomains = []dnsname.FQDN{"new.magic.test."}
++	if err := m.Set(cfg); err != nil {
++		t.Fatal(err)
++	}
++	if len(os.OSConfig.SearchDomains) != 1 || os.OSConfig.SearchDomains[0] != "new.magic.test." {
++		t.Fatal("search-domain projection did not change")
++	}
++}
+--- a/net/dns/dns_clone.go
++++ b/net/dns/dns_clone.go
+@@ -61,6 +61,7 @@
+ 
+ // A compilation failure here means this code must be regenerated, with the command at the top of this file.
+ var _ConfigCloneNeedsRegeneration = Config(struct {
++	UsingExitNode         bool
+ 	AcceptDNS             bool
+ 	DefaultResolvers      []*dnstype.Resolver
+ 	Routes                map[dnsname.FQDN][]*dnstype.Resolver
+--- a/net/dns/dns_view.go
++++ b/net/dns/dns_view.go
+@@ -87,6 +87,9 @@
+ 	return nil
+ }
+ 
++// UsingExitNode is local context from the same prefs as this DNS compilation.
++func (v ConfigView) UsingExitNode() bool { return v.ж.UsingExitNode }
++
+ // AcceptDNS true if [Prefs.CorpDNS] is enabled (or --accept-dns=true).
+ // This should be used for error handling and health reporting
+ // purposes only.
+@@ -153,6 +156,7 @@
+ 
+ // A compilation failure here means this code must be regenerated, with the command at the top of this file.
+ var _ConfigViewNeedsRegeneration = Config(struct {
++	UsingExitNode         bool
+ 	AcceptDNS             bool
+ 	DefaultResolvers      []*dnstype.Resolver
+ 	Routes                map[dnsname.FQDN][]*dnstype.Resolver
+--- a/net/dns/manager.go
++++ b/net/dns/manager.go
+@@ -489,6 +489,13 @@
+ 	m.health.SetHealthy(OSConfigurationReadWarnable)
+ 
+ 	defaultRoutes := underlyingResolvers(base)
++	if cfg.UsingExitNode {
++		// Legacy exits can reach this base branch. Preserve upstream routing,
++		// rather than introducing a new physical DNS escape around the exit.
++		for i, r := range defaultRoutes {
++			defaultRoutes[i] = r.WithoutPhysicalNetwork()
++		}
++	}
+ 	if len(defaultRoutes) == 0 && (!isSandboxedApple || !scopeApple) {
+ 		// Taking over here would point the OS at quad-100 with an empty "."
+ 		// route, failing every non-Tailscale name. Leave the OS config alone
+--- /dev/null
++++ b/net/dns/resolver/d3_provenance_test.go
+@@ -0,0 +1,207 @@
++package resolver
++
++import (
++	"bytes"
++	"context"
++	"crypto/x509"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"net/netip"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	dns "golang.org/x/net/dns/dnsmessage"
++	"tailscale.com/health"
++	"tailscale.com/net/netmon"
++	"tailscale.com/net/tsdial"
++	"tailscale.com/types/dnstype"
++	"tailscale.com/util/dnsname"
++	"tailscale.com/util/eventbus/eventbustest"
++)
++
++func TestD3SameAddressDifferentNetwork(t *testing.T) {
++	const name = "network.private.test."
++	request := makeTestRequest(t, name, dns.TypeA, 0)
++	response := makeTestResponse(t, name, dns.RCodeSuccess, netip.MustParseAddr("192.0.2.9"))
++	port := runDNSServer(t, nil, response, func(bool, []byte) {})
++	target := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)
++	bus := eventbustest.NewBus(t)
++	mon := netmon.NewStatic()
++	d := tsdial.NewDialer(mon)
++	d.SetBus(bus)
++	t.Cleanup(func() { _ = d.Close() })
++	var physical, tailnet atomic.Int32
++	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
++		if addr != target.String() {
++			return nil, fmt.Errorf("external DNS forbidden: %s", addr)
++		}
++		return new(net.Dialer).DialContext(ctx, network, addr)
++	}
++	d.SetSystemDialerForTest(func(ctx context.Context, n, a string) (net.Conn, error) { physical.Add(1); return dial(ctx, n, a) })
++	d.UseNetstackForIP = func(ip netip.Addr) bool { return ip == target.Addr() }
++	d.NetstackDialUDP = func(ctx context.Context, a netip.AddrPort) (net.Conn, error) {
++		tailnet.Add(1)
++		return dial(ctx, "udp4", a.String())
++	}
++	d.NetstackDialTCP = func(ctx context.Context, a netip.AddrPort) (net.Conn, error) {
++		tailnet.Add(1)
++		return dial(ctx, "tcp4", a.String())
++	}
++	f := newForwarder(t.Logf, mon, nil, d, health.NewTracker(bus), nil)
++	t.Cleanup(func() { _ = f.Close() })
++	for _, transport := range []string{"udp", "tcp"} {
++		for _, local := range []bool{false, true} {
++			t.Run(fmt.Sprintf("%s/physical=%v", transport, local), func(t *testing.T) {
++				p0, n0 := physical.Load(), tailnet.Load()
++				r := &dnstype.Resolver{Addr: target.String()}
++				if local {
++					r = dnstype.PhysicalNetworkResolver(r)
++				}
++				fq := &forwardQuery{packet: request, txid: getTxID(request), family: transport, closeOnCtxDone: new(closePool)}
++				defer fq.closeOnCtxDone.Close()
++				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++				defer cancel()
++				var got []byte
++				var err error
++				if transport == "udp" {
++					got, err = f.sendUDP(ctx, fq, resolverAndDelay{name: r})
++				} else {
++					got, err = f.sendTCP(ctx, fq, resolverAndDelay{name: r})
++				}
++				if err != nil || !bytes.Equal(got, response) {
++					t.Fatalf("bad DNS reply: %v", err)
++				}
++				if local {
++					if physical.Load() != p0+1 || tailnet.Load() != n0 {
++						t.Fatal("physical DNS used Tailnet")
++					}
++				} else if tailnet.Load() != n0+1 || physical.Load() != p0 {
++					t.Fatal("Tailnet DNS used physical network")
++				}
++			})
++		}
++	}
++}
++
++func TestD3DoHUsesSourceDialer(t *testing.T) {
++	const name = "https.public.test."
++	request := makeTestRequest(t, name, dns.TypeA, 0)
++	response := makeTestResponse(t, name, dns.RCodeSuccess, netip.MustParseAddr("192.0.2.9"))
++	var received atomic.Int32
++	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		q, err := io.ReadAll(r.Body)
++		if err != nil || !bytes.Equal(q, request) {
++			t.Error("DoH fixture received wrong query")
++			w.WriteHeader(400)
++			return
++		}
++		received.Add(1)
++		w.Header().Set("Content-Type", "application/dns-message")
++		_, _ = w.Write(response)
++	}))
++	defer server.Close()
++	bus := eventbustest.NewBus(t)
++	mon := netmon.NewStatic()
++	d := tsdial.NewDialer(mon)
++	d.SetBus(bus)
++	defer d.Close()
++	var physical, tailnet atomic.Int32
++	target := server.Listener.Addr().String()
++	dial := func(ctx context.Context, n, a string) (net.Conn, error) {
++		if a != target {
++			return nil, fmt.Errorf("external DoH forbidden: %s", a)
++		}
++		return new(net.Dialer).DialContext(ctx, n, a)
++	}
++	d.SetSystemDialerForTest(func(ctx context.Context, n, a string) (net.Conn, error) { physical.Add(1); return dial(ctx, n, a) })
++	d.UseNetstackForIP = func(ip netip.Addr) bool { return ip.IsLoopback() }
++	d.NetstackDialUDP = func(context.Context, netip.AddrPort) (net.Conn, error) {
++		return nil, fmt.Errorf("unexpected UDP in DoH test")
++	}
++	d.NetstackDialTCP = func(ctx context.Context, a netip.AddrPort) (net.Conn, error) {
++		tailnet.Add(1)
++		return dial(ctx, "tcp4", a.String())
++	}
++	f := newForwarder(t.Logf, mon, nil, d, health.NewTracker(bus), nil)
++	defer f.Close()
++	certs := x509.NewCertPool()
++	certs.AddCert(server.Certificate())
++	for _, local := range []bool{false, true} {
++		r := &dnstype.Resolver{Addr: server.URL + "/dns-query"}
++		if local {
++			r = dnstype.PhysicalNetworkResolver(r)
++		}
++		c, ok := f.getDoHClientForResolver(r)
++		if !ok {
++			t.Fatal("DoH client missing")
++		}
++		// This private fixture CA is trusted only by this test's client.
++		c.Transport.(*http.Transport).TLSClientConfig.RootCAs = certs
++		defer c.CloseIdleConnections()
++		p0, n0 := physical.Load(), tailnet.Load()
++		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++		got, e := f.sendDoH(ctx, r.Addr, c, request)
++		cancel()
++		if e != nil || !bytes.Equal(got, response) {
++			t.Fatalf("DoH reply failed: %v", e)
++		}
++		if local {
++			if physical.Load() <= p0 || tailnet.Load() != n0 {
++				t.Fatal("physical DoH used Tailnet")
++			}
++		} else if tailnet.Load() <= n0 || physical.Load() != p0 {
++			t.Fatal("Tailnet DoH used physical network")
++		}
++	}
++	if received.Load() != 2 {
++		t.Fatal("both sources did not reach the TLS DNS fixture")
++	}
++}
++
++func TestD3DoHSourceCacheAndUpgrade(t *testing.T) {
++	bus := eventbustest.NewBus(t)
++	mon := netmon.NewStatic()
++	d := tsdial.NewDialer(mon)
++	d.SetBus(bus)
++	t.Cleanup(func() { _ = d.Close() })
++	f := newForwarder(t.Logf, mon, nil, d, health.NewTracker(bus), nil)
++	defer f.Close()
++	r := &dnstype.Resolver{Addr: "https://resolver.test/dns-query", BootstrapResolution: []netip.Addr{netip.MustParseAddr("192.0.2.53")}}
++	p := dnstype.PhysicalNetworkResolver(r)
++	a, ok := f.getDoHClientForResolver(r)
++	if !ok {
++		t.Fatal("normal DoH client missing")
++	}
++	b, ok := f.getDoHClientForResolver(p)
++	if !ok || a == b {
++		t.Fatal("DoH clients reused across network sources")
++	}
++	if c, _ := f.getDoHClientForResolver(p); c != b {
++		t.Fatal("same source should reuse its client")
++	}
++	f.setRoutes(map[dnsname.FQDN][]*dnstype.Resolver{".": {p}}, true)
++	if c, _ := f.getDoHClientForResolver(p); c == b {
++		t.Fatal("physical client survived network recompile")
++	}
++	if c, _ := f.getDoHClientForResolver(r); c != a {
++		t.Fatal("normal source unnecessarily invalidated")
++	}
++	rs := resolversWithDelays([]*dnstype.Resolver{{Addr: "8.8.8.8"}, dnstype.PhysicalNetworkResolver(&dnstype.Resolver{Addr: "8.8.8.8"})})
++	normal, local := 0, 0
++	for _, rr := range rs {
++		if rr.name.Addr == "https://dns.google/dns-query" {
++			if rr.name.UsesPhysicalNetwork() {
++				local++
++			} else {
++				normal++
++			}
++		}
++	}
++	if normal != 1 || local != 1 {
++		t.Fatalf("DoH upgrade lost provenance: normal=%d local=%d", normal, local)
++	}
++}
+--- a/net/dns/resolver/forwarder.go
++++ b/net/dns/resolver/forwarder.go
+@@ -388,27 +388,36 @@
+ 	const addedDoHAndDontAddUDP = dohState(2)
+ 
+ 	// Add the known DoH ones first, starting immediately.
+-	didDoH := map[string]dohState{}
++	type providerKey struct {
++		host     string
++		physical bool
++	}
++	didDoH := map[providerKey]dohState{}
+ 	for _, r := range resolvers {
+ 		ipp, ok := r.IPPort()
+ 		if !ok {
+ 			continue
+ 		}
+ 		dohBase, dohOnly, ok := publicdns.DoHEndpointFromIP(ipp.Addr())
+-		if !ok || didDoH[dohBase] != 0 {
++		key := providerKey{dohBase, r.UsesPhysicalNetwork()}
++		if !ok || didDoH[key] != 0 {
+ 			continue
+ 		}
+ 		if dohOnly {
+-			didDoH[dohBase] = addedDoHAndDontAddUDP
++			didDoH[key] = addedDoHAndDontAddUDP
+ 		} else {
+-			didDoH[dohBase] = addedDoH
+-		}
+-		rr = append(rr, resolverAndDelay{name: &dnstype.Resolver{Addr: dohBase}})
++			didDoH[key] = addedDoH
++		}
++		upgraded := r.Clone()
++		upgraded.Addr = dohBase
++		upgraded.BootstrapResolution = nil
++		rr = append(rr, resolverAndDelay{name: upgraded})
+ 	}
+ 
+ 	type hostAndFam struct {
+-		host string // some arbitrary string representing DNS host (currently the DoH base)
+-		bits uint8  // either 32 or 128 for IPv4 vs IPv6s address family
++		host     string // some arbitrary string representing DNS host (currently the DoH base)
++		bits     uint8  // either 32 or 128 for IPv4 vs IPv6s address family
++		physical bool
+ 	}
+ 	done := map[hostAndFam]int{}
+ 	for _, r := range resolvers {
+@@ -422,13 +431,13 @@
+ 		ip := ipp.Addr()
+ 		var startDelay time.Duration
+ 		if host, _, ok := publicdns.DoHEndpointFromIP(ip); ok {
+-			if didDoH[host] == addedDoHAndDontAddUDP {
++			if didDoH[providerKey{host, r.UsesPhysicalNetwork()}] == addedDoHAndDontAddUDP {
+ 				continue
+ 			}
+ 			// We already did the DoH query early. These
+ 			// are for normal dns53 UDP queries.
+ 			startDelay = dohHeadStart
+-			key := hostAndFam{host, uint8(ip.BitLen())}
++			key := hostAndFam{host, uint8(ip.BitLen()), r.UsesPhysicalNetwork()}
+ 			if done[key] > 0 {
+ 				startDelay += wellKnownHostBackupDelay
+ 			}
+@@ -494,10 +503,20 @@
+ 	})
+ 
+ 	f.mu.Lock()
+-	defer f.mu.Unlock()
++	var retired []*http.Client
++	for key, client := range f.dohClient {
++		if strings.HasPrefix(key, "physical\x00") {
++			retired = append(retired, client)
++			delete(f.dohClient, key)
++		}
++	}
+ 	f.acceptDNS = acceptDNS
+ 	f.routes = routes
+ 	f.cloudHostFallback = cloudHostFallback
++	f.mu.Unlock()
++	for _, client := range retired {
++		client.CloseIdleConnections()
++	}
+ }
+ 
+ var stdNetPacketListener nettype.PacketListenerWithNetIP = nettype.MakePacketListenerWithNetIP(new(net.ListenConfig))
+@@ -532,7 +551,7 @@
+ 	if len(allIPs) == 0 {
+ 		return nil, false
+ 	}
+-	return f.newDoHClientLocked(urlBase, urlBase, allIPs)
++	return f.newDoHClientLocked(urlBase, urlBase, allIPs, false)
+ }
+ 
+ // getDoHClientForResolver returns an HTTP client for the DoH server described
+@@ -547,6 +566,9 @@
+ 	f.mu.Lock()
+ 	defer f.mu.Unlock()
+ 	key := dohClientCacheKey(urlBase, r.BootstrapResolution)
++	if r.UsesPhysicalNetwork() {
++		key = "physical\x00" + key
++	}
+ 	if c, ok := f.dohClient[key]; ok {
+ 		return c, true
+ 	}
+@@ -568,7 +590,7 @@
+ 			allIPs = []netip.Addr{ip}
+ 		}
+ 	}
+-	return f.newDoHClientLocked(key, urlBase, allIPs)
++	return f.newDoHClientLocked(key, urlBase, allIPs, r.UsesPhysicalNetwork())
+ }
+ 
+ // dohClientCacheKey distinguishes cached clients: bootstrap results can change
+@@ -587,13 +609,13 @@
+ // newDoHClientLocked builds a DoH HTTP client that dials urlBase's host at
+ // the given IPs, caching the client under cacheKey (which differs from
+ // urlBase when bootstrap results vary). f.mu must be held.
+-func (f *forwarder) newDoHClientLocked(cacheKey, urlBase string, allIPs []netip.Addr) (c *http.Client, ok bool) {
++func (f *forwarder) newDoHClientLocked(cacheKey, urlBase string, allIPs []netip.Addr, physical bool) (c *http.Client, ok bool) {
+ 	dohURL, err := url.Parse(urlBase)
+ 	if err != nil {
+ 		return nil, false
+ 	}
+ 
+-	dialer := dnscache.Dialer(f.getDialerType(), &dnscache.Resolver{
++	dialer := dnscache.Dialer(f.resolverDialer(physical), &dnscache.Resolver{
+ 		SingleHost:             dohURL.Hostname(),
+ 		SingleHostStaticResult: allIPs,
+ 		Logf:                   f.logf,
+@@ -690,6 +712,9 @@
+ 		}()
+ 	}
+ 	if strings.HasPrefix(rr.name.Addr, "http://") {
++		if rr.name.UsesPhysicalNetwork() {
++			return nil, errors.New("physical DNS cannot use PeerAPI HTTP")
++		}
+ 		if !buildfeatures.HasPeerAPIClient {
+ 			return nil, feature.ErrUnavailable
+ 		}
+@@ -848,7 +873,7 @@
+ 	metricDNSFwdUDP.Add(1)
+ 	ctx = sockstats.WithSockStats(ctx, sockstats.LabelDNSForwarderUDP, f.logf)
+ 
+-	conn, err := f.dialUDP(ctx, ipp)
++	conn, err := f.dialUDP(ctx, ipp, rr.name.UsesPhysicalNetwork())
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -955,7 +980,18 @@
+ 
+ // dialUDP returns a UDP conn to ipp, over netstack if that's the only way to
+ // reach it. Same dispatch as [tsdial.Dialer.dialOneUser].
+-func (f *forwarder) dialUDP(ctx context.Context, ipp netip.AddrPort) (nettype.PacketConn, error) {
++func (f *forwarder) dialUDP(ctx context.Context, ipp netip.AddrPort, physicalMode ...bool) (nettype.PacketConn, error) {
++	if len(physicalMode) > 0 && physicalMode[0] {
++		family := "udp4"
++		if ipp.Addr().Is6() {
++			family = "udp6"
++		}
++		conn, err := f.dialer.SystemDial(ctx, family, ipp.String())
++		if err != nil {
++			return nil, err
++		}
++		return &netstackPacketConn{Conn: conn, peer: ipp}, nil
++	}
+ 	if f.dialer.UseNetstackForIP != nil && f.dialer.UseNetstackForIP(ipp.Addr()) {
+ 		if f.dialer.NetstackDialUDP == nil {
+ 			return nil, errors.New("dialer not initialized correctly: no NetstackDialUDP")
+@@ -1035,6 +1071,13 @@
+ 	}
+ }
+ 
++func (f *forwarder) resolverDialer(physical bool) netx.DialFunc {
++	if physical {
++		return f.dialer.SystemDial
++	}
++	return f.getDialerType()
++}
++
+ func (f *forwarder) getDialerType() netx.DialFunc {
+ 	if ShouldUseRoutes(f.controlKnobs) {
+ 		return f.dialer.UserDial
+@@ -1060,7 +1103,7 @@
+ 	ctx, cancel := context.WithTimeout(ctx, tcpQueryTimeout)
+ 	defer cancel()
+ 
+-	conn, err := f.getDialerType()(ctx, tcpFam, ipp.String())
++	conn, err := f.resolverDialer(rr.name.UsesPhysicalNetwork())(ctx, tcpFam, ipp.String())
+ 	if err != nil {
+ 		return nil, err
+ 	}
+--- /dev/null
++++ b/types/dnstype/d3_physical_test.go
+@@ -0,0 +1,41 @@
++package dnstype
++
++import (
++	"encoding/json"
++	"strings"
++	"testing"
++
++	jsonv2 "github.com/go-json-experiment/json"
++)
++
++func TestD3LocalProvenanceCannotBeDeserialized(t *testing.T) {
++	original := &Resolver{Addr: "192.0.2.53"}
++	local := PhysicalNetworkResolver(original)
++	if original.UsesPhysicalNetwork() || !local.UsesPhysicalNetwork() || original.Equal(local) {
++		t.Fatal("local provenance aliased or lost equality")
++	}
++	if !local.Clone().UsesPhysicalNetwork() || !local.View().AsStruct().UsesPhysicalNetwork() {
++		t.Fatal("clone/view lost provenance")
++	}
++	if local.WithoutPhysicalNetwork().UsesPhysicalNetwork() || !local.UsesPhysicalNetwork() {
++		t.Fatal("exit clone mutated original")
++	}
++	for _, marshal := range []func(any) ([]byte, error){json.Marshal, func(v any) ([]byte, error) { return jsonv2.Marshal(v) }} {
++		raw, e := marshal(local)
++		if e != nil || strings.Contains(strings.ToLower(string(raw)), "physical") {
++			t.Fatalf("local field serialized: %s %v", raw, e)
++		}
++	}
++	for _, unmarshal := range []func([]byte, any) error{json.Unmarshal, func(b []byte, v any) error { return jsonv2.Unmarshal(b, v) }} {
++		for _, field := range []string{"physicalNetwork", "PhysicalNetwork", "UsesPhysicalNetwork"} {
++			var r Resolver
++			raw := []byte(`{"Addr":"192.0.2.53","` + field + `":true}`)
++			if e := unmarshal(raw, &r); e != nil {
++				t.Fatal(e)
++			}
++			if r.UsesPhysicalNetwork() {
++				t.Fatal("remote JSON set local provenance")
++			}
++		}
++	}
++}
+--- a/types/dnstype/dnstype.go
++++ b/types/dnstype/dnstype.go
+@@ -13,6 +13,9 @@
+ 
+ // Resolver is the configuration for one DNS resolver.
+ type Resolver struct {
++	// physicalNetwork is local provenance, never a control-plane field.
++	physicalNetwork bool `json:"-"`
++
+ 	// Addr is the address of the DNS resolver, one of:
+ 	//  - A plain IP address for a "classic" UDP+TCP DNS resolver.
+ 	//    This is the common format as sent by the control plane.
+@@ -71,5 +74,5 @@
+ 
+ 	return r.Addr == other.Addr &&
+ 		slices.Equal(r.BootstrapResolution, other.BootstrapResolution) &&
+-		r.UseWithExitNode == other.UseWithExitNode
++		r.UseWithExitNode == other.UseWithExitNode && r.physicalNetwork == other.physicalNetwork
+ }
+--- a/types/dnstype/dnstype_clone.go
++++ b/types/dnstype/dnstype_clone.go
+@@ -23,6 +23,7 @@
+ 
+ // A compilation failure here means this code must be regenerated, with the command at the top of this file.
+ var _ResolverCloneNeedsRegeneration = Resolver(struct {
++	physicalNetwork     bool
+ 	Addr                string
+ 	BootstrapResolution []netip.Addr
+ 	UseWithExitNode     bool
+--- a/types/dnstype/dnstype_test.go
++++ b/types/dnstype/dnstype_test.go
+@@ -17,7 +17,7 @@
+ 		fieldNames = append(fieldNames, field.Name)
+ 	}
+ 	sort.Strings(fieldNames)
+-	if !slices.Equal(fieldNames, []string{"Addr", "BootstrapResolution", "UseWithExitNode"}) {
++	if !slices.Equal(fieldNames, []string{"Addr", "BootstrapResolution", "UseWithExitNode", "physicalNetwork"}) {
+ 		t.Errorf("Resolver fields changed; update test")
+ 	}
+ 
+--- a/types/dnstype/dnstype_view.go
++++ b/types/dnstype/dnstype_view.go
+@@ -117,6 +117,7 @@
+ 
+ // A compilation failure here means this code must be regenerated, with the command at the top of this file.
+ var _ResolverViewNeedsRegeneration = Resolver(struct {
++	physicalNetwork     bool
+ 	Addr                string
+ 	BootstrapResolution []netip.Addr
+ 	UseWithExitNode     bool
+--- /dev/null
++++ b/types/dnstype/mesharc_physical.go
+@@ -0,0 +1,24 @@
++package dnstype
++
++// PhysicalNetworkResolver clones r and marks it as originating from local OS DNS.
++// Only trusted OS configuration adapters should call this constructor.
++func PhysicalNetworkResolver(r *Resolver) *Resolver {
++	if r == nil {
++		return nil
++	}
++	out := r.Clone()
++	out.physicalNetwork = true
++	return out
++}
++
++func (r *Resolver) UsesPhysicalNetwork() bool { return r != nil && r.physicalNetwork }
++
++// WithoutPhysicalNetwork preserves the original routing policy when an exit is selected.
++func (r *Resolver) WithoutPhysicalNetwork() *Resolver {
++	if r == nil {
++		return nil
++	}
++	out := r.Clone()
++	out.physicalNetwork = false
++	return out
++}

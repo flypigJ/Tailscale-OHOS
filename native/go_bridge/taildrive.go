@@ -19,20 +19,28 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
 
 const (
-	taildriveHTTPURL           = "http://100.100.100.100:8080"
-	taildriveListTimeout       = 20 * time.Second
-	taildriveMutationTimeout   = 30 * time.Second
-	taildriveTransferTimeout   = 30 * time.Minute
-	taildriveMaxListResponse   = 8 << 20
-	taildriveProgressBufferLen = 32 << 10
-	taildrivePeerWarmupTimeout = 5 * time.Second
-	taildrivePeerWarmupTTL     = 2 * time.Minute
-	taildriveColdProbeTimeout  = 3 * time.Second
+	taildriveHTTPURL                 = "http://100.100.100.100:8080"
+	taildriveListTimeout             = 20 * time.Second
+	taildriveMutationTimeout         = 30 * time.Second
+	taildriveTransferTimeout         = 30 * time.Minute
+	taildriveMaxListResponse         = 8 << 20
+	taildriveProgressBufferLen       = 32 << 10
+	taildrivePeerWarmupTimeout       = 5 * time.Second
+	taildrivePeerWarmupTTL           = 2 * time.Minute
+	taildriveColdProbeTimeout        = 3 * time.Second
+	defaultMaxTaildriveTransferBytes = int64(16) << 30
+)
+
+var (
+	maxTaildriveTransferBytes    = defaultMaxTaildriveTransferBytes
+	errTaildriveTransferTooLarge = errors.New("taildrive transfer exceeds maximum size")
+	errTaildriveStreamOverflow   = errors.New("taildrive stream exceeded declared length")
 )
 
 var taildrivePropfindBody = []byte(`<?xml version="1.0" encoding="utf-8" ?>
@@ -402,7 +410,60 @@ func taildriveDAVResponseProp(propstats []taildriveDAVPropstat) (taildriveDAVPro
 	return taildriveDAVProp{}, false
 }
 
+func taildriveSharePrefix(normalizedPath string) (string, bool) {
+	trimmed := strings.Trim(normalizedPath, "/")
+	if trimmed == "" {
+		return "", false
+	}
+	parts := strings.Split(trimmed, "/")
+	if len(parts) < 3 {
+		return "", false
+	}
+	tailnet, err := url.PathUnescape(parts[0])
+	if err != nil || tailnet == "" {
+		return "", false
+	}
+	device, err := url.PathUnescape(parts[1])
+	if err != nil || device == "" {
+		return "", false
+	}
+	share, err := url.PathUnescape(parts[2])
+	if err != nil || share == "" {
+		return "", false
+	}
+	return "/" + strings.ToLower(tailnet) + "/" + strings.ToLower(device) + "/" + share, true
+}
+
+func sameTaildriveShare(leftPath, rightPath string) bool {
+	leftPrefix, leftOK := taildriveSharePrefix(leftPath)
+	rightPrefix, rightOK := taildriveSharePrefix(rightPath)
+	return leftOK && rightOK && leftPrefix == rightPrefix
+}
+
+func taildriveIsNotFoundError(err error) bool {
+	var statusErr *taildriveHTTPStatusError
+	return errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound
+}
+
+func taildriveEscapedLeaf(remotePath string) (string, error) {
+	normalized, err := normalizeTaildrivePath(remotePath)
+	if err != nil || normalized == "/" {
+		return "", errors.New("invalid taildrive path")
+	}
+	slash := strings.LastIndexByte(normalized, '/')
+	if slash < 0 || slash+1 >= len(normalized) {
+		return "", errors.New("invalid taildrive path")
+	}
+	return normalized[slash+1:], nil
+}
+
+const taildriveCrossShareMaxDepth = 32
+
 func (c *taildriveWebDAVClient) mutate(ctx context.Context, request taildriveMutationRequest) error {
+	if (request.Operation == "move" || request.Operation == "copy") &&
+		!sameTaildriveShare(request.Path, request.NewPath) {
+		return c.mutateAcrossShares(ctx, request)
+	}
 	remoteURL, err := taildriveURL(request.Path)
 	if err != nil {
 		return err
@@ -415,6 +476,8 @@ func (c *taildriveWebDAVClient) mutate(ctx context.Context, request taildriveMut
 		method = http.MethodDelete
 	case "rename", "move":
 		method = "MOVE"
+	case "copy":
+		method = "COPY"
 	default:
 		return errors.New("invalid mutation operation")
 	}
@@ -422,7 +485,7 @@ func (c *taildriveWebDAVClient) mutate(ctx context.Context, request taildriveMut
 	if err != nil {
 		return err
 	}
-	if request.Operation == "rename" || request.Operation == "move" {
+	if request.Operation == "rename" || request.Operation == "move" || request.Operation == "copy" {
 		destination, err := taildriveURL(request.NewPath)
 		if err != nil {
 			return err
@@ -441,6 +504,150 @@ func (c *taildriveWebDAVClient) mutate(ctx context.Context, request taildriveMut
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return &taildriveHTTPStatusError{StatusCode: response.StatusCode}
+	}
+	return nil
+}
+
+func (c *taildriveWebDAVClient) mutateAcrossShares(ctx context.Context, request taildriveMutationRequest) error {
+	srcEntry, err := c.stat(ctx, request.Path)
+	if err != nil {
+		return err
+	}
+	if !request.Overwrite {
+		if _, dstErr := c.stat(ctx, request.NewPath); dstErr == nil {
+			return &taildriveHTTPStatusError{StatusCode: http.StatusPreconditionFailed}
+		} else if !taildriveIsNotFoundError(dstErr) {
+			return dstErr
+		}
+	}
+	if err := c.copyEntryAcrossShares(ctx, srcEntry, request.NewPath, request.Overwrite, 0); err != nil {
+		return err
+	}
+	if request.Operation == "move" {
+		return c.mutate(ctx, taildriveMutationRequest{
+			Operation: "delete",
+			Path:      request.Path,
+		})
+	}
+	return nil
+}
+
+func (c *taildriveWebDAVClient) copyEntryAcrossShares(
+	ctx context.Context, srcEntry taildriveEntry, dstPath string, overwrite bool, depth int,
+) error {
+	if depth > taildriveCrossShareMaxDepth {
+		return errors.New("directory nesting too deep")
+	}
+	if srcEntry.Kind == "directory" {
+		dstNormalized, err := normalizeTaildrivePath(dstPath)
+		if err != nil || dstNormalized == "/" {
+			return errors.New("invalid destination path")
+		}
+		dstEntry, dstErr := c.stat(ctx, dstNormalized)
+		if dstErr != nil {
+			if !taildriveIsNotFoundError(dstErr) {
+				return dstErr
+			}
+			if err := c.mutate(ctx, taildriveMutationRequest{
+				Operation: "mkdir",
+				Path:      dstNormalized,
+			}); err != nil {
+				return err
+			}
+		} else if dstEntry.Kind != "directory" {
+			if !overwrite {
+				return &taildriveHTTPStatusError{StatusCode: http.StatusPreconditionFailed}
+			}
+			if err := c.mutate(ctx, taildriveMutationRequest{
+				Operation: "delete",
+				Path:      dstNormalized,
+			}); err != nil {
+				return err
+			}
+			if err := c.mutate(ctx, taildriveMutationRequest{
+				Operation: "mkdir",
+				Path:      dstNormalized,
+			}); err != nil {
+				return err
+			}
+		}
+		children, err := c.list(ctx, srcEntry.Path)
+		if err != nil {
+			return err
+		}
+		for _, child := range children {
+			leaf, leafErr := taildriveEscapedLeaf(child.Path)
+			if leafErr != nil {
+				return leafErr
+			}
+			childDstPath := dstNormalized + "/" + leaf
+			if err := c.copyEntryAcrossShares(ctx, child, childDstPath, overwrite, depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if srcEntry.Size > maxTaildriveTransferBytes {
+		return errTaildriveTransferTooLarge
+	}
+	srcURL, err := taildriveURL(srcEntry.Path)
+	if err != nil {
+		return err
+	}
+	dstURL, err := taildriveURL(dstPath)
+	if err != nil {
+		return err
+	}
+	getRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL.String(), nil)
+	if err != nil {
+		return err
+	}
+	getResponse, err := c.httpClient.Do(getRequest)
+	if err != nil {
+		return err
+	}
+	defer getResponse.Body.Close()
+	if getResponse.StatusCode < http.StatusOK || getResponse.StatusCode >= http.StatusMultipleChoices {
+		return &taildriveHTTPStatusError{StatusCode: getResponse.StatusCode}
+	}
+	if getResponse.ContentLength > maxTaildriveTransferBytes {
+		return errTaildriveTransferTooLarge
+	}
+	var putBody io.Reader
+	if getResponse.ContentLength == 0 {
+		putBody = http.NoBody
+	} else if getResponse.ContentLength > 0 {
+		putBody = newTaildriveBoundedReader(getResponse.Body, getResponse.ContentLength, errTaildriveStreamOverflow)
+	} else {
+		putBody = newTaildriveBoundedReader(getResponse.Body, maxTaildriveTransferBytes, errTaildriveTransferTooLarge)
+	}
+	putRequest, err := http.NewRequestWithContext(ctx, http.MethodPut, dstURL.String(), putBody)
+	if err != nil {
+		return err
+	}
+	if getResponse.ContentLength >= 0 {
+		putRequest.ContentLength = getResponse.ContentLength
+	}
+	contentType := strings.TrimSpace(srcEntry.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	putRequest.Header.Set("Content-Type", contentType)
+	if srcEntry.ModifiedAt > 0 {
+		modifiedAt := time.UnixMilli(srcEntry.ModifiedAt).UTC()
+		putRequest.Header.Set("Last-Modified", modifiedAt.Format(http.TimeFormat))
+		putRequest.Header.Set("X-OC-Mtime", strconv.FormatInt(modifiedAt.Unix(), 10))
+	}
+	if !overwrite {
+		putRequest.Header.Set("If-None-Match", "*")
+	}
+	putResponse, err := c.httpClient.Do(putRequest)
+	if err != nil {
+		return err
+	}
+	defer putResponse.Body.Close()
+	if putResponse.StatusCode < http.StatusOK || putResponse.StatusCode >= http.StatusMultipleChoices {
+		return &taildriveHTTPStatusError{StatusCode: putResponse.StatusCode}
 	}
 	return nil
 }
@@ -544,28 +751,42 @@ func (b *backendController) taildriveMutate(requestText string) string {
 	if err != nil || path == "/" {
 		return marshalTaildriveMutation(taildriveMutationResult{State: "failed", Operation: request.Operation, Reason: "invalid_request"})
 	}
+	if _, ok := taildriveSharePrefix(path); !ok {
+		return marshalTaildriveMutation(taildriveMutationResult{State: "failed", Operation: request.Operation, Path: path, Reason: "invalid_request"})
+	}
 	request.Path = path
-	if request.Operation == "rename" || request.Operation == "move" {
+	if request.Operation == "rename" || request.Operation == "move" || request.Operation == "copy" {
 		newPath, normalizeErr := normalizeTaildrivePath(request.NewPath)
 		if normalizeErr != nil || newPath == "/" || strings.HasPrefix(newPath, request.Path+"/") {
 			return marshalTaildriveMutation(taildriveMutationResult{State: "failed", Operation: request.Operation, Path: request.Path, Reason: "invalid_request"})
 		}
+		if _, ok := taildriveSharePrefix(newPath); !ok {
+			return marshalTaildriveMutation(taildriveMutationResult{State: "failed", Operation: request.Operation, Path: request.Path, Reason: "invalid_request"})
+		}
 		request.NewPath = newPath
 	}
-	if (request.Operation != "mkdir" && request.Operation != "delete" && request.Operation != "rename" && request.Operation != "move") ||
-		((request.Operation == "rename" || request.Operation == "move") && (request.NewPath == "" || request.NewPath == request.Path)) {
+	if (request.Operation != "mkdir" && request.Operation != "delete" && request.Operation != "rename" && request.Operation != "move" && request.Operation != "copy") ||
+		((request.Operation == "rename" || request.Operation == "move" || request.Operation == "copy") && (request.NewPath == "" || request.NewPath == request.Path)) {
 		return marshalTaildriveMutation(taildriveMutationResult{State: "failed", Operation: request.Operation, Path: request.Path, Reason: "invalid_request"})
 	}
 	result := taildriveMutationResult{State: "failed", Operation: request.Operation, Path: request.Path, NewPath: request.NewPath}
+	b.warmTaildrivePeer(request.Path)
+	if request.NewPath != "" {
+		b.warmTaildrivePeer(request.NewPath)
+	}
 	server, available := b.taildriveServer()
 	if !available {
 		result.Reason = "backend_unavailable"
 		return marshalTaildriveMutation(result)
 	}
+	timeout := taildriveMutationTimeout
+	if (request.Operation == "copy" || request.Operation == "move") && !sameTaildriveShare(request.Path, request.NewPath) {
+		timeout = taildriveTransferTimeout
+	}
 	client, err := newTaildriveWebDAVClient(server)
 	if err == nil {
 		defer client.close()
-		ctx, cancel := context.WithTimeout(context.Background(), taildriveMutationTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		err = client.mutate(ctx, request)
 		cancel()
 	}
@@ -744,6 +965,12 @@ func (b *backendController) taildriveManualDownload(requestText string) string {
 }
 
 func (b *backendController) taildriveDownloadWithTracking(requestText string, tracked bool) string {
+	return b.taildriveDownloadWithClient(requestText, tracked, nil)
+}
+
+func (b *backendController) taildriveDownloadWithClient(
+	requestText string, tracked bool, overrideClient *taildriveWebDAVClient,
+) string {
 	var request taildriveTransferRequest
 	if err := json.Unmarshal([]byte(requestText), &request); err != nil {
 		return marshalTaildriveTransfer(taildriveTransferSnapshot{State: "failed", Reason: "invalid_request"})
@@ -753,16 +980,19 @@ func (b *backendController) taildriveDownloadWithTracking(requestText string, tr
 		failed := taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "download", State: "failed", Reason: "invalid_request"}
 		return marshalTaildriveTransfer(failed)
 	}
-	server, available := b.taildriveServer()
-	if !available {
-		failed := taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "download", State: "failed", Reason: "backend_unavailable"}
-		return marshalTaildriveTransfer(failed)
+	client := overrideClient
+	if client == nil {
+		server, available := b.taildriveServer()
+		if !available {
+			failed := taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "download", State: "failed", Reason: "backend_unavailable"}
+			return marshalTaildriveTransfer(failed)
+		}
+		client, err = newTaildriveWebDAVClient(server)
+		if err != nil {
+			return marshalTaildriveTransfer(taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "download", State: "failed", Reason: classifyTaildriveError(err)})
+		}
+		defer client.close()
 	}
-	client, err := newTaildriveWebDAVClient(server)
-	if err != nil {
-		return marshalTaildriveTransfer(taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "download", State: "failed", Reason: classifyTaildriveError(err)})
-	}
-	defer client.close()
 	fileName := taildriveRemoteBaseName(remotePath)
 	startedAt := time.Now().UnixMilli()
 	totalBytes := int64(0)
@@ -811,10 +1041,17 @@ func (b *backendController) taildriveDownloadWithTracking(requestText string, tr
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return marshalTaildriveTransfer(finish("failed", classifyTaildriveError(&taildriveHTTPStatusError{StatusCode: response.StatusCode})))
 	}
-	totalBytes = response.ContentLength
-	knownLength := totalBytes >= 0
-	if totalBytes < 0 {
-		totalBytes = 0
+	contentLength := response.ContentLength
+	knownLength := contentLength >= 0
+	byteCap := maxTaildriveTransferBytes
+	overflowErr := errTaildriveTransferTooLarge
+	if knownLength {
+		if contentLength > maxTaildriveTransferBytes {
+			return marshalTaildriveTransfer(finish("failed", "no_space"))
+		}
+		totalBytes = contentLength
+		byteCap = contentLength
+		overflowErr = errTaildriveStreamOverflow
 	}
 	update(func(snapshot *taildriveTransferSnapshot) {
 		snapshot.State = "transferring"
@@ -848,7 +1085,8 @@ func (b *backendController) taildriveDownloadWithTracking(requestText string, tr
 			snapshot.Bytes += int64(written)
 		})
 	}}
-	if _, err := io.CopyBuffer(progressWriter, response.Body, make([]byte, taildriveProgressBufferLen)); err != nil {
+	boundedBody := newTaildriveBoundedReader(response.Body, byteCap, overflowErr)
+	if _, err := io.CopyBuffer(progressWriter, boundedBody, make([]byte, taildriveProgressBufferLen)); err != nil {
 		return marshalTaildriveTransfer(finish("failed", classifyTaildriveError(err)))
 	}
 	if knownLength && writtenBytes != totalBytes {
@@ -867,7 +1105,38 @@ func (b *backendController) taildriveDownloadWithTracking(requestText string, tr
 	return marshalTaildriveTransfer(finish("completed", ""))
 }
 
+func openRegularUploadFileNoFollow(localPath string) (*os.File, os.FileInfo, error) {
+	fd, err := unix.Open(localPath, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := unix.SetNonblock(fd, false); err != nil {
+		_ = unix.Close(fd)
+		return nil, nil, err
+	}
+	file := os.NewFile(uintptr(fd), localPath)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, nil, os.ErrInvalid
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, os.ErrInvalid
+	}
+	return file, info, nil
+}
+
 func (b *backendController) taildriveUpload(requestText string) string {
+	return b.taildriveUploadWithClient(requestText, nil)
+}
+
+func (b *backendController) taildriveUploadWithClient(
+	requestText string, overrideClient *taildriveWebDAVClient,
+) string {
 	var request taildriveTransferRequest
 	if err := json.Unmarshal([]byte(requestText), &request); err != nil {
 		return marshalTaildriveTransfer(taildriveTransferSnapshot{State: "failed", Reason: "invalid_request"})
@@ -876,35 +1145,35 @@ func (b *backendController) taildriveUpload(requestText string) string {
 	if err != nil {
 		return marshalTaildriveTransfer(taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "upload", State: "failed", Reason: "invalid_request"})
 	}
-	info, err := os.Stat(localPath)
-	if err != nil || !info.Mode().IsRegular() {
+	file, info, err := openRegularUploadFileNoFollow(localPath)
+	if err != nil {
 		return marshalTaildriveTransfer(taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "upload", State: "failed", Reason: "file_unavailable"})
 	}
-	server, available := b.taildriveServer()
-	if !available {
-		return marshalTaildriveTransfer(taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "upload", State: "failed", Reason: "backend_unavailable"})
+	defer file.Close()
+	client := overrideClient
+	if client == nil {
+		server, available := b.taildriveServer()
+		if !available {
+			return marshalTaildriveTransfer(taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "upload", State: "failed", Reason: "backend_unavailable"})
+		}
+		client, err = newTaildriveWebDAVClient(server)
+		if err != nil {
+			return marshalTaildriveTransfer(taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "upload", State: "failed", Reason: classifyTaildriveError(err)})
+		}
+		defer client.close()
 	}
-	client, err := newTaildriveWebDAVClient(server)
-	if err != nil {
-		return marshalTaildriveTransfer(taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "upload", State: "failed", Reason: classifyTaildriveError(err)})
-	}
-	defer client.close()
 	fileName := taildriveRemoteBaseName(remotePath)
-	ctx, cancel, queued := b.beginTaildriveTransfer(request.RequestID, "upload", remotePath, localPath, fileName, info.Size())
+	uploadSize := info.Size()
+	ctx, cancel, queued := b.beginTaildriveTransfer(request.RequestID, "upload", remotePath, localPath, fileName, uploadSize)
 	if !queued {
 		return marshalTaildriveTransfer(taildriveTransferSnapshot{RequestID: request.RequestID, Direction: "upload", State: "failed", Reason: "busy"})
 	}
 	defer cancel()
-	file, err := os.Open(localPath)
-	if err != nil {
-		return marshalTaildriveTransfer(b.finishTaildriveTransfer(request.RequestID, "failed", classifyTaildriveError(err)))
-	}
-	defer file.Close()
 	requestURL, err := taildriveURL(remotePath)
 	if err != nil {
 		return marshalTaildriveTransfer(b.finishTaildriveTransfer(request.RequestID, "failed", "invalid_request"))
 	}
-	progressReader := &taildriveProgressReader{reader: file, onRead: func(read int) {
+	progressReader := &taildriveProgressReader{reader: io.LimitReader(file, uploadSize), onRead: func(read int) {
 		b.updateTaildriveTransfer(request.RequestID, func(snapshot *taildriveTransferSnapshot) {
 			snapshot.State = "transferring"
 			snapshot.Bytes += int64(read)
@@ -914,7 +1183,7 @@ func (b *backendController) taildriveUpload(requestText string) string {
 	if err != nil {
 		return marshalTaildriveTransfer(b.finishTaildriveTransfer(request.RequestID, "failed", "invalid_request"))
 	}
-	httpRequest.ContentLength = info.Size()
+	httpRequest.ContentLength = uploadSize
 	httpRequest.Header.Set("Content-Type", "application/octet-stream")
 	if request.SourceModifiedAtMs > 0 {
 		modifiedAt := time.UnixMilli(request.SourceModifiedAtMs).UTC()
@@ -1035,6 +1304,34 @@ func (r *taildriveProgressReader) Read(buffer []byte) (int, error) {
 	return read, err
 }
 
+type taildriveBoundedReader struct {
+	reader    io.Reader
+	remaining int64
+	exceeded  error
+}
+
+func newTaildriveBoundedReader(reader io.Reader, maxBytes int64, exceededErr error) *taildriveBoundedReader {
+	if maxBytes < 0 {
+		maxBytes = 0
+	}
+	return &taildriveBoundedReader{
+		reader:    io.LimitReader(reader, maxBytes+1),
+		remaining: maxBytes,
+		exceeded:  exceededErr,
+	}
+}
+
+func (r *taildriveBoundedReader) Read(buffer []byte) (int, error) {
+	n, err := r.reader.Read(buffer)
+	if int64(n) > r.remaining {
+		allowed := int(r.remaining)
+		r.remaining = 0
+		return allowed, r.exceeded
+	}
+	r.remaining -= int64(n)
+	return n, err
+}
+
 type taildriveProgressWriter struct {
 	writer  io.Writer
 	onWrite func(int)
@@ -1051,6 +1348,12 @@ func (w *taildriveProgressWriter) Write(buffer []byte) (int, error) {
 func classifyTaildriveError(err error) string {
 	if err == nil {
 		return ""
+	}
+	if errors.Is(err, errTaildriveTransferTooLarge) {
+		return "no_space"
+	}
+	if errors.Is(err, errTaildriveStreamOverflow) {
+		return "network_interrupted"
 	}
 	if errors.Is(err, context.Canceled) {
 		return "cancelled"

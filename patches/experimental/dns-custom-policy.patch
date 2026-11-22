@@ -1,0 +1,110 @@
+--- a/net/dns/manager.go
++++ b/net/dns/manager.go
+@@ -332,6 +332,14 @@
+ // compileConfig converts cfg into a quad-100 resolver configuration
+ // and an OS-level configuration.
+ func (m *Manager) compileConfig(cfg Config) (rcfg resolver.Config, ocfg OSConfig, err error) {
++	// A local platform may supply an explicit user policy. Transform a clone,
++	// keeping m.config as the original so recompilation cannot accumulate input.
++	if policy, ok := m.os.(interface{ TransformDNSConfig(Config) (Config, error) }); ok {
++		cfg, err = policy.TransformDNSConfig(*cfg.Clone())
++		if err != nil {
++			return resolver.Config{}, OSConfig{}, err
++		}
++	}
+ 	// The internal resolver always gets MagicDNS hosts and
+ 	// authoritative suffixes, even if we don't propagate MagicDNS to
+ 	// the OS.
+--- /dev/null
++++ b/net/dns/mesharc_custom_test.go
+@@ -0,0 +1,90 @@
++package dns
++
++import (
++	"errors"
++	dnswire "golang.org/x/net/dns/dnsmessage"
++	"tailscale.com/types/dnstype"
++	"tailscale.com/util/dnsname"
++	"testing"
++)
++
++type customPolicyOS struct {
++	*fakeOSConfigurator
++	upstream string
++	fail     bool
++}
++
++func (o *customPolicyOS) TransformDNSConfig(cfg Config) (Config, error) {
++	if o.fail {
++		return Config{}, errors.New("policy unavailable")
++	}
++	cfg.DefaultResolvers = []*dnstype.Resolver{{Addr: o.upstream}}
++	if cfg.Routes == nil {
++		cfg.Routes = make(map[dnsname.FQDN][]*dnstype.Resolver)
++	}
++	cfg.Routes["."] = cfg.DefaultResolvers
++	cfg.SearchDomains = append(cfg.SearchDomains, "custom.test.")
++	return cfg, nil
++}
++
++func TestCustomDNSHookRoutingAndRecompile(t *testing.T) {
++	root, split := d3Serve(t, false), d3Serve(t, true)
++	m, os := d3Manager(t, root, split)
++	m.os = &customPolicyOS{fakeOSConfigurator: os, upstream: root.addr}
++	cfg := d3Config(split)
++	for i := 0; i < 2; i++ {
++		if err := m.Set(cfg); err != nil {
++			t.Fatal(err)
++		}
++		if err := m.RecompileDNSConfig(); err != nil {
++			t.Fatal(err)
++		}
++		if len(cfg.Routes) != 2 || len(cfg.SearchDomains) != 1 || len(m.config.SearchDomains) != 1 {
++			t.Fatal("transformation changed or accumulated in original config")
++		}
++		if len(os.OSConfig.Nameservers) == 0 || os.OSConfig.Nameservers[0].String() != "100.100.100.100" ||
++			len(os.OSConfig.SearchDomains) != 2 {
++			t.Fatal("custom DNS bypassed Quad100 or search projection")
++		}
++	}
++	for _, family := range []string{"udp", "tcp"} {
++		for _, typ := range []dnswire.Type{dnswire.TypeA, dnswire.TypeAAAA} {
++			for _, prefix := range []string{"ok", "nxdomain", "servfail", "refused", "timeout"} {
++				name := prefix + ".private.test."
++				_, _ = d3Query(m, name, typ, family)
++				if split.count(name) == 0 || root.count(name) != 0 {
++					t.Fatal("private failure escaped to custom default")
++				}
++				reply, err := d3Query(m, "ok.public.test.", typ, family)
++				if err != nil || reply.RCode != 0 || len(reply.Answers) != 1 || root.count("ok.public.test.") == 0 {
++					t.Fatal("custom default did not receive public query")
++				}
++			}
++		}
++		reply, err := d3Query(m, "known.magic.test.", dnswire.TypeA, family)
++		if err != nil || reply.RCode != 0 || len(reply.Answers) != 1 || root.count("known.magic.test.") != 0 {
++			t.Fatal("MagicDNS lost")
++		}
++		reply, err = d3Query(m, "missing.magic.test.", dnswire.TypeA, family)
++		if err != nil || reply.RCode != dnswire.RCodeNameError || root.count("missing.magic.test.") != 0 {
++			t.Fatal("authoritative route leaked")
++		}
++	}
++}
++
++func TestCustomDNSOnlyProjectionAndHookFailure(t *testing.T) {
++	root, split := d3Serve(t, false), d3Serve(t, true)
++	m, os := d3Manager(t, root, split)
++	policy := &customPolicyOS{fakeOSConfigurator: os, upstream: root.addr}
++	m.os = policy
++	if err := m.Set(Config{}); err != nil {
++		t.Fatal(err)
++	}
++	if len(os.OSConfig.Nameservers) == 0 || os.OSConfig.Nameservers[0].String() != "100.100.100.100" {
++		t.Fatal("custom-only DNS not proxied")
++	}
++	policy.fail = true
++	if err := m.RecompileDNSConfig(); err == nil {
++		t.Fatal("hook failure accepted")
++	}
++}

@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "engineVersion": "1.104.5",
+  "goVersion": "go1.27.3",
+  "toolchainRoot": "third_party/ohos-go-1.27.3",
+  "vendorRoot": "third_party/tailscale-1.104.5-dns-custom",
+  "goBaselineTree": "1e8cab8add0d22a29109a28d46c975dc914c7b04",
+  "vendorBaselineTree": "dd1bdb460fb8c7cae08862f57b0448d2602434e8",
+  "windowsToolBinaries": [
+    {
+      "path": "bin/go.exe",
+      "sha256": "B01F0C8F8FB6B836917293728AF5CF8C2A4189A7DFC23A2621830BDBD2C20352"
+    },
+    {
+      "path": "bin/gofmt.exe",
+      "sha256": "9958BF26A4D111A1F9860C56C9B5CB952C76250C835D38DE9C02880C080BE2D7"
+    },
+    {
+      "path": "pkg/tool/windows_amd64/asm.exe",
+      "sha256": "EE49EE096BF7960EB893CBD4BBCA2538EE0C0680F90D8F83961286B75D0FA8E5"
+    },
+    {
+      "path": "pkg/tool/windows_amd64/compile.exe",
+      "sha256": "41A39770B6E97D46538376EA1644EFC7D7F6C892BE8DFE38AD6B0CFB498D3383"
+    },
+    {
+      "path": "pkg/tool/windows_amd64/link.exe",
+      "sha256": "6CBF57815E4B3589FB499AC86A808AFA7C89D1433A1820380CEB497ABB705C4F"
+    },
+    {
+      "path": "pkg/tool/windows_amd64/cgo.exe",
+      "sha256": "6D93FD5FDB4001BD2FAA9EE04D1D03F79A9A489C683E57042A8C1F784249391B"
+    }
+  ],
+  "inputs": [
+    {
+      "path": "patches/experimental/k1-toolchain-manifest.json",
+      "sha256": "AA9B46490A3D5A7AC4200B32B6D8545164EC8C84C2DFEA3BFCBEF56146BFA320"
+    },
+    {
+      "path": "patches/experimental/k2-engine-manifest.json",
+      "sha256": "884698947ED07BE0C9838FEE40E3E7C5240282A205BC7CF825BD1FA165E320A1"
+    },
+    {
+      "path": "patches/experimental/k4-cold-peer-dial.patch",
+      "sha256": "70A7EC0553F7ED28AAEE30EB5D163E606CEC3387157BD7FBF6915D2B61528D40"
+    },
+    {
+      "path": "patches/experimental/k4-cold-peer-manifest.json",
+      "sha256": "9CA842D1553C2779943389B48EB832D3CE4D87609EC5D31446EFD63994C0BF05"
+    },
+    {
+      "path": "patches/experimental/ohos-go-1.27.3.patch",
+      "sha256": "F41B824AA95C2891968EEF7277FB7F29F16E28BF18609A79267E0E2E93FC14A4"
+    },
+    {
+      "path": "patches/experimental/tailscale-v1.104.5-ohos.patch",
+      "sha256": "BA04CF9399D7C4922BA5C70D09F4539C5DC34730518AF1E73811B641D61F1B6B"
+    },
+    {
+      "path": "patches/experimental/dns-d2-tsnet-configurator.patch",
+      "sha256": "909B11DB792E737292275BB1BEDDB55ED712A3C72EEC225E88121F3F15A06800"
+    },
+    {
+      "path": "patches/experimental/dns-d2-kernel-manifest.json",
+      "sha256": "7ADEFD68EC56314C24DCA807861D86FB8000912AD5473FF7763F2397ECB80DB5"
+    },
+    {
+      "path": "patches/experimental/dns-d3-source-routing.patch",
+      "sha256": "827DCA356CB2BF80DFAD03E6C9726EEE4D702398223F214E1C5C20B1770AE52E"
+    },
+    {
+      "path": "patches/experimental/dns-d3-kernel-manifest.json",
+      "sha256": "AD808CEB20092E51FEDF61BAD2A449FFA8FF7575C72CE9E6A003305F6F1298B8"
+    },
+    {
+      "path": "patches/experimental/dns-custom-policy.patch",
+      "sha256": "F6C5A5E57F70FB937495D1ECEC50A58DD0698F87AA783D2A199079000A2EDB4E"
+    },
+    {
+      "path": "patches/experimental/dns-custom-kernel-manifest.json",
+      "sha256": "B49B5142C332FF27ACB541376C17EF5D49396D58E264E700433003EC93A85BAF"
+    }
+  ],
+  "vendorManifest": "patches/experimental/dns-custom-kernel-manifest.json",
+  "additionalVendorPatches": [
+    "patches/experimental/dns-d2-tsnet-configurator.patch",
+    "patches/experimental/dns-d3-source-routing.patch",
+    "patches/experimental/dns-custom-policy.patch"
+  ]
+}

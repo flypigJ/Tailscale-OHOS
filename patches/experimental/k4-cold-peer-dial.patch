@@ -1,0 +1,66 @@
+diff --git a/tsnet/mesharc_cold_peer_test.go b/tsnet/mesharc_cold_peer_test.go
+new file mode 100644
+index 0000000..0b20782
+--- /dev/null
++++ b/tsnet/mesharc_cold_peer_test.go
+@@ -0,0 +1,35 @@
++package tsnet
++
++import (
++	"net/netip"
++	"testing"
++
++	"tailscale.com/ipn/store/mem"
++)
++
++// A cold control map must not send a canonical tailnet destination through
++// the system dialer: the HarmonyOS application is excluded from its own TUN.
++func TestMeshArcExternalTunColdPeerDialPlan(t *testing.T) {
++	controlURL, _ := startControl(t)
++	s := &Server{Dir: t.TempDir(), ControlURL: controlURL, Hostname: "cold-dial", Store: new(mem.Store), Ephemeral: true, Tun: newChanTUN()}
++	t.Cleanup(func() { s.Close() })
++	if _, err := s.Up(t.Context()); err != nil {
++		t.Fatal(err)
++	}
++	for _, address := range []string{"100.64.255.254", "fd7a:115c:a1e0::dead"} {
++		t.Run(address, func(t *testing.T) {
++			ip := netip.MustParseAddr(address)
++			if _, known := s.lb.PeerForIP(ip); known {
++				t.Fatal("fixture unexpectedly knows peer")
++			}
++			got, viaTailnet, err := s.dialer.UserDialPlan(t.Context(), "tcp", netip.AddrPortFrom(ip, 80).String())
++			if err != nil || got.Addr() != ip || !viaTailnet {
++				t.Fatalf("unknown canonical tailnet address falls back to system: viaTailnet=%v err=%v", viaTailnet, err)
++			}
++		})
++	}
++	_, viaTailnet, err := s.dialer.UserDialPlan(t.Context(), "tcp", "192.0.2.1:80")
++	if err != nil || viaTailnet {
++		t.Fatalf("unrouted public destination changed: viaTailnet=%v err=%v", viaTailnet, err)
++	}
++}
+diff --git a/tsnet/tsnet.go b/tsnet/tsnet.go
+index e789d74..3f86573 100644
+--- a/tsnet/tsnet.go
++++ b/tsnet/tsnet.go
+@@ -201,6 +201,7 @@
+ 	"tailscale.com/net/netmon"
+ 	"tailscale.com/net/proxymux"
+ 	"tailscale.com/net/socks5"
++	"tailscale.com/net/tsaddr"
+ 	"tailscale.com/net/tsdial"
+ 	"tailscale.com/tailcfg"
+ 	"tailscale.com/tailcfg/peercap"
+@@ -942,6 +943,12 @@ func (s *Server) start() (reterr error) {
+ 	ns.GetUDPHandlerForFlow = s.getUDPHandlerForFlow
+ 	s.netstack = ns
+ 	s.dialer.UseNetstackForIP = func(ip netip.Addr) bool {
++		// External-TUN applications bypass their own platform VPN. Keep
++		// canonical tailnet destinations on netstack while the first peer map
++		// is still arriving; a system dial cannot reach those destinations.
++		if s.Tun != nil && tsaddr.IsTailscaleIP(ip) {
++			return true
++		}
+ 		// s.lb is assigned below, before any dials can happen.
+ 		_, ok := s.lb.PeerForIP(ip)
+ 		return ok

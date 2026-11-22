@@ -1,0 +1,1972 @@
+diff --git a/client/tailscale/apitype/apitype.go b/client/tailscale/apitype/apitype.go
+index 4524bf9..60bf7c1 100644
+--- a/client/tailscale/apitype/apitype.go
++++ b/client/tailscale/apitype/apitype.go
+@@ -52,8 +52,9 @@ type FileTarget struct {
+ }
+ 
+ type WaitingFile struct {
+-	Name string
+-	Size int64
++	Name         string
++	Size         int64
++	ReceivedAtMs int64 `json:"receivedAtMs,omitempty"`
+ }
+ 
+ // SetPushDeviceTokenRequest is the body POSTed to the LocalAPI endpoint /set-device-token.
+diff --git a/feature/taildrop/mesharc_test.go b/feature/taildrop/mesharc_test.go
+new file mode 100644
+index 0000000..639f95a
+--- /dev/null
++++ b/feature/taildrop/mesharc_test.go
+@@ -0,0 +1,76 @@
++package taildrop
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"tailscale.com/ipn"
++	"tailscale.com/ipn/ipnext"
++	"tailscale.com/tstime"
++	"tailscale.com/util/must"
++)
++
++func TestMeshArcReceivedTime(t *testing.T) {
++	root := t.TempDir()
++	manager := managerOptions{Logf: t.Logf, Clock: tstime.DefaultClock{}, fileOps: must.Get(newFileOps(root)), SendFileNotify: func() {}}.New()
++	defer manager.Shutdown()
++	if _, err := manager.PutFile(clientID("test"), "received.txt", strings.NewReader("test"), 0, 4); err != nil {
++		t.Fatal(err)
++	}
++	received := time.UnixMilli(1700000000123)
++	if err := os.Chtimes(filepath.Join(root, "received.txt"), received, received); err != nil {
++		t.Fatal(err)
++	}
++	files, err := manager.WaitingFiles()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(files) != 1 || files[0].ReceivedAtMs != received.UnixMilli() {
++		t.Fatal("waiting file lost its receive timestamp")
++	}
++}
++
++type meshArcNotifyHost struct {
++	ipnext.Host
++	notifications []ipn.Notify
++}
++
++func (host *meshArcNotifyHost) SendNotifyAsync(notification ipn.Notify) {
++	host.notifications = append(host.notifications, notification)
++}
++
++func TestMeshArcOutgoingProgressCoalescesAndFlushes(t *testing.T) {
++	host := &meshArcNotifyHost{}
++	progress := newOutgoingProgress(&Extension{host: host})
++	progress.last = time.Now()
++	progress.notifyInterval = time.Hour
++	var workers sync.WaitGroup
++	for worker := 0; worker < 8; worker++ {
++		workers.Go(func() {
++			for sent := int64(0); sent < 1000; sent++ {
++				progress.update(ipn.OutgoingFile{ID: "transfer", Sent: sent})
++			}
++		})
++	}
++	workers.Wait()
++	progress.update(ipn.OutgoingFile{ID: "transfer", Sent: 1000, Finished: true, Succeeded: true})
++	if len(host.notifications) != 0 || len(progress.pending) != 1 {
++		t.Fatal("hot-path progress did not coalesce")
++	}
++	progress.notify()
++	if len(host.notifications) != 1 || len(host.notifications[0].OutgoingFiles) != 1 {
++		t.Fatal("completion was not flushed")
++	}
++	final := host.notifications[0].OutgoingFiles[0]
++	if final.Sent != 1000 || !final.Finished || !final.Succeeded {
++		t.Fatal("completion state was lost")
++	}
++	progress.notify()
++	if len(host.notifications) != 1 {
++		t.Fatal("empty flush produced another notification")
++	}
++}
+diff --git a/feature/taildrop/retrieve.go b/feature/taildrop/retrieve.go
+index dd1b75b..936b98c 100644
+--- a/feature/taildrop/retrieve.go
++++ b/feature/taildrop/retrieve.go
+@@ -86,9 +86,14 @@ func (m *manager) WaitingFiles() ([]apitype.WaitingFile, error) {
+ 		if err != nil {
+ 			continue
+ 		}
++		receivedAtMs := int64(0)
++		if !fi.ModTime().IsZero() {
++			receivedAtMs = fi.ModTime().UnixMilli()
++		}
+ 		ret = append(ret, apitype.WaitingFile{
+-			Name: name,
+-			Size: fi.Size(),
++			Name:         name,
++			Size:         fi.Size(),
++			ReceivedAtMs: receivedAtMs,
+ 		})
+ 	}
+ 	sort.Slice(ret, func(i, j int) bool { return ret[i].Name < ret[j].Name })
+diff --git a/ipn/ipnlocal/local.go b/ipn/ipnlocal/local.go
+index 993ffd1..1370c25 100644
+--- a/ipn/ipnlocal/local.go
++++ b/ipn/ipnlocal/local.go
+@@ -1648,6 +1648,8 @@ func (b *LocalBackend) populatePeerStatusLocked(sb *ipnstate.StatusBuilder) {
+ 			HostName:        hostinfo.Hostname(),
+ 			DNSName:         p.Name(),
+ 			OS:              hostinfo.OS(),
++			DeviceModel:     hostinfo.DeviceModel(),
++			OSVersion:       hostinfo.OSVersion(),
+ 			LastSeen:        p.LastSeen().Get(),
+ 			Online:          p.Online().Get(),
+ 			ShareeNode:      hostinfo.ShareeNode(),
+diff --git a/ipn/ipnstate/ipnstate.go b/ipn/ipnstate/ipnstate.go
+index 68eb210..6f60a98 100644
+--- a/ipn/ipnstate/ipnstate.go
++++ b/ipn/ipnstate/ipnstate.go
+@@ -243,9 +243,11 @@ type PeerStatus struct {
+ 
+ 	// DNSName is the Peer's FQDN. It ends with a dot.
+ 	// It has the form "host.<MagicDNSSuffix>."
+-	DNSName string
+-	OS      string // HostInfo.OS
+-	UserID  tailcfg.UserID
++	DNSName     string
++	OS          string // HostInfo.OS
++	OSVersion   string
++	DeviceModel string
++	UserID      tailcfg.UserID
+ 
+ 	// AltSharerUserID is the user who shared this node
+ 	// if it's different than UserID. Otherwise it's zero.
+@@ -512,6 +514,12 @@ func (sb *StatusBuilder) AddPeer(peer key.NodePublic, st *PeerStatus) {
+ 	if v := st.OS; v != "" {
+ 		e.OS = st.OS
+ 	}
++	if v := st.DeviceModel; v != "" {
++		e.DeviceModel = v
++	}
++	if v := st.OSVersion; v != "" {
++		e.OSVersion = v
++	}
+ 	if v := st.SSH_HostKeys; v != nil {
+ 		e.SSH_HostKeys = v
+ 	}
+diff --git a/ipn/ipnstate/mesharc_test.go b/ipn/ipnstate/mesharc_test.go
+new file mode 100644
+index 0000000..ffd4540
+--- /dev/null
++++ b/ipn/ipnstate/mesharc_test.go
+@@ -0,0 +1,30 @@
++package ipnstate_test
++
++import (
++	"encoding/json"
++	"strings"
++	"tailscale.com/ipn/ipnstate"
++	"tailscale.com/types/key"
++	"testing"
++)
++
++func TestMeshArcPeerMetadataMerge(t *testing.T) {
++	peer := key.NewNode().Public()
++	builder := &ipnstate.StatusBuilder{WantPeers: true}
++	builder.AddPeer(peer, &ipnstate.PeerStatus{HostName: "test", OS: "harmonyos"})
++	builder.AddPeer(peer, &ipnstate.PeerStatus{DeviceModel: "test-model", OSVersion: "test-version"})
++	builder.AddPeer(peer, &ipnstate.PeerStatus{})
++	status := builder.Status().Peer[peer]
++	if status.HostName != "test" || status.DeviceModel != "test-model" || status.OSVersion != "test-version" {
++		t.Fatal("peer metadata was lost when merging status")
++	}
++	encoded, err := json.Marshal(status)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, field := range []string{`"DeviceModel":"test-model"`, `"OSVersion":"test-version"`} {
++		if !strings.Contains(string(encoded), field) {
++			t.Fatal("peer metadata JSON compatibility changed")
++		}
++	}
++}
+diff --git a/net/netcheck/netcheck.go b/net/netcheck/netcheck.go
+index 96785a6..1a73a64 100644
+--- a/net/netcheck/netcheck.go
++++ b/net/netcheck/netcheck.go
+@@ -21,6 +21,7 @@
+ 	"sort"
+ 	"sync"
+ 	"syscall"
++	"tailscale.com/util/mesharcdiag"
+ 	"time"
+ 
+ 	"tailscale.com/derp"
+@@ -325,6 +326,7 @@ func (c *Client) ReceiveSTUNPacket(pkt []byte, src netip.AddrPort) {
+ 	c.mu.Unlock()
+ 
+ 	if rs == nil {
++		mesharcdiag.Record("stun_receive", "unavailable", mesharcdiag.Family(src.Addr()), "", "", nil, nil)
+ 		return
+ 	}
+ 
+@@ -337,6 +339,7 @@ func (c *Client) ReceiveSTUNPacket(pkt []byte, src netip.AddrPort) {
+ 			// check probe coming in late. Ignore.
+ 			return
+ 		}
++		mesharcdiag.Record("stun_receive", "parse_failed", mesharcdiag.Family(src.Addr()), "", "", nil, nil)
+ 		c.logf("netcheck: received unexpected STUN message response from %v: %v", src, err)
+ 		return
+ 	}
+@@ -347,6 +350,13 @@ func (c *Client) ReceiveSTUNPacket(pkt []byte, src netip.AddrPort) {
+ 		delete(rs.inFlight, tx)
+ 	}
+ 	rs.mu.Unlock()
++	if mesharcdiag.Enabled() {
++		reason := "unknown_txid"
++		if ok {
++			reason = "matched"
++		}
++		mesharcdiag.Record("stun_receive", reason, mesharcdiag.Family(src.Addr()), "", src.String(), tx[:], nil)
++	}
+ 	if ok {
+ 		onDone(addrPort)
+ 	}
+diff --git a/net/netmon/hostroute_openharmony.go b/net/netmon/hostroute_openharmony.go
+new file mode 100644
+index 0000000..8c8b15d
+--- /dev/null
++++ b/net/netmon/hostroute_openharmony.go
+@@ -0,0 +1,38 @@
++// Copyright (c) Tailscale Inc & contributors
++// SPDX-License-Identifier: BSD-3-Clause
++
++//go:build openharmony
++
++package netmon
++
++import (
++	"net"
++	"sync/atomic"
++)
++
++// OpenHarmony reports runtime.GOOS=linux; use build tags for this platform.
++// Adapted from PR #11's host default-route hint. The official host API is
++// authoritative even if /proc contains a stale route after a bearer switch.
++var hostDefaultInterface atomic.Pointer[string]
++
++const isHarmonyOS = true
++
++func UpdateLastKnownDefaultRouteInterface(name string) {
++	hostDefaultInterface.Store(&name)
++}
++
++func hostDefaultRoute() (DefaultRouteDetails, bool) {
++	name := hostDefaultInterface.Load()
++	if name == nil {
++		return DefaultRouteDetails{}, false
++	}
++	d := DefaultRouteDetails{InterfaceName: *name}
++	if *name != "" {
++		if iface, err := net.InterfaceByName(*name); err == nil {
++			d.InterfaceIndex = iface.Index
++		}
++	}
++	// An empty host hint explicitly means offline, not permission to reuse a
++	// stale kernel default route or guess from an IMS/hotspot interface.
++	return d, true
++}
+diff --git a/net/netmon/hostroute_other.go b/net/netmon/hostroute_other.go
+new file mode 100644
+index 0000000..51d1229
+--- /dev/null
++++ b/net/netmon/hostroute_other.go
+@@ -0,0 +1,14 @@
++// Copyright (c) Tailscale Inc & contributors
++// SPDX-License-Identifier: BSD-3-Clause
++
++//go:build !openharmony
++
++package netmon
++
++const isHarmonyOS = false
++
++func UpdateLastKnownDefaultRouteInterface(string) {}
++
++func hostDefaultRoute() (DefaultRouteDetails, bool) {
++	return DefaultRouteDetails{}, false
++}
+diff --git a/net/netmon/hostroute_test.go b/net/netmon/hostroute_test.go
+new file mode 100644
+index 0000000..dbc73d8
+--- /dev/null
++++ b/net/netmon/hostroute_test.go
+@@ -0,0 +1,16 @@
++package netmon
++
++import "testing"
++
++func TestHarmonyProblematicInterfaces(t *testing.T) {
++	for _, name := range []string{"rmnet_ims0", "rmnet_ims1", "ancormnet0", "vpn-tun"} {
++		if !isHarmonyProblematicInterface(name) {
++			t.Errorf("control-plane or overlay interface %q was allowed", name)
++		}
++	}
++	for _, name := range []string{"rmnet0", "rmnet4", "rmnet_data0", "wlan0", "eth0", "usb0", "rndis0", "en0"} {
++		if isHarmonyProblematicInterface(name) {
++			t.Errorf("physical interface %q was excluded", name)
++		}
++	}
++}
+diff --git a/net/netmon/interfaces_linux.go b/net/netmon/interfaces_linux.go
+index 64cb0b9..89e2b5b 100644
+--- a/net/netmon/interfaces_linux.go
++++ b/net/netmon/interfaces_linux.go
+@@ -127,6 +127,9 @@ func likelyHomeRouterIPLinux() (ret netip.Addr, myIP netip.Addr, ok bool) {
+ }
+ 
+ func defaultRoute() (d DefaultRouteDetails, err error) {
++	if host, known := hostDefaultRoute(); known {
++		return host, nil
++	}
+ 	v, err := defaultRouteInterfaceProcNet()
+ 	if err == nil {
+ 		d.InterfaceName = v
+diff --git a/net/netmon/state.go b/net/netmon/state.go
+index c5e356c..2a467b2 100644
+--- a/net/netmon/state.go
++++ b/net/netmon/state.go
+@@ -37,6 +37,9 @@ func isLoopback(nif *net.Interface) bool { return nif.Flags&net.FlagLoopback !=
+ 
+ func isProblematicInterface(nif *net.Interface) bool {
+ 	name := nif.Name
++	if isHarmonyOS && isHarmonyProblematicInterface(name) {
++		return true
++	}
+ 	// Don't try to send disco/etc packets over zerotier; they effectively
+ 	// DoS each other by doing traffic amplification, both of them
+ 	// preferring/trying to use each other for transport. See:
+@@ -52,6 +55,10 @@ func isProblematicInterface(nif *net.Interface) bool {
+ 	return false
+ }
+ 
++func isHarmonyProblematicInterface(name string) bool {
++	return strings.HasPrefix(name, "rmnet_ims") || strings.HasPrefix(name, "ancormnet") || name == "vpn-tun"
++}
++
+ // LocalAddresses returns the machine's IP addresses, separated by
+ // whether they're loopback addresses. If there are no regular addresses
+ // it will return any IPv4 linklocal or IPv6 unique local addresses because we
+diff --git a/tsnet/mesharc.go b/tsnet/mesharc.go
+new file mode 100644
+index 0000000..3bff9b5
+--- /dev/null
++++ b/tsnet/mesharc.go
+@@ -0,0 +1,118 @@
++package tsnet
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net"
++	"net/http"
++	"time"
++
++	"tailscale.com/net/netmon"
++	"tailscale.com/util/mesharcdiag"
++)
++
++func (s *Server) TaildriveHTTPClient() (*http.Client, error) {
++	if err := s.Start(); err != nil {
++		return nil, err
++	}
++	if s.taildriveFS == nil {
++		return nil, errors.New("tsnet: Taildrive filesystem unavailable")
++	}
++	fs := s.taildriveFS
++
++	transport := &http.Transport{
++		Proxy:               nil,
++		ForceAttemptHTTP2:   false,
++		MaxIdleConns:        4,
++		MaxIdleConnsPerHost: 4,
++		IdleConnTimeout:     60 * time.Second,
++		DialContext: func(_ context.Context, network, address string) (net.Conn, error) {
++			if network != "tcp" && network != "tcp4" && network != "tcp6" {
++				return nil, fmt.Errorf("tsnet: Taildrive unexpected network %q", network)
++			}
++			if address != "100.100.100.100:8080" {
++				return nil, fmt.Errorf("tsnet: Taildrive unexpected destination %q", address)
++			}
++
++			clientConn, serverConn := net.Pipe()
++			remoteAddr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}
++			go func() {
++				if err := fs.HandleConn(serverConn, remoteAddr); err != nil {
++					_ = serverConn.Close()
++				}
++			}()
++			return clientConn, nil
++		},
++	}
++	return &http.Client{Transport: transport}, nil
++}
++
++func (s *Server) NotifyNetworkChange(ctx context.Context, interfaceName string) (err error) {
++	started := time.Now()
++	defer func() {
++		mesharcdiag.Record("host_monitor", mesharcdiag.Result(err), 0, "", "", nil, err, time.Since(started).Milliseconds())
++	}()
++	if s.lb == nil || s.lb.NetMon() == nil {
++		return errors.New("tsnet: network monitor unavailable")
++	}
++	mesharcdiag.NetworkChanged()
++	if mesharcdiag.Enabled() {
++		mesharcdiag.Record("host_network", "network_changed", 0, "", interfaceName, nil, nil)
++	}
++	netmon.UpdateLastKnownDefaultRouteInterface(interfaceName)
++	mon := s.lb.NetMon()
++	changed := make(chan struct{}, 1)
++	unregister := mon.RegisterChangeCallback(func(*netmon.ChangeDelta) {
++		select {
++		case changed <- struct{}{}:
++		default:
++		}
++	})
++	defer unregister()
++	mon.InjectEvent()
++	select {
++	case <-ctx.Done():
++		return ctx.Err()
++	case <-changed:
++		if err := ctx.Err(); err != nil {
++			return err
++		}
++		if interfaceName == "" {
++			return nil
++		}
++		// A netId or address can change without changing the interface name.
++		// Explicit rebind also restarts discovery when netmon calls it minor.
++		if err := s.lb.DebugRebind(); err != nil {
++			return err
++		}
++		// Refresh discovery after rebind so peers learn the physical-network address.
++		return s.lb.DebugReSTUN()
++	}
++}
++
++func (s *Server) NetworkDiagnostics() string {
++	if s.lb == nil || s.lb.MagicConn() == nil {
++		return "netCheck=unavailable"
++	}
++	mc := s.lb.MagicConn()
++	r := mc.GetLastNetcheckReport(context.Background())
++	if r == nil {
++		return "netCheck=pending"
++	}
++	return fmt.Sprintf("netUDP=%t | netIPv4=%t | netIPv6=%t | netMappingVaries=%s | netPort=%d",
++		r.UDP, r.IPv4, r.IPv6, r.MappingVariesByDestIP, mc.LocalPort())
++}
++
++func (s *Server) PathDiagnosticSnapshot() {
++	if s.lb != nil && s.lb.MagicConn() != nil {
++		s.lb.MagicConn().PathDiagnosticSnapshot()
++	}
++}
++
++func (s *Server) RequestPathDiagnosticSTUN() error {
++	if s.lb == nil {
++		return errors.New("backend unavailable")
++	}
++	return s.lb.DebugReSTUN()
++}
+diff --git a/tsnet/mesharc_test.go b/tsnet/mesharc_test.go
+new file mode 100644
+index 0000000..8f938f2
+--- /dev/null
++++ b/tsnet/mesharc_test.go
+@@ -0,0 +1,36 @@
++package tsnet
++
++import (
++	"context"
++	"net/http"
++	"testing"
++	"time"
++)
++
++func TestMeshArcTaildriveLocalAdapter(t *testing.T) {
++	clients := setupTwoClientTest(t, true)
++	client, err := clients.s2.TaildriveHTTPClient()
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer client.CloseIdleConnections()
++	client.Timeout = 5 * time.Second
++	transport := client.Transport.(*http.Transport)
++	if connection, err := transport.DialContext(context.Background(), "tcp", "127.0.0.1:8080"); err == nil {
++		connection.Close()
++		t.Fatal("Taildrive adapter accepted an unrelated destination")
++	}
++	request, err := http.NewRequestWithContext(t.Context(), "PROPFIND", "http://100.100.100.100:8080/", nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	request.Header.Set("Depth", "0")
++	response, err := client.Do(request)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer response.Body.Close()
++	if response.StatusCode != http.StatusMultiStatus {
++		t.Fatalf("Taildrive PROPFIND status = %d", response.StatusCode)
++	}
++}
+diff --git a/tsnet/tsnet.go b/tsnet/tsnet.go
+index 66b6506..e789d74 100644
+--- a/tsnet/tsnet.go
++++ b/tsnet/tsnet.go
+@@ -177,6 +177,7 @@
+ 	"github.com/tailscale/wireguard-go/tun"
+ 	"tailscale.com/client/local"
+ 	"tailscale.com/control/controlclient"
++	"tailscale.com/drive/driveimpl"
+ 	"tailscale.com/envknob"
+ 	_ "tailscale.com/feature/c2n"
+ 	_ "tailscale.com/feature/condregister/netlog"
+@@ -332,7 +333,8 @@ type Server struct {
+ 	// Tun, if non-nil, specifies a custom tun.Device to use for packet I/O.
+ 	//
+ 	// This field must be set before calling Start.
+-	Tun tun.Device
++	Tun         tun.Device
++	taildriveFS *driveimpl.FileSystemForLocal
+ 
+ 	initOnce            sync.Once
+ 	initErr             error
+@@ -698,6 +700,10 @@ func (s *Server) close() {
+ 	if s.localAPIListener != nil {
+ 		s.localAPIListener.Close()
+ 	}
++	if s.taildriveFS != nil {
++		_ = s.taildriveFS.Close()
++		s.taildriveFS = nil
++	}
+ 	if s.loopbackListener != nil {
+ 		s.loopbackListener.Close()
+ 	}
+@@ -893,8 +899,11 @@ func (s *Server) start() (reterr error) {
+ 
+ 	s.dialer = &tsdial.Dialer{Logf: tsLogf} // mutated below (before used)
+ 	s.dialer.SetBus(sys.Bus.Get())
++	s.taildriveFS = driveimpl.NewFileSystemForLocal(tsLogf)
++	closePool.add(s.taildriveFS)
+ 	eng, err := wgengine.NewUserspaceEngine(tsLogf, wgengine.Config{
+ 		Tun:           s.Tun,
++		DriveForLocal: s.taildriveFS,
+ 		EventBus:      sys.Bus.Get(),
+ 		ListenPort:    s.Port,
+ 		NetMon:        s.netMon,
+diff --git a/util/mesharcdiag/mesharcdiag.go b/util/mesharcdiag/mesharcdiag.go
+new file mode 100644
+index 0000000..55e17bd
+--- /dev/null
++++ b/util/mesharcdiag/mesharcdiag.go
+@@ -0,0 +1,449 @@
++// Copyright (c) MeshArc contributors
++// SPDX-License-Identifier: BSD-3-Clause
++
++// Package mesharcdiag records opt-in, bounded, address-free path diagnostics.
++// Never pass formatted logs to it. Names are enumerated below, identifiers are
++// HMACed before storage, and all remaining fields are numeric.
++package mesharcdiag
++
++import (
++	"context"
++	"crypto/hmac"
++	"crypto/rand"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"net/netip"
++	"sort"
++	"strings"
++	"sync"
++	"sync/atomic"
++	"syscall"
++	"time"
++)
++
++const Capacity = 1536
++const MaxSeconds = 300
++const MaxPerSecond = 120
++
++var kinds = map[string]bool{}
++var reasons = map[string]bool{}
++
++func init() {
++	for _, s := range []string{"capture", "host_network", "host_protection", "host_monitor", "socket_bind", "socket_rebind", "socket_snapshot", "receive_loop", "udp_receive", "udp_write", "stun_send", "stun_receive", "restun", "netcheck", "netcheck_cache", "disco_send", "disco_receive", "disco_drop", "ping", "pong", "endpoint", "data_path", "active_probe"} {
++		kinds[s] = true
++	}
++	for _, s := range []string{"start", "stop", "expired", "cleared", "replaced", "requested", "queued", "coalesced", "closed", "stopped", "offline", "unavailable", "unknown", "ok", "error", "suppressed", "udp4", "udp6", "derp", "peer_relay", "direct", "disco", "stun", "wireguard", "unknown_peer", "unknown_relay", "no_key", "decrypt_failed", "decrypted", "parse_failed", "parsed", "invalid_transport", "unknown_txid", "expired_txid", "endpoint_removed", "matched", "candidate", "promoted", "retained", "ping", "pong", "call_me_maybe", "other", "timeout", "busy", "rate_limited", "cancelled", "skipped", "complete", "not_selected", "no_derp_map", "wrong_family", "truncated", "protected", "fallback", "wifi", "cellular", "pending", "network_changed", "stale", "failed", "observed"} {
++		reasons[s] = true
++	}
++}
++
++type Event struct {
++	Sequence     uint64 `json:"seq"`
++	TimestampMS  int64  `json:"timestampMs"`
++	ElapsedMS    int64  `json:"elapsedMs"`
++	NetworkEpoch uint64 `json:"networkEpoch"`
++	SocketEpoch  uint64 `json:"socketEpoch,omitempty"`
++	Kind         string `json:"kind"`
++	Result       string `json:"result"`
++	Family       int    `json:"family,omitempty"`
++	Peer         string `json:"peer,omitempty"`
++	Endpoint     string `json:"endpoint,omitempty"`
++	Tx           string `json:"tx,omitempty"`
++	Errno        int64  `json:"errno,omitempty"`
++	// N is a fixed numeric tuple, interpreted by kind. No arbitrary log fields.
++	N []int64 `json:"n,omitempty"`
++}
++
++type Counter struct {
++	Kind   string `json:"kind"`
++	Result string `json:"result"`
++	Count  uint64 `json:"count"`
++}
++
++type Coverage struct {
++	Kind  string `json:"kind"`
++	State string `json:"state"`
++	Count uint64 `json:"count"`
++}
++
++type Snapshot struct {
++	Coverage          []Coverage `json:"coverage"`
++	Schema            int        `json:"schema"`
++	Session           string     `json:"session"`
++	Active            bool       `json:"active"`
++	StartedMS         int64      `json:"startedMs"`
++	DeadlineMS        int64      `json:"deadlineMs"`
++	StoppedMS         int64      `json:"stoppedMs"`
++	StopReason        string     `json:"stopReason"`
++	NetworkEpoch      uint64     `json:"networkEpoch"`
++	Capacity          int        `json:"capacity"`
++	Overwritten       uint64     `json:"overwritten"`
++	RateDropped       uint64     `json:"rateDropped"`
++	ContentionDropped uint64     `json:"contentionDropped"`
++	InvalidDropped    uint64     `json:"invalidDropped"`
++	SampledOut        uint64     `json:"sampledOut"`
++	Counters          []Counter  `json:"counters"`
++	Events            []Event    `json:"events"`
++	Missing           []string   `json:"missing"`
++}
++
++type session struct {
++	expired    [128][6]byte
++	expiredAt  int
++	expiredLen int
++
++	mu                                              sync.Mutex
++	secret                                          [32]byte
++	id                                              string
++	started, deadline                               time.Time
++	stopped                                         time.Time
++	reason                                          string
++	ctx                                             context.Context
++	cancel                                          context.CancelFunc
++	active                                          atomic.Bool
++	epoch                                           atomic.Uint64
++	socket4                                         atomic.Uint64
++	socket6                                         atomic.Uint64
++	seq, overwritten, rateDropped, invalid, sampled uint64
++	contention                                      atomic.Uint64
++	window                                          int64
++	used                                            int
++	ring                                            [Capacity]Event
++	head, length                                    int
++	counters                                        map[string]uint64
++	lastSample                                      map[string]time.Time
++}
++
++var current atomic.Pointer[session]
++var lifecycle sync.Mutex
++var epoch atomic.Uint64
++var sockets4, sockets6 atomic.Uint64
++
++// Start replaces the previous capture. No persistent setting re-enables it.
++func Start(seconds int) error {
++	lifecycle.Lock()
++	defer lifecycle.Unlock()
++	if seconds < 1 || seconds > MaxSeconds {
++		seconds = 180
++	}
++	s := &session{started: time.Now(), reason: "pending", counters: map[string]uint64{}, lastSample: map[string]time.Time{}}
++	if _, err := rand.Read(s.secret[:]); err != nil {
++		return err
++	}
++	// The session ID discloses no HMAC key bytes: derive it separately.
++	id := sha256.Sum256(append([]byte("session:"), s.secret[:]...))
++	s.id = hex.EncodeToString(id[:8])
++	s.deadline = s.started.Add(time.Duration(seconds) * time.Second)
++	s.ctx, s.cancel = context.WithDeadline(context.Background(), s.deadline)
++	s.epoch.Store(epoch.Load())
++	s.socket4.Store(sockets4.Load())
++	s.socket6.Store(sockets6.Load())
++	s.active.Store(true)
++	if old := current.Swap(s); old != nil {
++		stopSession(old, "replaced")
++	}
++	record(s, "capture", "start", 0, "", "", nil, nil, false, int64(seconds))
++	go func() {
++		<-s.ctx.Done()
++		if s.active.Load() {
++			stopSession(s, "expired")
++		}
++	}()
++	return nil
++}
++
++func stopSession(s *session, reason string) {
++	s.mu.Lock()
++	if s.active.Swap(false) {
++		s.stopped = time.Now()
++		s.reason = reason
++		s.cancel()
++	}
++	s.mu.Unlock()
++}
++
++func Stop() {
++	if s := current.Load(); s != nil {
++		stopSession(s, "stop")
++	}
++}
++func Clear() {
++	lifecycle.Lock()
++	defer lifecycle.Unlock()
++	if s := current.Swap(nil); s != nil {
++		stopSession(s, "cleared")
++	}
++}
++func Enabled() bool {
++	s := current.Load()
++	return s != nil && s.active.Load() && time.Now().Before(s.deadline)
++}
++func Context() context.Context {
++	if s := current.Load(); s != nil {
++		return s.ctx
++	}
++	c, cancel := context.WithCancel(context.Background())
++	cancel()
++	return c
++}
++func Epoch() uint64          { return epoch.Load() }
++func NetworkChanged() uint64 { return epoch.Add(1) }
++func SocketChanged(family int) uint64 {
++	if family == 6 {
++		return sockets6.Add(1)
++	}
++	return sockets4.Add(1)
++}
++
++func Family(ip netip.Addr) int {
++	if ip.Is4() {
++		return 4
++	}
++	if ip.Is6() {
++		return 6
++	}
++	return 0
++}
++func ErrorCode(err error) int64 {
++	if err == nil {
++		return 0
++	}
++	var errno syscall.Errno
++	if errors.As(err, &errno) {
++		return int64(errno)
++	}
++	if errors.Is(err, context.DeadlineExceeded) {
++		return -2
++	}
++	if errors.Is(err, context.Canceled) {
++		return -3
++	}
++	return -1 // No error text, addresses or formatted arguments enter the cache.
++}
++func Result(err error) string {
++	if err == nil {
++		return "ok"
++	}
++	return "error"
++}
++
++func TxID(tx []byte) string {
++	if len(tx) < 6 {
++		return ""
++	}
++	// Upstream Windows logs show the first six random TxID bytes. A public,
++	// domain-separated hash permits correlation without keys, node IDs or IPs.
++	b := append([]byte("mesharc-disco-tx-v1:"), tx[:6]...)
++	h := sha256.Sum256(b)
++	return hex.EncodeToString(h[:12])
++}
++
++func pseudonym(s *session, domain, raw string) string {
++	if raw == "" {
++		return ""
++	}
++	h := hmac.New(sha256.New, s.secret[:])
++	h.Write([]byte(domain))
++	h.Write([]byte{0})
++	h.Write([]byte(raw))
++	return hex.EncodeToString(h.Sum(nil)[:12])
++}
++
++// Record never blocks the network on diagnostics locks. Disabled calls do not
++// hash, format or allocate. Optional numbers have at most eight numeric values.
++func Record(kind, result string, family int, peer, endpoint string, tx []byte, err error, n ...int64) {
++	s := current.Load()
++	if s == nil || !s.active.Load() || !time.Now().Before(s.deadline) {
++		return
++	}
++	record(s, kind, result, family, peer, endpoint, tx, err, false, n...)
++}
++
++// Sample bounds per-packet data-path/receive observations to one per second per
++// kind/family, with counters of omitted observations. It does not imply loss.
++func Sample(kind, result string, family int, peer, endpoint string, n ...int64) {
++	s := current.Load()
++	if s == nil || !s.active.Load() || !time.Now().Before(s.deadline) {
++		return
++	}
++	record(s, kind, result, family, peer, endpoint, nil, nil, true, n...)
++}
++
++func record(s *session, kind, result string, family int, peer, endpoint string, tx []byte, err error, sample bool, n ...int64) {
++	if !s.mu.TryLock() {
++		s.contention.Add(1)
++		return
++	}
++	defer s.mu.Unlock()
++	if !s.active.Load() {
++		return
++	}
++	if !kinds[kind] || !reasons[result] || (family != 0 && family != 4 && family != 6) || len(n) > 8 {
++		s.invalid++
++		return
++	}
++	now := time.Now()
++	if !now.Before(s.deadline) {
++		return
++	}
++	s.counters[kind+"/"+result]++
++	if sample {
++		key := kind + string(rune(family))
++		last := s.lastSample[key]
++		if now.Sub(last) < time.Second {
++			s.sampled++
++			return
++		}
++		s.lastSample[key] = now
++	}
++	if s.window != now.Unix() {
++		s.window = now.Unix()
++		s.used = 0
++	}
++	if s.used >= MaxPerSecond {
++		s.rateDropped++
++		return
++	}
++	s.used++
++	s.seq++
++	e := Event{Sequence: s.seq, TimestampMS: now.UnixMilli(), ElapsedMS: now.Sub(s.started).Milliseconds(), NetworkEpoch: epoch.Load(), Kind: kind, Result: result, Family: family, Peer: pseudonym(s, "peer", peer), Endpoint: pseudonym(s, "endpoint", endpoint), Tx: TxID(tx), Errno: ErrorCode(err), N: append([]int64(nil), n...)}
++	if family == 4 {
++		e.SocketEpoch = sockets4.Load()
++	}
++	if family == 6 {
++		e.SocketEpoch = sockets6.Load()
++	}
++	i := (s.head + s.length) % Capacity
++	if s.length == Capacity {
++		i = s.head
++		s.head = (s.head + 1) % Capacity
++		s.overwritten++
++	} else {
++		s.length++
++	}
++	s.ring[i] = e
++}
++
++func Read() Snapshot {
++	s := current.Load()
++	if s == nil {
++		return Snapshot{Schema: 1, StopReason: "never_started", Events: []Event{}, Missing: []string{"capture_not_started"}}
++	}
++	if !time.Now().Before(s.deadline) {
++		stopSession(s, "expired")
++	}
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	r := Snapshot{Schema: 1, Session: s.id, Active: s.active.Load(), StartedMS: s.started.UnixMilli(), DeadlineMS: s.deadline.UnixMilli(), StopReason: s.reason, NetworkEpoch: epoch.Load(), Capacity: Capacity, Overwritten: s.overwritten, RateDropped: s.rateDropped, ContentionDropped: s.contention.Load(), InvalidDropped: s.invalid, SampledOut: s.sampled, Counters: []Counter{}, Events: make([]Event, s.length), Missing: []string{"kernel_egress_not_observed", "remote_delivery_not_observed", "per_socket_nethandle_binding_not_used", "raw_payload_not_collected", "addresses_and_keys_not_collected"}}
++	if !s.stopped.IsZero() {
++		r.StoppedMS = s.stopped.UnixMilli()
++	}
++	for k, v := range s.counters {
++		parts := strings.SplitN(k, "/", 2)
++		r.Counters = append(r.Counters, Counter{Kind: parts[0], Result: parts[1], Count: v})
++	}
++	sort.Slice(r.Counters, func(i, j int) bool {
++		a, b := r.Counters[i], r.Counters[j]
++		if a.Kind == b.Kind {
++			return a.Result < b.Result
++		}
++		return a.Kind < b.Kind
++	})
++	for i := 0; i < s.length; i++ {
++		r.Events[i] = s.ring[(s.head+i)%Capacity]
++	}
++	for _, k := range []string{"netcheck", "socket_bind", "disco_receive", "pong"} {
++		found := false
++		for name := range s.counters {
++			if len(name) > len(k) && name[:len(k)+1] == k+"/" {
++				found = true
++				break
++			}
++		}
++		if !found {
++			r.Missing = append(r.Missing, k+"_not_observed_in_capture")
++		}
++	}
++	for _, kind := range []string{"socket_bind", "socket_snapshot", "receive_loop", "udp_receive", "netcheck", "stun_receive", "disco_receive", "pong", "endpoint", "data_path"} {
++		var count uint64
++		for _, counter := range r.Counters {
++			if counter.Kind == kind {
++				count += counter.Count
++			}
++		}
++		state := "observed"
++		if count == 0 {
++			state = "observed_zero"
++			if kind == "socket_bind" || kind == "netcheck" || kind == "receive_loop" {
++				state = "not_captured"
++			}
++			if r.ContentionDropped > 0 {
++				state = "unknown_due_to_drops"
++			}
++		}
++		r.Coverage = append(r.Coverage, Coverage{Kind: kind, State: state, Count: count})
++	}
++	return r
++}
++
++func JSON() string {
++	b, err := json.Marshal(Read())
++	if err != nil {
++		return `{"schema":1,"missing":["serialization_failed"]}`
++	}
++	return string(b)
++}
++
++// RecordIn prevents an asynchronous operation from crossing capture boundaries.
++func RecordIn(ctx context.Context, kind, result string, family int, peer, endpoint string, tx []byte, err error, n ...int64) {
++	s := current.Load()
++	if s == nil || s.ctx != ctx || !s.active.Load() || !time.Now().Before(s.deadline) {
++		return
++	}
++	record(s, kind, result, family, peer, endpoint, tx, err, false, n...)
++}
++
++func MarkExpired(tx []byte) {
++	s := current.Load()
++	if s == nil || !s.active.Load() || len(tx) < 6 || !time.Now().Before(s.deadline) {
++		return
++	}
++	if !s.mu.TryLock() {
++		s.contention.Add(1)
++		return
++	}
++	defer s.mu.Unlock()
++	copy(s.expired[s.expiredAt][:], tx[:6])
++	s.expiredAt = (s.expiredAt + 1) % len(s.expired)
++	if s.expiredLen < len(s.expired) {
++		s.expiredLen++
++	}
++}
++func UnknownPongReason(tx []byte) string {
++	s := current.Load()
++	if s == nil || len(tx) < 6 || !s.active.Load() {
++		return "unknown_txid"
++	}
++	if !s.mu.TryLock() {
++		s.contention.Add(1)
++		return "unknown_txid"
++	}
++	defer s.mu.Unlock()
++	var k [6]byte
++	copy(k[:], tx[:6])
++	for i := 0; i < s.expiredLen; i++ {
++		if s.expired[i] == k {
++			return "expired_txid"
++		}
++	}
++	return "unknown_txid"
++}
++
++func SocketEpoch(family int) uint64 {
++	if family == 6 {
++		return sockets6.Load()
++	}
++	return sockets4.Load()
++}
+diff --git a/util/mesharcdiag/mesharcdiag_test.go b/util/mesharcdiag/mesharcdiag_test.go
+new file mode 100644
+index 0000000..b718447
+--- /dev/null
++++ b/util/mesharcdiag/mesharcdiag_test.go
+@@ -0,0 +1,141 @@
++package mesharcdiag
++
++import (
++	"context"
++	"errors"
++	"strings"
++	"sync"
++	"syscall"
++	"testing"
++	"time"
++)
++
++func TestDisabledAndPrivacy(t *testing.T) {
++	Clear()
++	Record("ping", "ok", 6, "nodekey:secret", "[2001:db8::123]:41641", nil, errors.New("Bearer secret"))
++	if len(Read().Events) != 0 {
++		t.Fatal("disabled recorded")
++	}
++	if a := testing.AllocsPerRun(100, func() { Record("ping", "ok", 6, "secret", "10.0.0.1", nil, nil) }); a != 0 {
++		t.Fatalf("disabled allocs %v", a)
++	}
++	if err := Start(1); err != nil {
++		t.Fatal(err)
++	}
++	Record("ping", "ok", 6, "nodekey:secret", "[2001:db8::123]:41641", []byte{1, 2, 3, 4, 5, 6, 7}, errors.New("Bearer secret / 10.0.0.1 / disco-key"))
++	Record("token-secret", "ok", 4, "", "", nil, nil)
++	j := JSON()
++	for _, x := range []string{"nodekey:secret", "2001:db8", "10.0.0.1", "Bearer secret", "disco-key", "token-secret"} {
++		if strings.Contains(j, x) {
++			t.Fatalf("leaked %s", x)
++		}
++	}
++	first := Read().Events[1].Endpoint
++	Start(1)
++	Record("ping", "ok", 6, "nodekey:secret", "[2001:db8::123]:41641", nil, nil)
++	if first == Read().Events[1].Endpoint {
++		t.Fatal("alias reused")
++	}
++	Stop()
++	before := len(Read().Events)
++	Record("ping", "ok", 6, "", "", nil, nil)
++	if len(Read().Events) != before {
++		t.Fatal("stopped recorded")
++	}
++	if Read().StoppedMS == 0 || Read().StopReason != "stop" {
++		t.Fatal("stop metadata missing")
++	}
++	Clear()
++}
++
++func TestBoundsAndConcurrency(t *testing.T) {
++	Start(10)
++	defer Clear()
++	s := current.Load()
++	for i := 0; i < Capacity+100; i++ {
++		s.mu.Lock()
++		s.used = 0
++		s.mu.Unlock()
++		Record("pong", "unknown_txid", 6, "peer", "ip", nil, nil, int64(i))
++	}
++	r := Read()
++	if len(r.Events) != Capacity || r.Overwritten == 0 {
++		t.Fatal("ring not bounded")
++	}
++	for i := 0; i < 300; i++ {
++		Record("ping", "ok", 4, "", "", nil, nil)
++	}
++	if Read().RateDropped == 0 {
++		t.Fatal("no rate accounting")
++	}
++	var wg sync.WaitGroup
++	for i := 0; i < 8; i++ {
++		wg.Add(1)
++		go func() {
++			defer wg.Done()
++			for j := 0; j < 1000; j++ {
++				NetworkChanged()
++				Record("pong", "decrypt_failed", 6, "", "", nil, nil)
++				_ = Read()
++			}
++		}()
++	}
++	wg.Wait()
++	if len(JSON()) > 1<<20 {
++		t.Fatal("export exceeds byte budget")
++	}
++	ctx := Context()
++	Stop()
++	select {
++	case <-ctx.Done():
++	case <-time.After(time.Second):
++		t.Fatal("probe cancellation failed")
++	}
++}
++
++func TestExpiryEpochErrorsAndCorrelation(t *testing.T) {
++	Start(1)
++	defer Clear()
++	NetworkChanged()
++	SocketChanged(6)
++	Record("socket_bind", "error", 6, "", "", nil, syscall.EACCES)
++	r := Read()
++	e := r.Events[len(r.Events)-1]
++	if e.Errno != int64(syscall.EACCES) || e.NetworkEpoch == 0 || e.SocketEpoch == 0 {
++		t.Fatal("missing errno/epochs")
++	}
++	if ErrorCode(context.DeadlineExceeded) != -2 || ErrorCode(context.Canceled) != -3 {
++		t.Fatal("error categories")
++	}
++	if TxID([]byte{1, 2, 3, 4, 5, 6, 7}) != TxID([]byte{1, 2, 3, 4, 5, 6, 8}) {
++		t.Fatal("Windows prefix correlation")
++	}
++	s := current.Load()
++	s.mu.Lock()
++	s.deadline = time.Now().Add(-time.Second)
++	s.mu.Unlock()
++	if Read().StopReason != "expired" || Enabled() {
++		t.Fatal("expiry")
++	}
++}
++
++func TestCaptureBoundaryAndCoverage(t *testing.T) {
++	Start(30)
++	old := Context()
++	Start(30)
++	defer Clear()
++	RecordIn(old, "ping", "ok", 6, "old", "old", nil, nil)
++	if len(Read().Events) != 1 {
++		t.Fatal("old capture recorded")
++	}
++	r := Read()
++	found := false
++	for _, c := range r.Coverage {
++		if c.Kind == "disco_receive" && c.State == "observed_zero" {
++			found = true
++		}
++	}
++	if !found {
++		t.Fatal("zero observation state missing")
++	}
++}
+diff --git a/wgengine/magicsock/endpoint.go b/wgengine/magicsock/endpoint.go
+index f4304fe..cb7680e 100644
+--- a/wgengine/magicsock/endpoint.go
++++ b/wgengine/magicsock/endpoint.go
+@@ -18,6 +18,7 @@
+ 	"runtime"
+ 	"slices"
+ 	"sync/atomic"
++	"tailscale.com/util/mesharcdiag"
+ 	"time"
+ 
+ 	"golang.org/x/net/ipv4"
+@@ -439,12 +440,14 @@ func (e *endpointDisco) shortString() string {
+ }
+ 
+ type sentPing struct {
+-	to      epAddr
+-	at      mono.Time
+-	timer   *time.Timer // timeout timer
+-	purpose discoPingPurpose
+-	size    int                    // size of the disco message
+-	resCB   *pingResultAndCallback // or nil for internal use
++	pathDiagEpoch  uint64
++	pathDiagSocket uint64
++	to             epAddr
++	at             mono.Time
++	timer          *time.Timer // timeout timer
++	purpose        discoPingPurpose
++	size           int                    // size of the disco message
++	resCB          *pingResultAndCallback // or nil for internal use
+ }
+ 
+ // endpointState is some state and history for a specific endpoint of
+@@ -1255,6 +1258,10 @@ func (de *endpoint) discoPingTimeout(txid stun.TxID) {
+ 	if debugDisco() || !de.bestAddr.ap.IsValid() || bestUntrusted {
+ 		de.c.dlogf("[v1] magicsock: disco: timeout waiting for pong %x from %v (%v, %v)", txid[:6], sp.to, de.publicKey.ShortString(), de.discoShort())
+ 	}
++	if mesharcdiag.Enabled() {
++		mesharcdiag.Record("pong", "timeout", mesharcdiag.Family(sp.to.ap.Addr()), de.publicKey.String(), sp.to.String(), txid[:], nil)
++	}
++	mesharcdiag.MarkExpired(txid[:])
+ 	de.removeSentDiscoPingLocked(txid, sp, discoPingTimedOut)
+ }
+ 
+@@ -1404,6 +1411,7 @@ func (de *endpoint) startDiscoPingLocked(ep epAddr, now mono.Time, purpose disco
+ 	for _, s := range sizes {
+ 		txid := stun.NewTxID()
+ 		de.sentPing[txid] = sentPing{
++			pathDiagEpoch: mesharcdiag.Epoch(), pathDiagSocket: mesharcdiag.SocketEpoch(mesharcdiag.Family(ep.ap.Addr())),
+ 			to:      ep,
+ 			at:      now,
+ 			timer:   time.AfterFunc(pingTimeoutDuration, func() { de.discoPingTimeout(txid) }),
+@@ -1878,6 +1886,9 @@ func (de *endpoint) noteConnectivityChange() {
+ 	defer de.mu.Unlock()
+ 
+ 	de.clearBestAddrLocked()
++	if mesharcdiag.Enabled() {
++		mesharcdiag.Record("endpoint", "network_changed", 0, de.publicKey.String(), "", nil, nil)
++	}
+ 
+ 	for k := range de.endpointState {
+ 		de.endpointState[k].clear()
+@@ -1938,6 +1949,9 @@ func (de *endpoint) handlePongConnLocked(m *disco.Pong, di *discoInfo, src epAdd
+ 		return false
+ 	}
+ 	knownTxID = true // for naked returns below
++	if mesharcdiag.Enabled() {
++		mesharcdiag.Record("pong", "matched", pathDiagSourceFamily(src), de.publicKey.String(), src.String(), m.TxID[:], nil, int64(sp.purpose), int64(sp.pathDiagEpoch), int64(sp.pathDiagSocket))
++	}
+ 	de.removeSentDiscoPingLocked(m.TxID, sp, discoPongReceived)
+ 
+ 	pktLen := int(pingSizeToPktLen(sp.size, src))
+@@ -1957,6 +1971,9 @@ func (de *endpoint) handlePongConnLocked(m *disco.Pong, di *discoInfo, src epAdd
+ 		// endpointState, they are either de.bestAddr or not.
+ 		st, ok := de.endpointState[sp.to.ap]
+ 		if !ok {
++			if mesharcdiag.Enabled() {
++				mesharcdiag.Record("pong", "endpoint_removed", pathDiagSourceFamily(src), de.publicKey.String(), src.String(), m.TxID[:], nil)
++			}
+ 			// This is no longer an endpoint we care about.
+ 			return
+ 		}
+@@ -1996,6 +2013,9 @@ func (de *endpoint) handlePongConnLocked(m *disco.Pong, di *discoInfo, src epAdd
+ 			wireMTU: pingSizeToPktLen(sp.size, sp.to),
+ 		}
+ 		bestUntrusted := now.After(de.trustBestAddrUntil)
++		if mesharcdiag.Enabled() {
++			mesharcdiag.Record("endpoint", "candidate", mesharcdiag.Family(sp.to.ap.Addr()), de.publicKey.String(), sp.to.String(), m.TxID[:], nil, latency.Milliseconds())
++		}
+ 		if betterAddr(thisPong, de.bestAddr) || bestUntrusted {
+ 			de.c.logf("magicsock: disco: node %v %v now using %v mtu=%v tx=%x", de.publicKey.ShortString(), de.discoShort(), sp.to, thisPong.wireMTU, m.TxID[:6])
+ 			de.debugUpdates.Add(EndpointChange{
+@@ -2005,6 +2025,12 @@ func (de *endpoint) handlePongConnLocked(m *disco.Pong, di *discoInfo, src epAdd
+ 				To:   thisPong,
+ 			})
+ 			de.setBestAddrLocked(thisPong)
++			if mesharcdiag.Enabled() {
++				mesharcdiag.Record("endpoint", "promoted", mesharcdiag.Family(sp.to.ap.Addr()), de.publicKey.String(), sp.to.String(), m.TxID[:], nil)
++			}
++		}
++		if de.bestAddr.epAddr != thisPong.epAddr && mesharcdiag.Enabled() {
++			mesharcdiag.Record("endpoint", "not_selected", mesharcdiag.Family(sp.to.ap.Addr()), de.publicKey.String(), sp.to.String(), m.TxID[:], nil)
+ 		}
+ 		if de.bestAddr.epAddr == thisPong.epAddr {
+ 			de.debugUpdates.Add(EndpointChange{
+diff --git a/wgengine/magicsock/magicsock.go b/wgengine/magicsock/magicsock.go
+index aa1932c..b1fc0ba 100644
+--- a/wgengine/magicsock/magicsock.go
++++ b/wgengine/magicsock/magicsock.go
+@@ -23,6 +23,7 @@
+ 	"strings"
+ 	"sync"
+ 	"sync/atomic"
++	"tailscale.com/util/mesharcdiag"
+ 	"time"
+ 
+ 	"github.com/tailscale/wireguard-go/conn"
+@@ -156,6 +157,10 @@ type metrics struct {
+ 
+ // A Conn routes UDP packets and actively manages a list of its endpoints.
+ type Conn struct {
++	pathDiagRun         atomic.Uint64
++	pathDiagReportAt    atomic.Int64
++	pathDiagReportEpoch atomic.Uint64
++
+ 	// This block mirrors the contents and field order of the Options
+ 	// struct. Initialized once at construction, then constant.
+ 
+@@ -1023,11 +1028,16 @@ func (c *Conn) setNetInfoHavePortMap() {
+ }
+ 
+ func (c *Conn) updateNetInfo(ctx context.Context) (*netcheck.Report, error) {
++	run := c.pathDiagRun.Add(1)
++	runEpoch := mesharcdiag.Epoch()
++	started := time.Now()
++	mesharcdiag.Record("netcheck", "start", 0, "", "", nil, nil, int64(run), int64(runEpoch))
+ 	c.mu.Lock()
+ 	dm := c.derpMap
+ 	c.mu.Unlock()
+ 
+ 	if dm == nil || c.networkDown() {
++		mesharcdiag.Record("netcheck", "skipped", 0, "", "", nil, nil, int64(run), int64(runEpoch), time.Since(started).Milliseconds(), c.pathDiagCacheAge())
+ 		return new(netcheck.Report), nil
+ 	}
+ 
+@@ -1044,9 +1054,12 @@ func (c *Conn) updateNetInfo(ctx context.Context) (*netcheck.Report, error) {
+ 		OnlyTCP443:          c.onlyTCP443.Load(),
+ 	})
+ 	if err != nil {
++		mesharcdiag.Record("netcheck", "error", 0, "", "", nil, err, int64(run), int64(runEpoch), time.Since(started).Milliseconds(), c.pathDiagCacheAge())
+ 		return nil, err
+ 	}
+-
++	c.pathDiagReportAt.Store(time.Now().UnixMilli())
++	c.pathDiagReportEpoch.Store(runEpoch)
++	mesharcdiag.Record("netcheck", "complete", 0, "", "", nil, nil, int64(run), int64(runEpoch), time.Since(started).Milliseconds(), pathDiagBool(report.UDP), pathDiagBool(report.IPv4), pathDiagBool(report.IPv6), pathDiagBool(report.IPv4CanSend)+2*pathDiagBool(report.IPv6CanSend)+4*pathDiagBool(report.OSHasIPv6))
+ 	c.lastNetCheckReport.Store(report)
+ 	c.noV4.Store(!report.IPv4)
+ 	c.noV6.Store(!report.IPv6)
+@@ -1541,6 +1554,18 @@ func (c *Conn) Send(buffs [][]byte, ep conn.Endpoint, offset int) (err error) {
+ var errUnsupportedConnType = errors.New("unsupported connection type")
+ 
+ func (c *Conn) sendUDPBatch(addr epAddr, buffs [][]byte, offset int) (sent bool, err error) {
++	if mesharcdiag.Enabled() {
++		defer func() {
++			reason := "error"
++			if sent {
++				reason = "direct"
++				if addr.vni.IsSet() {
++					reason = "peer_relay"
++				}
++			}
++			mesharcdiag.Sample("data_path", reason, mesharcdiag.Family(addr.ap.Addr()), "", addr.String(), int64(len(buffs)))
++		}()
++	}
+ 	if !hasUDPTransport {
+ 		return false, errNoUDP
+ 	}
+@@ -1584,6 +1609,13 @@ func (c *Conn) sendUDP(ipp netip.AddrPort, b []byte, isDisco bool, isGeneveEncap
+ 		c.maybeRebindOnError(err)
+ 	} else {
+ 		if sent && !isDisco {
++			if mesharcdiag.Enabled() {
++				reason := "direct"
++				if isGeneveEncap {
++					reason = "peer_relay"
++				}
++				mesharcdiag.Sample("data_path", reason, mesharcdiag.Family(ipp.Addr()), "", ipp.String(), int64(len(b)))
++			}
+ 			switch {
+ 			case ipp.Addr().Is4():
+ 				if isGeneveEncap {
+@@ -1629,7 +1661,12 @@ func (c *Conn) maybeRebindOnError(err error) {
+ // It returns the number of bytes sent along with any error encountered. It
+ // returns errors.ErrUnsupported if the client is explicitly configured to only
+ // send data over TCP port 443 and/or we're running on wasm.
+-func (c *Conn) sendUDPNetcheck(b []byte, addr netip.AddrPort) (int, error) {
++func (c *Conn) sendUDPNetcheck(b []byte, addr netip.AddrPort) (n int, err error) {
++	defer func() {
++		if mesharcdiag.Enabled() {
++			mesharcdiag.Record("stun_send", mesharcdiag.Result(err), mesharcdiag.Family(addr.Addr()), "", addr.String(), nil, err, int64(n), int64(len(b)))
++		}
++	}()
+ 	if !hasUDPTransport || c.onlyTCP443.Load() {
+ 		return 0, errors.ErrUnsupported
+ 	}
+@@ -1647,16 +1684,31 @@ func (c *Conn) sendUDPNetcheck(b []byte, addr netip.AddrPort) (int, error) {
+ // See sendAddr's docs on the return value meanings.
+ func (c *Conn) sendUDPStd(addr netip.AddrPort, b []byte) (sent bool, err error) {
+ 	if c.onlyTCP443.Load() {
++		mesharcdiag.Record("udp_write", "suppressed", mesharcdiag.Family(addr.Addr()), "", "", nil, nil)
+ 		return false, nil
+ 	}
+ 	switch {
+ 	case addr.Addr().Is4():
+ 		_, err = c.pconn4.WriteToUDPAddrPort(b, addr)
++		if mesharcdiag.Enabled() {
++			if err != nil {
++				mesharcdiag.Record("udp_write", "error", 4, "", addr.String(), nil, err, int64(len(b)))
++			} else {
++				mesharcdiag.Sample("udp_write", "ok", 4, "", addr.String(), int64(len(b)))
++			}
++		}
+ 		if err != nil && (c.noV4.Load() || neterror.TreatAsLostUDP(err)) {
+ 			return false, nil
+ 		}
+ 	case addr.Addr().Is6():
+ 		_, err = c.pconn6.WriteToUDPAddrPort(b, addr)
++		if mesharcdiag.Enabled() {
++			if err != nil {
++				mesharcdiag.Record("udp_write", "error", 6, "", addr.String(), nil, err, int64(len(b)))
++			} else {
++				mesharcdiag.Sample("udp_write", "ok", 6, "", addr.String(), int64(len(b)))
++			}
++		}
+ 		if err != nil && (c.noV6.Load() || neterror.TreatAsLostUDP(err)) {
+ 			return false, nil
+ 		}
+@@ -1702,6 +1754,9 @@ func (c *Conn) sendAddr(addr netip.AddrPort, pubKey key.NodePublic, b []byte, is
+ 			metricSendDERPErrorClosed.Add(1)
+ 			return false, errConnClosed
+ 		case ch <- wr:
++			if !isDisco && mesharcdiag.Enabled() {
++				mesharcdiag.Sample("data_path", "derp", 0, pubKey.String(), addr.String(), int64(len(b)), 1)
++			}
+ 			metricSendDERPQueued.Add(1)
+ 			return true, nil
+ 		default:
+@@ -1760,13 +1815,20 @@ func (c *Conn) mkReceiveFunc(ruc *RebindingUDPConn, healthItem *health.ReceiveFu
+ 		if len(batchingPackets) != len(packets) {
+ 			batchingPackets = make([]batching.ReceivedPacket, len(packets))
+ 		}
++		family := 4
++		if ruc == &c.pconn6 {
++			family = 6
++		}
++		mesharcdiag.Sample("receive_loop", "start", family, "", "")
+ 
+ 		for {
+ 			if c.connCtx.Err() != nil {
+ 				return 0, net.ErrClosed
+ 			}
++			readEpoch := mesharcdiag.SocketEpoch(family)
+ 			numMsgs, err := ruc.ReadBatch(slab, batchingPackets)
+ 			if err != nil {
++				mesharcdiag.Record("receive_loop", "error", family, "", "", nil, err)
+ 				if neterror.PacketWasTruncated(err) {
+ 					continue
+ 				}
+@@ -1784,6 +1846,9 @@ func (c *Conn) mkReceiveFunc(ruc *RebindingUDPConn, healthItem *health.ReceiveFu
+ 					continue
+ 				}
+ 				buf := slab[batchingPacket.Offset : batchingPacket.Offset+batchingPacket.Size]
++				if mesharcdiag.Enabled() {
++					mesharcdiag.Sample("udp_receive", "ok", family, "", batchingPacket.Source.String(), int64(batchingPacket.Size), int64(readEpoch))
++				}
+ 				packets[i].Size = batchingPacket.Size
+ 				packets[i].Offset = batchingPacket.Offset
+ 				if isGeneveEncap, ok := c.receiveIP(buf, batchingPacket.Source, &epCache, &packets[i]); ok {
+@@ -1973,6 +2038,35 @@ func (c *Conn) sendDiscoAllocateUDPRelayEndpointRequest(dst epAddr, dstKey key.N
+ // The dstKey should only be non-zero if the dstDisco key
+ // unambiguously maps to exactly one peer.
+ func (c *Conn) sendDiscoMessage(dst epAddr, dstKey key.NodePublic, dstDisco key.DiscoPublic, m disco.Message, logLevel discoLogLevel) (sent bool, err error) {
++	if mesharcdiag.Enabled() {
++		kind := "other"
++		var tx []byte
++		switch v := m.(type) {
++		case *disco.Ping:
++			kind = "ping"
++			tx = v.TxID[:]
++		case *disco.Pong:
++			kind = "pong"
++			tx = v.TxID[:]
++		case *disco.CallMeMaybe:
++			kind = "call_me_maybe"
++		}
++		defer func() {
++			result := "suppressed"
++			if sent {
++				result = "ok"
++			}
++			if err != nil {
++				result = "error"
++			}
++			family := mesharcdiag.Family(dst.ap.Addr())
++			if dst.ap.Addr() == tailcfg.DerpMagicIPAddr {
++				family = 0
++			}
++			mesharcdiag.Record("disco_send", result, family, dstKey.String(), dst.String(), tx, err, pathDiagMessageCode(kind), pathDiagBool(sent), pathDiagBool(dst.ap.Addr() == tailcfg.DerpMagicIPAddr))
++		}()
++	}
++
+ 	isDERP := dst.ap.Addr() == tailcfg.DerpMagicIPAddr
+ 	if _, isPong := m.(*disco.Pong); isPong && !isDERP && dst.ap.Addr().Is4() {
+ 		time.Sleep(debugIPv4DiscoPingPenalty())
+@@ -2198,6 +2292,9 @@ func packetLooksLike(msg []byte) (t packetLooksLikeType, isGeneveEncap bool) {
+ // by a Geneve header with the control bit set.
+ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshakeMsg bool, derpNodeSrc key.NodePublic, via discoRXPath) {
+ 	sender := key.DiscoPublicFromRaw32(mem.B(msg[len(disco.Magic):discoHeaderLen]))
++	if mesharcdiag.Enabled() {
++		mesharcdiag.Record("disco_receive", "disco", pathDiagSourceFamily(src), sender.String(), src.String(), nil, nil, int64(len(msg)))
++	}
+ 
+ 	c.mu.Lock()
+ 	defer c.mu.Unlock()
+@@ -2209,6 +2306,7 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
+ 		c.logf("magicsock: disco: got disco-looking frame from %v via %s len %v", sender.ShortString(), via, len(msg))
+ 	}
+ 	if c.privateKey.IsZero() {
++		mesharcdiag.Record("disco_drop", "no_key", 0, "", "", nil, nil)
+ 		// Ignore disco messages when we're stopped.
+ 		return
+ 	}
+@@ -2232,6 +2330,9 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
+ 		di = c.discoInfoForKnownPeerLocked(sender)
+ 	default:
+ 		metricRecvDiscoBadPeer.Add(1)
++		if mesharcdiag.Enabled() {
++			mesharcdiag.Record("disco_drop", "unknown_peer", pathDiagSourceFamily(src), sender.String(), src.String(), nil, nil)
++		}
+ 		if debugDisco() {
+ 			c.logf("magicsock: disco: ignoring disco-looking frame, don't know of key %v", sender.ShortString())
+ 		}
+@@ -2268,6 +2369,9 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
+ 		}
+ 
+ 		metricRecvDiscoBadKey.Add(1)
++		if mesharcdiag.Enabled() {
++			mesharcdiag.Record("disco_drop", "decrypt_failed", pathDiagSourceFamily(src), sender.String(), src.String(), nil, nil)
++		}
+ 		return
+ 	}
+ 
+@@ -2278,6 +2382,9 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
+ 		cb(packet.PathDisco, time.Now(), disco.ToPCAPFrame(src.ap, derpNodeSrc, payload), packet.CaptureMeta{})
+ 	}
+ 
++	if mesharcdiag.Enabled() {
++		mesharcdiag.Record("disco_receive", "decrypted", pathDiagSourceFamily(src), sender.String(), src.String(), nil, nil)
++	}
+ 	dm, err := disco.Parse(payload)
+ 	if debugDisco() {
+ 		c.logf("magicsock: disco: disco.Parse = %T, %v", dm, err)
+@@ -2289,6 +2396,9 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
+ 		// understand. Not even worth logging about, lest it
+ 		// be too spammy for old clients.
+ 		metricRecvDiscoBadParse.Add(1)
++		if mesharcdiag.Enabled() {
++			mesharcdiag.Record("disco_drop", "parse_failed", pathDiagSourceFamily(src), sender.String(), src.String(), nil, nil)
++		}
+ 		return
+ 	}
+ 
+@@ -2315,9 +2425,15 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
+ 	switch dm := dm.(type) {
+ 	case *disco.Ping:
+ 		metricRecvDiscoPing.Add(1)
++		if mesharcdiag.Enabled() {
++			mesharcdiag.Record("ping", "parsed", pathDiagSourceFamily(src), sender.String(), src.String(), dm.TxID[:], nil)
++		}
+ 		c.handlePingLocked(dm, src, di, derpNodeSrc)
+ 	case *disco.Pong:
+ 		metricRecvDiscoPong.Add(1)
++		if mesharcdiag.Enabled() {
++			mesharcdiag.Record("pong", "parsed", pathDiagSourceFamily(src), sender.String(), src.String(), dm.TxID[:], nil)
++		}
+ 		// There might be multiple nodes for the sender's DiscoKey.
+ 		// Ask each to handle it, stopping once one reports that
+ 		// the Pong's TxID was theirs.
+@@ -2329,6 +2445,9 @@ func (c *Conn) handleDiscoMessage(msg []byte, src epAddr, shouldBeRelayHandshake
+ 			}
+ 			return true
+ 		})
++		if !knownTxID && mesharcdiag.Enabled() {
++			mesharcdiag.Record("pong", mesharcdiag.UnknownPongReason(dm.TxID[:]), pathDiagSourceFamily(src), sender.String(), src.String(), dm.TxID[:], nil)
++		}
+ 		if buildfeatures.HasNATTraversal && !knownTxID && src.vni.IsSet() {
+ 			// If it's an unknown TxID, and it's Geneve-encapsulated, then
+ 			// make [relayManager] aware. It might be in the middle of probing
+@@ -3711,6 +3830,7 @@ func (c *Conn) ReSTUN(why string) {
+ 		return
+ 	}
+ 	metricReSTUNCalls.Add(1)
++	mesharcdiag.Record("restun", "requested", 0, "", "", nil, nil)
+ 
+ 	// If the user stopped the app, stop doing work. (When the
+ 	// user stops Tailscale via the GUI apps, ipn/local.go
+@@ -3728,12 +3848,14 @@ func (c *Conn) ReSTUN(why string) {
+ 	}
+ 
+ 	if c.endpointsUpdateActive {
++		mesharcdiag.Record("restun", "coalesced", 0, "", "", nil, nil)
+ 		if c.wantEndpointsUpdate != why {
+ 			c.dlogf("[v1] magicsock: ReSTUN: endpoint update active, need another later (%q)", why)
+ 			c.wantEndpointsUpdate = why
+ 		}
+ 	} else {
+ 		c.endpointsUpdateActive = true
++		mesharcdiag.Record("restun", "queued", 0, "", "", nil, nil)
+ 		go c.updateEndpoints(why)
+ 	}
+ }
+@@ -3809,8 +3931,11 @@ func (c *Conn) bindSocket(ruc *RebindingUDPConn, network string, curPortFate cur
+ 			c.logf("magicsock: bindSocket %v close failed: %v", network, err)
+ 		}
+ 		// Open a new one with the desired port.
++		mesharcdiag.SocketChanged(pathDiagFamily(network))
++		mesharcdiag.Record("socket_bind", "requested", pathDiagFamily(network), "", "", nil, nil, int64(port))
+ 		pconn, err = c.listenPacket(network, port)
+ 		if err != nil {
++			mesharcdiag.Record("socket_bind", "error", pathDiagFamily(network), "", "", nil, err, int64(port))
+ 			c.logf("magicsock: unable to bind %v port %d: %v", network, port, err)
+ 			continue
+ 		}
+@@ -3836,6 +3961,9 @@ func (c *Conn) bindSocket(ruc *RebindingUDPConn, network string, curPortFate cur
+ 		if debugBindSocket() {
+ 			c.logf("magicsock: bindSocket: successfully listened %v port %d", network, port)
+ 		}
++		if mesharcdiag.Enabled() {
++			mesharcdiag.Record("socket_bind", "ok", pathDiagFamily(network), "", pconn.LocalAddr().String(), nil, nil, pathDiagPort(pconn.LocalAddr()))
++		}
+ 		ruc.setConnLocked(pconn, network, c.controlKnobs)
+ 		if network == "udp4" {
+ 			c.health.SetUDP4Unbound(false)
+@@ -3843,6 +3971,7 @@ func (c *Conn) bindSocket(ruc *RebindingUDPConn, network string, curPortFate cur
+ 		return nil
+ 	}
+ 
++	mesharcdiag.Record("socket_bind", "unavailable", pathDiagFamily(network), "", "", nil, nil)
+ 	// Failed to bind, including on port 0 (!).
+ 	// Set pconn to a dummy conn whose reads block until closed.
+ 	// This keeps the receive funcs alive for a future in which
+@@ -3880,6 +4009,12 @@ func (c *Conn) rebind(curPortFate currentPortFate) error {
+ // Rebind closes and re-binds the UDP sockets and resets the DERP connection.
+ // It should be followed by a call to ReSTUN.
+ func (c *Conn) Rebind() {
++	mesharcdiag.Record("socket_rebind", "start", 0, "", "", nil, nil)
++	defer func() {
++		if mesharcdiag.Enabled() {
++			c.PathDiagnosticSnapshot()
++		}
++	}()
+ 	metricRebindCalls.Add(1)
+ 	if err := c.rebind(keepCurrentPort); err != nil {
+ 		c.logf("%v", err)
+diff --git a/wgengine/magicsock/path_diagnostics.go b/wgengine/magicsock/path_diagnostics.go
+new file mode 100644
+index 0000000..21c958c
+--- /dev/null
++++ b/wgengine/magicsock/path_diagnostics.go
+@@ -0,0 +1,101 @@
++package magicsock
++
++import (
++	"net"
++	"strconv"
++	"tailscale.com/disco"
++	"tailscale.com/tailcfg"
++	"tailscale.com/util/mesharcdiag"
++	"time"
++)
++
++func pathDiagBool(v bool) int64 {
++	if v {
++		return 1
++	}
++	return 0
++}
++func pathDiagFamily(network string) int {
++	if network == "udp6" {
++		return 6
++	}
++	return 4
++}
++func pathDiagMessageCode(kind string) int64 {
++	switch kind {
++	case "ping":
++		return 1
++	case "pong":
++		return 2
++	case "call_me_maybe":
++		return 3
++	}
++	return 0
++}
++func (c *Conn) pathDiagCacheAge() int64 {
++	at := c.pathDiagReportAt.Load()
++	if at == 0 {
++		return -1
++	}
++	return time.Now().UnixMilli() - at
++}
++func (c *Conn) PathDiagnosticSnapshot() {
++	if !mesharcdiag.Enabled() {
++		return
++	}
++	for _, f := range []int{4, 6} {
++		ruc := &c.pconn4
++		if f == 6 {
++			ruc = &c.pconn6
++		}
++		ruc.mu.Lock()
++		reason := "unavailable"
++		port := int64(-1)
++		local := ""
++		if ruc.pconn != nil {
++			if _, dummy := ruc.pconn.(*blockForeverConn); !dummy {
++				reason = "ok"
++				a := ruc.localAddrLocked()
++				port = int64(a.Port)
++				local = a.String()
++			}
++		}
++		ruc.mu.Unlock()
++		mesharcdiag.Record("socket_snapshot", reason, f, "", local, nil, nil, port)
++	}
++	r := c.lastNetCheckReport.Load()
++	reason := "pending"
++	if r != nil {
++		reason = "ok"
++		if c.pathDiagReportEpoch.Load() != mesharcdiag.Epoch() {
++			reason = "stale"
++		}
++	}
++	n := []int64{c.pathDiagCacheAge(), int64(c.pathDiagReportEpoch.Load())}
++	if r != nil {
++		n = append(n, pathDiagBool(r.UDP), pathDiagBool(r.IPv4), pathDiagBool(r.IPv6))
++	}
++	mesharcdiag.Record("netcheck_cache", reason, 0, "", "", nil, nil, n...)
++}
++
++// Keep the protocol dependency explicit for source/ABI audit tools.
++var _ disco.Message = (*disco.Pong)(nil)
++
++func pathDiagSourceFamily(src epAddr) int {
++	if src.ap.Addr() == tailcfg.DerpMagicIPAddr {
++		return 0
++	}
++	return mesharcdiag.Family(src.ap.Addr())
++}
++
++func pathDiagPort(a net.Addr) int64 {
++	_, p, e := net.SplitHostPort(a.String())
++	if e != nil {
++		return -1
++	}
++	v, e := strconv.ParseInt(p, 10, 32)
++	if e != nil {
++		return -1
++	}
++	return v
++}
+diff --git a/wgengine/magicsock/path_diagnostics_test.go b/wgengine/magicsock/path_diagnostics_test.go
+new file mode 100644
+index 0000000..ea6450e
+--- /dev/null
++++ b/wgengine/magicsock/path_diagnostics_test.go
+@@ -0,0 +1,214 @@
++package magicsock
++
++import (
++	"context"
++	"errors"
++	"net"
++	"net/netip"
++	"syscall"
++	"testing"
++	"time"
++
++	"github.com/tailscale/wireguard-go/conn"
++	"tailscale.com/disco"
++	"tailscale.com/health"
++	"tailscale.com/net/netcheck"
++	"tailscale.com/net/stun"
++	"tailscale.com/tstime/mono"
++	"tailscale.com/types/key"
++	"tailscale.com/types/logger"
++	"tailscale.com/util/eventbus"
++	"tailscale.com/util/eventbus/eventbustest"
++	"tailscale.com/util/mesharcdiag"
++	"tailscale.com/util/set"
++	"tailscale.com/wgengine/router"
++)
++
++type diagnosticFakeConn struct{ writeErr error }
++
++func (*diagnosticFakeConn) ReadFrom([]byte) (int, net.Addr, error)      { return 0, nil, net.ErrClosed }
++func (c *diagnosticFakeConn) WriteTo(b []byte, _ net.Addr) (int, error) { return len(b), c.writeErr }
++func (c *diagnosticFakeConn) WriteToUDPAddrPort(b []byte, _ netip.AddrPort) (int, error) {
++	return len(b), c.writeErr
++}
++func (*diagnosticFakeConn) ReadFromUDPAddrPort([]byte) (int, netip.AddrPort, error) {
++	return 0, netip.AddrPort{}, net.ErrClosed
++}
++func (*diagnosticFakeConn) Close() error                     { return nil }
++func (*diagnosticFakeConn) LocalAddr() net.Addr              { return &net.UDPAddr{IP: net.IPv4zero, Port: 41641} }
++func (*diagnosticFakeConn) SetDeadline(time.Time) error      { return nil }
++func (*diagnosticFakeConn) SetReadDeadline(time.Time) error  { return nil }
++func (*diagnosticFakeConn) SetWriteDeadline(time.Time) error { return nil }
++
++type diagnosticFakeListener struct{}
++
++func (diagnosticFakeListener) ListenPacket(_ context.Context, network, _ string) (net.PacketConn, error) {
++	if network == "udp6" {
++		return nil, &net.OpError{Op: "listen", Net: network, Err: syscall.EACCES}
++	}
++	return &diagnosticFakeConn{}, nil
++}
++func diagnosticCapture(t *testing.T) {
++	t.Helper()
++	if err := mesharcdiag.Start(30); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(mesharcdiag.Clear)
++}
++func diagnosticHas(kind, result string) bool {
++	for _, e := range mesharcdiag.Read().Events {
++		if e.Kind == kind && e.Result == result {
++			return true
++		}
++	}
++	return false
++}
++
++func TestPathDiagnosticIPv6BindFailureAndDummy(t *testing.T) {
++	diagnosticCapture(t)
++	c := newConn(logger.Discard)
++	ec := eventbustest.NewBus(t).Client("path-diagnostics")
++	t.Cleanup(ec.Close)
++	c.portUpdatePub = eventbus.Publish[router.PortUpdate](ec)
++	c.health = new(health.Tracker)
++	c.testOnlyPacketListener = diagnosticFakeListener{}
++	if c.bindSocket(&c.pconn6, "udp6", keepCurrentPort) == nil {
++		t.Fatal("expected IPv6 failure")
++	}
++	if err := c.bindSocket(&c.pconn4, "udp4", keepCurrentPort); err != nil {
++		t.Fatal(err)
++	}
++	c.PathDiagnosticSnapshot()
++	if !diagnosticHas("socket_bind", "error") || !diagnosticHas("socket_snapshot", "unavailable") || !diagnosticHas("socket_bind", "ok") {
++		t.Fatal("failed and real sockets conflated")
++	}
++	c.pconn6.Close()
++	c.pconn4.Close()
++}
++
++func TestPathDiagnosticSuppressedWriteError(t *testing.T) {
++	diagnosticCapture(t)
++	c := newConn(logger.Discard)
++	c.noV6.Store(true)
++	c.pconn6.mu.Lock()
++	c.pconn6.setConnLocked(&diagnosticFakeConn{writeErr: syscall.ENETUNREACH}, "udp6", nil)
++	c.pconn6.mu.Unlock()
++	sent, err := c.sendUDPStd(netip.MustParseAddrPort("[2001:db8::55]:41641"), []byte{1})
++	if sent || err != nil {
++		t.Fatal("upstream return contract changed")
++	}
++	if !diagnosticHas("udp_write", "error") {
++		t.Fatal("suppressed errno missing")
++	}
++	c.pconn6.Close()
++}
++
++func TestPathDiagnosticDiscoRejectionStages(t *testing.T) {
++	diagnosticCapture(t)
++	c := newConn(logger.Discard)
++	c.privateKey = key.NewNode()
++	remote := key.NewDisco()
++	src := epAddr{ap: netip.MustParseAddrPort("[2001:db8::9]:41641")}
++	header := append([]byte(disco.Magic), remote.Public().AppendTo(nil)...)
++	c.handleDiscoMessage(append(header, make([]byte, 64)...), src, false, key.NodePublic{}, discoRXPathUDP)
++	if !diagnosticHas("disco_drop", "unknown_peer") {
++		t.Fatal("unknown peer missing")
++	}
++	c.peerMap.nodesOfDisco[remote.Public()] = set.Set[key.NodePublic]{}
++	c.handleDiscoMessage(append(header, make([]byte, 64)...), src, false, key.NodePublic{}, discoRXPathUDP)
++	if !diagnosticHas("disco_drop", "decrypt_failed") {
++		t.Fatal("decrypt rejection missing")
++	}
++	shared := remote.Shared(c.discoAtomic.Public())
++	c.handleDiscoMessage(append(header, shared.Seal([]byte{255, 0})...), src, false, key.NodePublic{}, discoRXPathUDP)
++	if !diagnosticHas("disco_drop", "parse_failed") {
++		t.Fatal("parse rejection missing")
++	}
++	tx := [12]byte{1, 2, 3, 4, 5, 6}
++	payload := (&disco.Pong{TxID: tx}).AppendMarshal(nil)
++	c.handleDiscoMessage(append(header, shared.Seal(payload)...), src, false, key.NodePublic{}, discoRXPathUDP)
++	if !diagnosticHas("pong", "parsed") || !diagnosticHas("pong", "unknown_txid") {
++		t.Fatal("parsed and accepted conflated")
++	}
++	mesharcdiag.MarkExpired(tx[:])
++	c.handleDiscoMessage(append(header, shared.Seal(payload)...), src, false, key.NodePublic{}, discoRXPathUDP)
++	if !diagnosticHas("pong", "expired_txid") {
++		t.Fatal("late pong missing")
++	}
++}
++
++type diagnosticReadConn struct {
++	diagnosticFakeConn
++	delivered bool
++}
++
++func (c *diagnosticReadConn) ReadFromUDPAddrPort(buffer []byte) (int, netip.AddrPort, error) {
++	if c.delivered {
++		return 0, netip.AddrPort{}, net.ErrClosed
++	}
++	c.delivered = true
++	return copy(buffer, make([]byte, 64)), netip.MustParseAddrPort("192.0.2.10:41641"), nil
++}
++
++func TestPathDiagnosticSlabReceiveAndSocketEpoch(t *testing.T) {
++	diagnosticCapture(t)
++	c := newConn(logger.Discard)
++	c.connCtx = context.Background()
++	c.pconn4.mu.Lock()
++	c.pconn4.setConnLocked(&diagnosticReadConn{}, "udp4", nil)
++	c.pconn4.mu.Unlock()
++	defer c.pconn4.Close()
++	mesharcdiag.SocketChanged(4)
++	epoch := mesharcdiag.SocketEpoch(4)
++	receive := c.mkReceiveFunc(&c.pconn4, nil, nil, nil, nil, nil)
++	// An unauthenticated packet is observed but never passed to WireGuard.
++	n, err := receive(make([]byte, 2048), make([]conn.ReceivedPacket, 1))
++	if n != 0 || !errors.Is(err, net.ErrClosed) {
++		t.Fatalf("receive returned %d, %v", n, err)
++	}
++	if !diagnosticHas("udp_receive", "ok") || !diagnosticHas("receive_loop", "error") {
++		t.Fatal("slab receive evidence lost")
++	}
++	found := false
++	for _, event := range mesharcdiag.Read().Events {
++		if event.Kind == "udp_receive" {
++			if len(event.N) < 2 || event.N[0] != 64 || event.N[1] != int64(epoch) {
++				t.Fatal("receive size/socket generation changed")
++			}
++			found = true
++		}
++	}
++	if !found {
++		t.Fatal("missing UDP receive event")
++	}
++}
++
++func TestPathDiagnosticRemovedEndpointAndCache(t *testing.T) {
++	diagnosticCapture(t)
++	c := newConn(logger.Discard)
++	src := epAddr{ap: netip.MustParseAddrPort("[2001:db8::7]:41641")}
++	tx := stun.TxID{1, 1, 1, 1, 1, 1}
++	timer := time.NewTimer(time.Hour)
++	de := &endpoint{c: c, publicKey: key.NewNode().Public(), sentPing: map[stun.TxID]sentPing{tx: {to: src, at: mono.Now(), timer: timer}}}
++	if !de.handlePongConnLocked(&disco.Pong{TxID: tx}, nil, src) {
++		t.Fatal("expected matching transaction")
++	}
++	if !diagnosticHas("pong", "endpoint_removed") || diagnosticHas("endpoint", "promoted") {
++		t.Fatal("removed endpoint promoted")
++	}
++	c.lastNetCheckReport.Store(&netcheck.Report{IPv6: true})
++	c.pathDiagReportAt.Store(time.Now().Add(-time.Minute).UnixMilli())
++	c.pathDiagReportEpoch.Store(mesharcdiag.Epoch())
++	mesharcdiag.NetworkChanged()
++	c.PathDiagnosticSnapshot()
++	if !diagnosticHas("netcheck_cache", "stale") {
++		t.Fatal("old IPv6 report marked current")
++	}
++	_, err := c.updateNetInfo(context.Background())
++	if err != nil && !errors.Is(err, context.Canceled) {
++		t.Fatal(err)
++	}
++	if !diagnosticHas("netcheck", "skipped") {
++		t.Fatal("missing no-map completion")
++	}
++}

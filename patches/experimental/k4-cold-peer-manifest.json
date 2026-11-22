@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "milestone": "K4",
+  "version": "1.104.5",
+  "baselineTree": "dd1bdb460fb8c7cae08862f57b0448d2602434e8",
+  "k2ManifestSha256": "884698947ED07BE0C9838FEE40E3E7C5240282A205BC7CF825BD1FA165E320A1",
+  "deltaFiles": [
+    "tsnet/mesharc_cold_peer_test.go",
+    "tsnet/tsnet.go"
+  ],
+  "files": [
+    {
+      "path": "client/tailscale/apitype/apitype.go",
+      "sha256": "C47020DDE7E03408F6DDE7167F8ED83CC5DA040CDB28ABEDD538AAF7928F0B7C"
+    },
+    {
+      "path": "feature/taildrop/mesharc_test.go",
+      "sha256": "22A3421E47F86C85A43E9161FC76BC7EEDD2EC1A429BB1058B5F5A671552FE11"
+    },
+    {
+      "path": "feature/taildrop/retrieve.go",
+      "sha256": "3FD534387A17C5F381B1CADF0BA66B2323FD2979E02C3AE641B8450F285C0BDF"
+    },
+    {
+      "path": "ipn/ipnlocal/local.go",
+      "sha256": "40FA2434C9C66BEEC3D86500B3688E2C9C5C0E247A9E7AEA63424B37D1F48708"
+    },
+    {
+      "path": "ipn/ipnstate/ipnstate.go",
+      "sha256": "5091B9ABBB3D9E99245B4A358CC9385363100DFFCA2425BBDAD7E9C355613B4D"
+    },
+    {
+      "path": "ipn/ipnstate/mesharc_test.go",
+      "sha256": "2FAF526F2DCB57A1091E085D608EC5EF28FC6E97C083241B26BA497194F74A62"
+    },
+    {
+      "path": "net/netcheck/netcheck.go",
+      "sha256": "73784578048A3FF48CAB1FDDD4C0A14B5BBF3547834C51B944424C507C763CAB"
+    },
+    {
+      "path": "net/netmon/hostroute_openharmony.go",
+      "sha256": "436ACA035F52CB9B34C41485A387548ADFC4D2E1AF564949F7D9F82A7FC7033C"
+    },
+    {
+      "path": "net/netmon/hostroute_other.go",
+      "sha256": "49DB494C9E227C7554588362C0717F53452CA04F7CA2300ADEF2906F240D4C84"
+    },
+    {
+      "path": "net/netmon/hostroute_test.go",
+      "sha256": "04AB4E192724E0EAFB36477E3CE0E8FA092BC5B4A7B6583C18A463F1371FBFD0"
+    },
+    {
+      "path": "net/netmon/interfaces_linux.go",
+      "sha256": "E7958735F55E8BC848EBEF3AAFE287674685059AF17108ED2A47A18CDF0758E3"
+    },
+    {
+      "path": "net/netmon/state.go",
+      "sha256": "7C8DCE1E71F738299B00D8457846B13D0C0EAAD8645EBCC3CD27CE0856558A19"
+    },
+    {
+      "path": "tsnet/mesharc_cold_peer_test.go",
+      "sha256": "E71F00A31DD5DFC36A6C7ABB1045372D96C7AE7CEC948ADB4FDA05F20DF1B215"
+    },
+    {
+      "path": "tsnet/mesharc_test.go",
+      "sha256": "CAD7D4B517260D03EC4F609414A79FD400CED77F86C91A6A781F1527EE88818F"
+    },
+    {
+      "path": "tsnet/mesharc.go",
+      "sha256": "75FDD4F3DAF2FA5AEC1AF1797F0485FF5DECAD9D993499D898A8C9BD2BF13DC0"
+    },
+    {
+      "path": "tsnet/tsnet.go",
+      "sha256": "4284427F77ABC574976A7095623F3ED169E78B4BE828892F1AFCAB8CD3308ED3"
+    },
+    {
+      "path": "util/mesharcdiag/mesharcdiag_test.go",
+      "sha256": "EECE2FDA082BB3CE58F4651EDB8C03DEDFA8037853ADF40064ED27858F10DD94"
+    },
+    {
+      "path": "util/mesharcdiag/mesharcdiag.go",
+      "sha256": "5AF145BFA62DA10FF566F81F49FC2EC3A8A95DE6CBFDF2C85EA9D84D7B2F4901"
+    },
+    {
+      "path": "wgengine/magicsock/endpoint.go",
+      "sha256": "42DB2FF7530FA8E7878568D8EC3E2A085B0D1DA9AE92D942BD4ACF6FB13C1149"
+    },
+    {
+      "path": "wgengine/magicsock/magicsock.go",
+      "sha256": "72044AE0B3A5A911C0C7DB9B7117E22E44AD182B545D4DD1BDBC17044AB28D63"
+    },
+    {
+      "path": "wgengine/magicsock/path_diagnostics_test.go",
+      "sha256": "57603F7F65E001BCB83E14792C63CCC85D0B1C76B768FCF2554DE4FA32497E69"
+    },
+    {
+      "path": "wgengine/magicsock/path_diagnostics.go",
+      "sha256": "7C20C27304253699E143CBBC07F13443F04F788C0D4424BA7BEEC23F9E1DED2A"
+    }
+  ],
+  "patch": {
+    "path": "patches/experimental/k4-cold-peer-dial.patch",
+    "sha256": "70A7EC0553F7ED28AAEE30EB5D163E606CEC3387157BD7FBF6915D2B61528D40"
+  }
+}

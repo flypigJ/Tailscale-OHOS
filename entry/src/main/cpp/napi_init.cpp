@@ -1,23 +1,298 @@
 #include "napi/native_api.h"
 #include "hilog/log.h"
 #include "libtailscale_go.h"
+#include "native_boundary.h"
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <fcntl.h>
+#include <functional>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
-using AsyncStringFunction = char* (*)();
+constexpr size_t kMaxInterfaceNameBytes = 64;
+constexpr size_t kMaxPathDiagBytes = 2048;
+constexpr size_t kMaxPathBytes = 4096;
+constexpr size_t kMaxSmallArgBytes = 4096;
+constexpr size_t kMaxAuthKeyBytes = 4096;
+constexpr size_t kMaxDnsRuntimeBytes = 16384;
+constexpr size_t kMaxJsonRequestBytes = 256 * 1024;
+
+constexpr size_t kTransferLaneMaxInFlight = 2;
+constexpr size_t kProbeLaneMaxInFlight = 1;
+
+template <napi_callback Callback>
+napi_value GuardCallback(napi_env env, napi_callback_info info) noexcept
+{
+    return mesharc::GuardNativeCall([&]() { return Callback(env, info); }, [&]() noexcept -> napi_value {
+        napi_throw_error(env, nullptr, "Native backend operation failed");
+        return nullptr;
+    });
+}
+
+struct OwnedTunDescriptor {
+    int fd;
+    explicit OwnedTunDescriptor(int value) noexcept : fd(value) {}
+    OwnedTunDescriptor(const OwnedTunDescriptor&) = delete;
+    OwnedTunDescriptor& operator=(const OwnedTunDescriptor&) = delete;
+    OwnedTunDescriptor(OwnedTunDescriptor&& other) noexcept : fd(other.fd) { other.fd = -1; }
+    ~OwnedTunDescriptor()
+    {
+        if (fd >= 0) {
+            close(fd);
+        }
+    }
+};
+
+struct ScopedStringScrub {
+    std::string& value;
+    explicit ScopedStringScrub(std::string& target) noexcept : value(target) {}
+    ScopedStringScrub(const ScopedStringScrub&) = delete;
+    ScopedStringScrub& operator=(const ScopedStringScrub&) = delete;
+    ~ScopedStringScrub() noexcept { mesharc::ScrubString(value); }
+};
+
+bool ReadBoundedUtf8Arg(
+    napi_env env,
+    napi_value value,
+    size_t maxBytes,
+    bool allowEmpty,
+    std::string& out,
+    const char* typeOrRangeError,
+    const char* readError = nullptr,
+    bool scrub = false)
+{
+    size_t length = 0;
+    if (napi_get_value_string_utf8(env, value, nullptr, 0, &length) != napi_ok ||
+        (!allowEmpty && length == 0) || length > maxBytes) {
+        napi_throw_type_error(env, nullptr, typeOrRangeError);
+        return false;
+    }
+    if (length == 0) {
+        out.clear();
+        return true;
+    }
+    if (scrub) {
+        std::vector<char> buffer(length + 1, '\0');
+        mesharc::ScopedScrubBuffer scrubGuard(buffer);
+        size_t copied = 0;
+        if (napi_get_value_string_utf8(env, value, buffer.data(), buffer.size(), &copied) != napi_ok) {
+            if (readError != nullptr) {
+                napi_throw_error(env, nullptr, readError);
+            } else {
+                napi_throw_type_error(env, nullptr, typeOrRangeError);
+            }
+            return false;
+        }
+        if (copied != length || mesharc::HasEmbeddedNull(buffer.data(), copied)) {
+            napi_throw_type_error(env, nullptr, typeOrRangeError);
+            return false;
+        }
+        out.assign(buffer.data(), copied);
+        return true;
+    }
+
+    out.resize(length);
+    size_t copied = 0;
+    if (napi_get_value_string_utf8(env, value, &out[0], length + 1, &copied) != napi_ok) {
+        out.clear();
+        if (readError != nullptr) {
+            napi_throw_error(env, nullptr, readError);
+        } else {
+            napi_throw_type_error(env, nullptr, typeOrRangeError);
+        }
+        return false;
+    }
+    if (copied != length || mesharc::HasEmbeddedNull(out.data(), copied)) {
+        out.clear();
+        napi_throw_type_error(env, nullptr, typeOrRangeError);
+        return false;
+    }
+    return true;
+}
+
+void RejectDeferredWithError(napi_env env, napi_deferred deferred, const char* errorText) noexcept
+{
+    napi_value message = nullptr;
+    napi_value error = nullptr;
+    napi_create_string_utf8(env, errorText, NAPI_AUTO_LENGTH, &message);
+    napi_create_error(env, nullptr, message, &error);
+    napi_reject_deferred(env, deferred, error);
+}
+
+napi_value CallSyncString(
+    napi_env env, char* (*producer)(), const char* nullError, const char* convertError)
+{
+    char* message = producer();
+    if (message == nullptr) {
+        napi_throw_error(env, nullptr, nullError);
+        return nullptr;
+    }
+    napi_value result = nullptr;
+    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
+    TSFreeString(message);
+    if (status != napi_ok) {
+        napi_throw_error(env, nullptr, convertError);
+        return nullptr;
+    }
+    return result;
+}
+
+// Resolves non-blocking cancel endpoints directly on the calling JS thread so
+// cancellation can never be starved behind 4 saturated libuv workers.
+napi_value CreateImmediateStringPromise(napi_env env, char* (*producer)())
+{
+    napi_value promise = nullptr;
+    napi_deferred deferred = nullptr;
+    if (napi_create_promise(env, &deferred, &promise) != napi_ok) {
+        napi_throw_error(env, nullptr, "Failed to create native backend promise");
+        return nullptr;
+    }
+    std::string result;
+    napi_value value = nullptr;
+    if (mesharc::CopyNativeString(producer, result, TSFreeString) &&
+        napi_create_string_utf8(env, result.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
+        napi_resolve_deferred(env, deferred, value);
+    } else {
+        RejectDeferredWithError(env, deferred, "Native backend operation failed");
+    }
+    return promise;
+}
+
+// Reserve a new destination without ever opening an existing file for writing.
+// ArkTS FileIo.OpenMode does not expose O_EXCL. The caller owns the returned FD.
+napi_value CreateExclusiveFile(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "Invalid destination path");
+        return nullptr;
+    }
+    std::string path;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxPathBytes, false, path, "Invalid destination path") ||
+        path[0] != '/') {
+        if (!path.empty() && path[0] != '/') {
+            napi_throw_type_error(env, nullptr, "Invalid destination path");
+        }
+        return nullptr;
+    }
+    const int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    const int resultCode = fd >= 0 ? fd : -errno;
+    napi_value result = nullptr;
+    if (napi_create_int32(env, resultCode, &result) != napi_ok) {
+        if (fd >= 0) {
+            close(fd);
+        }
+        napi_throw_error(env, nullptr, "Failed to return destination descriptor");
+        return nullptr;
+    }
+    return result;
+}
+
+enum class WorkLane {
+    FastControl,
+    Transfer,
+    Probe
+};
+
+struct LaneTask {
+    napi_env env;
+    napi_async_work work;
+    void (*failAndDestroy)(napi_env env, void* payload) noexcept;
+    void* payload;
+};
+
+std::mutex g_laneMutex;
+mesharc::BoundedWorkQueue<LaneTask> g_transferLane(kTransferLaneMaxInFlight);
+mesharc::BoundedWorkQueue<LaneTask> g_probeLane(kProbeLaneMaxInFlight);
+
+mesharc::BoundedWorkQueue<LaneTask>* GetWorkLaneQueue(WorkLane lane) noexcept
+{
+    switch (lane) {
+        case WorkLane::Transfer:
+            return &g_transferLane;
+        case WorkLane::Probe:
+            return &g_probeLane;
+        case WorkLane::FastControl:
+            return nullptr;
+    }
+    return nullptr;
+}
+
+bool SubmitToWorkLane(
+    napi_env env,
+    WorkLane lane,
+    napi_async_work work,
+    void (*failAndDestroy)(napi_env env, void* payload) noexcept,
+    void* payload)
+{
+    mesharc::BoundedWorkQueue<LaneTask>* queue = GetWorkLaneQueue(lane);
+    if (queue == nullptr) {
+        return napi_queue_async_work(env, work) == napi_ok;
+    }
+
+    bool queueNow = false;
+    {
+        std::lock_guard<std::mutex> lock(g_laneMutex);
+        queueNow = queue->TryAcquireOrEnqueue(LaneTask{env, work, failAndDestroy, payload});
+    }
+    if (!queueNow) {
+        return true;
+    }
+    if (napi_queue_async_work(env, work) == napi_ok) {
+        return true;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_laneMutex);
+        queue->ReleaseOnImmediateQueueFailure();
+    }
+    return false;
+}
+
+void ReleaseWorkLaneSlot(WorkLane lane) noexcept
+{
+    mesharc::BoundedWorkQueue<LaneTask>* queue = GetWorkLaneQueue(lane);
+    if (queue == nullptr) {
+        return;
+    }
+    for (;;) {
+        LaneTask next{};
+        {
+            std::lock_guard<std::mutex> lock(g_laneMutex);
+            if (!queue->ReleaseAndTakeNext(next)) {
+                return;
+            }
+        }
+        if (napi_queue_async_work(next.env, next.work) == napi_ok) {
+            return;
+        }
+        next.failAndDestroy(next.env, next.payload);
+    }
+}
+
+using AsyncStringFunction = std::function<char*()>;
 
 struct AsyncStringWork {
     napi_env env;
     napi_async_work work;
     napi_deferred deferred;
+    WorkLane lane;
     AsyncStringFunction function;
     std::string result;
     bool succeeded;
 };
 
 enum class AsyncInputOperation {
+    LoginWithAuthKey,
     NetworkChanged,
+    PathDiagnostic,
+    DnsRuntime,
     SetExitNode,
     SetNetworkSetting,
     PeerConnectivity,
@@ -33,50 +308,114 @@ enum class AsyncInputOperation {
     TaildriveUpload
 };
 
+WorkLane LaneForInputOperation(AsyncInputOperation operation) noexcept
+{
+    switch (operation) {
+        case AsyncInputOperation::TaildropSend:
+        case AsyncInputOperation::TaildropReceive:
+        case AsyncInputOperation::TaildriveMutate:
+        case AsyncInputOperation::TaildriveDownload:
+        case AsyncInputOperation::TaildriveManualDownload:
+        case AsyncInputOperation::TaildriveUpload:
+            return WorkLane::Transfer;
+        case AsyncInputOperation::PeerConnectivity:
+        case AsyncInputOperation::SunshineProbe:
+        case AsyncInputOperation::MediaServiceProbe:
+        case AsyncInputOperation::TaildriveList:
+        case AsyncInputOperation::TaildriveStat:
+            return WorkLane::Probe;
+        case AsyncInputOperation::LoginWithAuthKey:
+        case AsyncInputOperation::NetworkChanged:
+        case AsyncInputOperation::PathDiagnostic:
+        case AsyncInputOperation::DnsRuntime:
+        case AsyncInputOperation::SetExitNode:
+        case AsyncInputOperation::SetNetworkSetting:
+            return WorkLane::FastControl;
+    }
+    return WorkLane::FastControl;
+}
+
 struct AsyncInputWork {
     napi_async_work work;
     napi_deferred deferred;
+    WorkLane lane;
     AsyncInputOperation operation;
     std::string input;
     bool enabled;
     std::string result;
     bool succeeded;
+
+    AsyncInputWork(
+        napi_deferred deferredValue,
+        WorkLane laneValue,
+        AsyncInputOperation opValue,
+        std::string&& inputValue,
+        bool enabledValue)
+        : work(nullptr),
+          deferred(deferredValue),
+          lane(laneValue),
+          operation(opValue),
+          input(std::move(inputValue)),
+          enabled(enabledValue),
+          result(),
+          succeeded(false) {}
+
+    ~AsyncInputWork() noexcept
+    {
+        if (operation == AsyncInputOperation::LoginWithAuthKey) {
+            mesharc::ScrubString(input);
+        }
+    }
 };
+
+void FailDeferredAsyncStringWork(napi_env env, void* payload) noexcept
+{
+    auto* work = static_cast<AsyncStringWork*>(payload);
+    RejectDeferredWithError(env, work->deferred, "Native backend operation failed");
+    if (work->work != nullptr) {
+        napi_delete_async_work(env, work->work);
+    }
+    delete work;
+}
+
+void FailDeferredAsyncInputWork(napi_env env, void* payload) noexcept
+{
+    auto* work = static_cast<AsyncInputWork*>(payload);
+    RejectDeferredWithError(env, work->deferred, "Native backend update failed");
+    if (work->work != nullptr) {
+        napi_delete_async_work(env, work->work);
+    }
+    delete work;
+}
 
 void ExecuteAsyncString(napi_env env, void* data)
 {
     (void)env;
     auto* work = static_cast<AsyncStringWork*>(data);
-    char* message = work->function();
-    if (message == nullptr) {
-        work->succeeded = false;
-        return;
-    }
-    work->result.assign(message);
-    TSFreeString(message);
-    work->succeeded = true;
+    work->succeeded = mesharc::CopyNativeString(work->function, work->result, TSFreeString);
 }
 
 void CompleteAsyncString(napi_env env, napi_status status, void* data)
 {
     auto* work = static_cast<AsyncStringWork*>(data);
+    const WorkLane completedLane = work->lane;
     napi_value value = nullptr;
     if (status == napi_ok && work->succeeded &&
         napi_create_string_utf8(env, work->result.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
         napi_resolve_deferred(env, work->deferred, value);
     } else {
-        napi_value message = nullptr;
-        napi_value error = nullptr;
-        napi_create_string_utf8(env, "Native backend operation failed", NAPI_AUTO_LENGTH, &message);
-        napi_create_error(env, nullptr, message, &error);
-        napi_reject_deferred(env, work->deferred, error);
+        RejectDeferredWithError(env, work->deferred, "Native backend operation failed");
     }
     napi_delete_async_work(env, work->work);
     delete work;
+    ReleaseWorkLaneSlot(completedLane);
 }
 
 napi_value CreateAsyncStringPromise(
-    napi_env env, AsyncStringFunction function, const char* resourceName)
+    napi_env env,
+    AsyncStringFunction function,
+    const char* resourceName,
+    WorkLane lane = WorkLane::FastControl)
 {
     napi_value promise = nullptr;
     napi_deferred deferred = nullptr;
@@ -84,11 +423,11 @@ napi_value CreateAsyncStringPromise(
         napi_throw_error(env, nullptr, "Failed to create native backend promise");
         return nullptr;
     }
-    auto* work = new AsyncStringWork{env, nullptr, deferred, function, "", false};
+    auto* work = new AsyncStringWork{env, nullptr, deferred, lane, std::move(function), "", false};
     napi_value resource = nullptr;
     if (napi_create_string_utf8(env, resourceName, NAPI_AUTO_LENGTH, &resource) != napi_ok ||
         napi_create_async_work(env, nullptr, resource, ExecuteAsyncString, CompleteAsyncString, work, &work->work) != napi_ok ||
-        napi_queue_async_work(env, work->work) != napi_ok) {
+        !SubmitToWorkLane(env, lane, work->work, FailDeferredAsyncStringWork, work)) {
         if (work->work != nullptr) {
             napi_delete_async_work(env, work->work);
         }
@@ -103,77 +442,90 @@ void ExecuteAsyncInput(napi_env env, void* data)
 {
     (void)env;
     auto* work = static_cast<AsyncInputWork*>(data);
-    char* message = nullptr;
-    if (work->operation == AsyncInputOperation::NetworkChanged) {
-        message = TSBackendNetworkChanged(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::SetExitNode) {
-        message = TSBackendSetExitNode(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::SetNetworkSetting) {
-        message = TSBackendSetNetworkSetting(const_cast<char*>(work->input.c_str()), work->enabled ? 1 : 0);
-    } else if (work->operation == AsyncInputOperation::PeerConnectivity) {
-        message = TSBackendPeerConnectivity(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::SunshineProbe) {
-        message = TSBackendSunshineProbe(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::MediaServiceProbe) {
-        message = TSBackendMediaServiceProbe(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::TaildropSend) {
-        message = TSBackendTaildropSend(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::TaildropReceive) {
-        message = TSBackendTaildropReceive(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::TaildriveList) {
-        message = TSBackendTaildriveList(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::TaildriveStat) {
-        message = TSBackendTaildriveStat(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::TaildriveMutate) {
-        message = TSBackendTaildriveMutate(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::TaildriveDownload) {
-        message = TSBackendTaildriveDownload(const_cast<char*>(work->input.c_str()));
-    } else if (work->operation == AsyncInputOperation::TaildriveManualDownload) {
-        message = TSBackendTaildriveManualDownload(const_cast<char*>(work->input.c_str()));
-    } else {
-        message = TSBackendTaildriveUpload(const_cast<char*>(work->input.c_str()));
+    work->succeeded = mesharc::CopyNativeString([work]() -> char* {
+        char* arg = const_cast<char*>(work->input.c_str());
+        switch (work->operation) {
+            case AsyncInputOperation::LoginWithAuthKey:
+                return TSBackendLoginWithAuthKey(arg);
+            case AsyncInputOperation::NetworkChanged:
+                return TSBackendNetworkChanged(arg);
+            case AsyncInputOperation::PathDiagnostic:
+                return TSBackendPathDiagnostic(arg);
+            case AsyncInputOperation::DnsRuntime:
+                return TSBackendDNSRuntime(arg);
+            case AsyncInputOperation::SetExitNode:
+                return TSBackendSetExitNode(arg);
+            case AsyncInputOperation::SetNetworkSetting:
+                return TSBackendSetNetworkSetting(arg, work->enabled ? 1 : 0);
+            case AsyncInputOperation::PeerConnectivity:
+                return TSBackendPeerConnectivity(arg);
+            case AsyncInputOperation::SunshineProbe:
+                return TSBackendSunshineProbe(arg);
+            case AsyncInputOperation::MediaServiceProbe:
+                return TSBackendMediaServiceProbe(arg);
+            case AsyncInputOperation::TaildropSend:
+                return TSBackendTaildropSend(arg);
+            case AsyncInputOperation::TaildropReceive:
+                return TSBackendTaildropReceive(arg);
+            case AsyncInputOperation::TaildriveList:
+                return TSBackendTaildriveList(arg);
+            case AsyncInputOperation::TaildriveStat:
+                return TSBackendTaildriveStat(arg);
+            case AsyncInputOperation::TaildriveMutate:
+                return TSBackendTaildriveMutate(arg);
+            case AsyncInputOperation::TaildriveDownload:
+                return TSBackendTaildriveDownload(arg);
+            case AsyncInputOperation::TaildriveManualDownload:
+                return TSBackendTaildriveManualDownload(arg);
+            case AsyncInputOperation::TaildriveUpload:
+                return TSBackendTaildriveUpload(arg);
+        }
+        return nullptr;
+    }, work->result, TSFreeString);
+    if (work->operation == AsyncInputOperation::LoginWithAuthKey) {
+        // Erase immediately after the Go call completes, in addition to ~AsyncInputWork().
+        mesharc::ScrubString(work->input);
     }
-    if (message == nullptr) {
-        work->succeeded = false;
-        return;
-    }
-    work->result.assign(message);
-    TSFreeString(message);
-    work->succeeded = true;
 }
 
 void CompleteAsyncInput(napi_env env, napi_status status, void* data)
 {
     auto* work = static_cast<AsyncInputWork*>(data);
+    const WorkLane completedLane = work->lane;
     napi_value value = nullptr;
     if (status == napi_ok && work->succeeded &&
         napi_create_string_utf8(env, work->result.c_str(), NAPI_AUTO_LENGTH, &value) == napi_ok) {
         napi_resolve_deferred(env, work->deferred, value);
     } else {
-        napi_value message = nullptr;
-        napi_value error = nullptr;
-        napi_create_string_utf8(env, "Native backend update failed", NAPI_AUTO_LENGTH, &message);
-        napi_create_error(env, nullptr, message, &error);
-        napi_reject_deferred(env, work->deferred, error);
+        RejectDeferredWithError(env, work->deferred, "Native backend update failed");
     }
     napi_delete_async_work(env, work->work);
     delete work;
+    ReleaseWorkLaneSlot(completedLane);
 }
 
 napi_value CreateAsyncInputPromise(
-    napi_env env, AsyncInputOperation operation, const std::string& input, bool enabled, const char* resourceName)
+    napi_env env,
+    AsyncInputOperation operation,
+    std::string&& input,
+    bool enabled,
+    const char* resourceName)
 {
+    const WorkLane lane = LaneForInputOperation(operation);
     napi_value promise = nullptr;
     napi_deferred deferred = nullptr;
     if (napi_create_promise(env, &deferred, &promise) != napi_ok) {
+        if (operation == AsyncInputOperation::LoginWithAuthKey) {
+            mesharc::ScrubString(input);
+        }
         napi_throw_error(env, nullptr, "Failed to create native backend update promise");
         return nullptr;
     }
-    auto* work = new AsyncInputWork{nullptr, deferred, operation, input, enabled, "", false};
+    auto* work = new AsyncInputWork(deferred, lane, operation, std::move(input), enabled);
     napi_value resource = nullptr;
     if (napi_create_string_utf8(env, resourceName, NAPI_AUTO_LENGTH, &resource) != napi_ok ||
         napi_create_async_work(env, nullptr, resource, ExecuteAsyncInput, CompleteAsyncInput, work, &work->work) != napi_ok ||
-        napi_queue_async_work(env, work->work) != napi_ok) {
+        !SubmitToWorkLane(env, lane, work->work, FailDeferredAsyncInputWork, work)) {
         if (work->work != nullptr) {
             napi_delete_async_work(env, work->work);
         }
@@ -192,18 +544,13 @@ napi_value BackendSetExitNodeAsync(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "backendSetExitNodeAsync requires one selection");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Exit-node selection must be a string");
-        return nullptr;
-    }
-    std::vector<char> selection(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], selection.data(), selection.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the exit-node selection");
+    std::string selection;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxSmallArgBytes, true, selection,
+            "Exit-node selection must be a string", "Failed to read the exit-node selection")) {
         return nullptr;
     }
     return CreateAsyncInputPromise(
-        env, AsyncInputOperation::SetExitNode, selection.data(), false, "TailscaleBackendSetExitNode");
+        env, AsyncInputOperation::SetExitNode, std::move(selection), false, "TailscaleBackendSetExitNode");
 }
 
 napi_value BackendSetNetworkSettingAsync(napi_env env, napi_callback_info info)
@@ -214,14 +561,9 @@ napi_value BackendSetNetworkSettingAsync(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "backendSetNetworkSettingAsync requires a key and boolean value");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Network setting key must be a string");
-        return nullptr;
-    }
-    std::vector<char> key(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], key.data(), key.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the network setting key");
+    std::string key;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxSmallArgBytes, true, key,
+            "Network setting key must be a string", "Failed to read the network setting key")) {
         return nullptr;
     }
     bool enabled = false;
@@ -230,7 +572,7 @@ napi_value BackendSetNetworkSettingAsync(napi_env env, napi_callback_info info)
         return nullptr;
     }
     return CreateAsyncInputPromise(
-        env, AsyncInputOperation::SetNetworkSetting, key.data(), enabled, "TailscaleBackendSetNetworkSetting");
+        env, AsyncInputOperation::SetNetworkSetting, std::move(key), enabled, "TailscaleBackendSetNetworkSetting");
 }
 
 napi_value BackendPeerConnectivityAsync(napi_env env, napi_callback_info info)
@@ -241,37 +583,64 @@ napi_value BackendPeerConnectivityAsync(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "backendPeerConnectivityAsync requires one peer key");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Peer key must be a string");
-        return nullptr;
-    }
-    std::vector<char> key(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], key.data(), key.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the peer key");
+    std::string key;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxSmallArgBytes, true, key,
+            "Peer key must be a string", "Failed to read the peer key")) {
         return nullptr;
     }
     return CreateAsyncInputPromise(
-        env, AsyncInputOperation::PeerConnectivity, key.data(), false, "TailscaleBackendPeerConnectivity");
+        env, AsyncInputOperation::PeerConnectivity, std::move(key), false, "TailscaleBackendPeerConnectivity");
 }
 
 napi_value BackendNetworkChangedAsync(napi_env env, napi_callback_info info)
 {
     size_t argc = 1;
     napi_value args[1] = {nullptr};
-    size_t length = 0;
-    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1 ||
-        napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok || length > 64) {
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
         napi_throw_type_error(env, nullptr, "backendNetworkChangedAsync requires an interface name");
         return nullptr;
     }
-    std::vector<char> name(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], name.data(), name.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the interface name");
+    std::string name;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxInterfaceNameBytes, true, name,
+            "backendNetworkChangedAsync requires an interface name", "Failed to read the interface name")) {
         return nullptr;
     }
     return CreateAsyncInputPromise(
-        env, AsyncInputOperation::NetworkChanged, name.data(), false, "TailscaleBackendNetworkChanged");
+        env, AsyncInputOperation::NetworkChanged, std::move(name), false, "TailscaleBackendNetworkChanged");
+}
+
+napi_value BackendPathDiagnosticAsync(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "backendPathDiagnosticAsync requires an interface name");
+        return nullptr;
+    }
+    std::string command;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxPathDiagBytes, true, command,
+            "backendPathDiagnosticAsync requires an interface name", "Failed to read the interface name")) {
+        return nullptr;
+    }
+    return CreateAsyncInputPromise(
+        env, AsyncInputOperation::PathDiagnostic, std::move(command), false, "MeshArcPathDiagnostic");
+}
+
+napi_value BackendDnsRuntimeAsync(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "Invalid DNS runtime request");
+        return nullptr;
+    }
+    std::string input;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxDnsRuntimeBytes, true, input,
+            "Invalid DNS runtime request", "Failed to read DNS runtime request")) {
+        return nullptr;
+    }
+    return CreateAsyncInputPromise(
+        env, AsyncInputOperation::DnsRuntime, std::move(input), false, "MeshArcDnsRuntime");
 }
 
 napi_value BackendSunshineProbeAsync(napi_env env, napi_callback_info info)
@@ -282,18 +651,13 @@ napi_value BackendSunshineProbeAsync(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "backendSunshineProbeAsync requires one peer key");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Peer key must be a string");
-        return nullptr;
-    }
-    std::vector<char> key(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], key.data(), key.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the peer key");
+    std::string key;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxSmallArgBytes, true, key,
+            "Peer key must be a string", "Failed to read the peer key")) {
         return nullptr;
     }
     return CreateAsyncInputPromise(
-        env, AsyncInputOperation::SunshineProbe, key.data(), false, "TailscaleBackendSunshineProbe");
+        env, AsyncInputOperation::SunshineProbe, std::move(key), false, "TailscaleBackendSunshineProbe");
 }
 
 napi_value BackendMediaServiceProbeAsync(napi_env env, napi_callback_info info)
@@ -304,18 +668,13 @@ napi_value BackendMediaServiceProbeAsync(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "backendMediaServiceProbeAsync requires one peer key");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Peer key must be a string");
-        return nullptr;
-    }
-    std::vector<char> key(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], key.data(), key.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the peer key");
+    std::string key;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxSmallArgBytes, true, key,
+            "Peer key must be a string", "Failed to read the peer key")) {
         return nullptr;
     }
     return CreateAsyncInputPromise(
-        env, AsyncInputOperation::MediaServiceProbe, key.data(), false, "TailscaleBackendMediaServiceProbe");
+        env, AsyncInputOperation::MediaServiceProbe, std::move(key), false, "TailscaleBackendMediaServiceProbe");
 }
 
 napi_value BackendTaildropSendAsync(napi_env env, napi_callback_info info)
@@ -326,18 +685,13 @@ napi_value BackendTaildropSendAsync(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "backendTaildropSendAsync requires one request");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Taildrop request must be a string");
-        return nullptr;
-    }
-    std::vector<char> request(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], request.data(), request.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the Taildrop request");
+    std::string request;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxJsonRequestBytes, true, request,
+            "Taildrop request must be a string", "Failed to read the Taildrop request")) {
         return nullptr;
     }
     return CreateAsyncInputPromise(
-        env, AsyncInputOperation::TaildropSend, request.data(), false, "TailscaleBackendTaildropSend");
+        env, AsyncInputOperation::TaildropSend, std::move(request), false, "TailscaleBackendTaildropSend");
 }
 
 napi_value BackendTaildropReceiveAsync(napi_env env, napi_callback_info info)
@@ -348,29 +702,28 @@ napi_value BackendTaildropReceiveAsync(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "backendTaildropReceiveAsync requires one request");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Taildrop receive request must be a string");
-        return nullptr;
-    }
-    std::vector<char> request(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], request.data(), request.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the Taildrop receive request");
+    std::string request;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxJsonRequestBytes, true, request,
+            "Taildrop receive request must be a string", "Failed to read the Taildrop receive request")) {
         return nullptr;
     }
     return CreateAsyncInputPromise(
-        env, AsyncInputOperation::TaildropReceive, request.data(), false, "TailscaleBackendTaildropReceive");
+        env, AsyncInputOperation::TaildropReceive, std::move(request), false, "TailscaleBackendTaildropReceive");
 }
 
 napi_value BackendTaildropCancelAsync(napi_env env, napi_callback_info info)
 {
     (void)info;
-    return CreateAsyncStringPromise(env, TSBackendTaildropCancel, "TailscaleBackendTaildropCancel");
+    return CreateImmediateStringPromise(env, TSBackendTaildropCancel);
 }
 
 napi_value BackendTaildriveRequestAsync(
-    napi_env env, napi_callback_info info, AsyncInputOperation operation,
-    const char* argumentError, const char* readError, const char* resourceName)
+    napi_env env,
+    napi_callback_info info,
+    AsyncInputOperation operation,
+    const char* argumentError,
+    const char* readError,
+    const char* resourceName)
 {
     size_t argc = 1;
     napi_value args[1] = {nullptr};
@@ -378,17 +731,12 @@ napi_value BackendTaildriveRequestAsync(
         napi_throw_type_error(env, nullptr, argumentError);
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Taildrive request must be a string");
+    std::string request;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxJsonRequestBytes, true, request,
+            "Taildrive request must be a string", readError)) {
         return nullptr;
     }
-    std::vector<char> request(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], request.data(), request.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, readError);
-        return nullptr;
-    }
-    return CreateAsyncInputPromise(env, operation, request.data(), false, resourceName);
+    return CreateAsyncInputPromise(env, operation, std::move(request), false, resourceName);
 }
 
 napi_value BackendTaildriveListAsync(napi_env env, napi_callback_info info)
@@ -444,7 +792,7 @@ napi_value BackendTaildriveTransferSnapshotAsync(napi_env env, napi_callback_inf
 napi_value BackendTaildriveCancelAsync(napi_env env, napi_callback_info info)
 {
     (void)info;
-    return CreateAsyncStringPromise(env, TSBackendTaildriveCancel, "TailscaleBackendTaildriveCancel");
+    return CreateImmediateStringPromise(env, TSBackendTaildriveCancel);
 }
 
 napi_value BackendSnapshotAsync(napi_env env, napi_callback_info info)
@@ -453,11 +801,17 @@ napi_value BackendSnapshotAsync(napi_env env, napi_callback_info info)
     return CreateAsyncStringPromise(env, TSBackendSnapshot, "TailscaleBackendSnapshot");
 }
 
+napi_value BackendPeerSnapshotAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendPeerSnapshot, "TailscaleBackendPeerSnapshot");
+}
+
 napi_value BackendLocalSendRefreshAsync(napi_env env, napi_callback_info info)
 {
     (void)info;
     return CreateAsyncStringPromise(
-        env, TSBackendLocalSendRefresh, "TailscaleBackendLocalSendRefresh");
+        env, TSBackendLocalSendRefresh, "TailscaleBackendLocalSendRefresh", WorkLane::Probe);
 }
 
 napi_value BackendTaildropIncomingSnapshotAsync(napi_env env, napi_callback_info info)
@@ -485,22 +839,46 @@ napi_value BackendAuthURLAsync(napi_env env, napi_callback_info info)
     return CreateAsyncStringPromise(env, TSBackendAuthURL, "TailscaleBackendAuthURL");
 }
 
+napi_value BackendLoginWithAuthKeyAsync(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value args[1] = {nullptr};
+    if (napi_get_cb_info(env, info, &argc, args, nullptr, nullptr) != napi_ok || argc != 1) {
+        napi_throw_type_error(env, nullptr, "Invalid device auth key");
+        return nullptr;
+    }
+    std::string secret;
+    ScopedStringScrub scrubLocal(secret);
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxAuthKeyBytes, false, secret,
+            "Invalid device auth key", nullptr, true)) {
+        return nullptr;
+    }
+    return CreateAsyncInputPromise(env, AsyncInputOperation::LoginWithAuthKey,
+        std::move(secret), false, "TailscaleBackendLoginWithAuthKey");
+}
+
 napi_value BackendVpnConfigAsync(napi_env env, napi_callback_info info)
 {
     (void)info;
     return CreateAsyncStringPromise(env, TSBackendVPNConfig, "TailscaleBackendVpnConfig");
 }
 
+napi_value BackendDnsConfigAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendDNSConfig, "TailscaleBackendDnsConfig");
+}
+
 napi_value ProbeEngineAsync(napi_env env, napi_callback_info info)
 {
     (void)info;
-    return CreateAsyncStringPromise(env, TSProbeEngine, "TailscaleEngineProbe");
+    return CreateAsyncStringPromise(env, TSProbeEngine, "TailscaleEngineProbe", WorkLane::Probe);
 }
 
 napi_value BackendPeerProbeAsync(napi_env env, napi_callback_info info)
 {
     (void)info;
-    return CreateAsyncStringPromise(env, TSBackendPeerProbe, "TailscaleBackendPeerProbe");
+    return CreateAsyncStringPromise(env, TSBackendPeerProbe, "TailscaleBackendPeerProbe", WorkLane::Probe);
 }
 
 napi_value BackendMediaProbeSelfTestAsync(napi_env env, napi_callback_info info)
@@ -513,38 +891,18 @@ napi_value Hello(napi_env env, napi_callback_info info)
 {
     (void)info;
     OH_LOG_INFO(LOG_APP, "C++ N-API bridge loaded; calling Go runtime");
-    char* message = TSHello();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Go bridge returned a null status string");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to convert the Go status to an ArkTS string");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSHello,
+        "Go bridge returned a null status string",
+        "Failed to convert the Go status to an ArkTS string");
 }
 
 napi_value ProbeEngine(napi_env env, napi_callback_info info)
 {
     (void)info;
     OH_LOG_INFO(LOG_APP, "Initializing Tailscale userspace engine probe");
-    char* message = TSProbeEngine();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Tailscale engine probe returned a null status string");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to convert the Tailscale engine status to an ArkTS string");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSProbeEngine,
+        "Tailscale engine probe returned a null status string",
+        "Failed to convert the Tailscale engine status to an ArkTS string");
 }
 
 napi_value BackendStart(napi_env env, napi_callback_info info)
@@ -556,49 +914,26 @@ napi_value BackendStart(napi_env env, napi_callback_info info)
             "backendStart requires state directory, device model, OS version and control server");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "backendStart state directory must be a string");
-        return nullptr;
-    }
-    std::vector<char> stateDir(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], stateDir.data(), stateDir.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the backend state directory");
-        return nullptr;
-    }
-    size_t modelLength = 0;
-    if (napi_get_value_string_utf8(env, args[1], nullptr, 0, &modelLength) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "backendStart device model must be a string");
-        return nullptr;
-    }
-    std::vector<char> deviceModel(modelLength + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[1], deviceModel.data(), deviceModel.size(), &modelLength) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the backend device model");
-        return nullptr;
-    }
-    size_t osVersionLength = 0;
-    if (napi_get_value_string_utf8(env, args[2], nullptr, 0, &osVersionLength) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "backendStart OS version must be a string");
-        return nullptr;
-    }
-    std::vector<char> osVersion(osVersionLength + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[2], osVersion.data(), osVersion.size(), &osVersionLength) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the backend OS version");
-        return nullptr;
-    }
-    size_t controlLength = 0;
-    if (napi_get_value_string_utf8(env, args[3], nullptr, 0, &controlLength) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "backendStart control server must be a string");
-        return nullptr;
-    }
-    std::vector<char> controlURL(controlLength + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[3], controlURL.data(), controlURL.size(), &controlLength) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the backend control server");
+    std::string stateDir;
+    std::string deviceModel;
+    std::string osVersion;
+    std::string controlURL;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxPathBytes, true, stateDir,
+            "backendStart state directory must be a string", "Failed to read the backend state directory") ||
+        !ReadBoundedUtf8Arg(env, args[1], kMaxPathBytes, true, deviceModel,
+            "backendStart device model must be a string", "Failed to read the backend device model") ||
+        !ReadBoundedUtf8Arg(env, args[2], kMaxPathBytes, true, osVersion,
+            "backendStart OS version must be a string", "Failed to read the backend OS version") ||
+        !ReadBoundedUtf8Arg(env, args[3], kMaxPathBytes, true, controlURL,
+            "backendStart control server must be a string", "Failed to read the backend control server")) {
         return nullptr;
     }
     OH_LOG_INFO(LOG_APP, "Starting the persistent Tailscale LocalBackend");
     char* message = TSBackendStart(
-        stateDir.data(), deviceModel.data(), osVersion.data(), controlURL.data());
+        const_cast<char*>(stateDir.c_str()),
+        const_cast<char*>(deviceModel.c_str()),
+        const_cast<char*>(osVersion.c_str()),
+        const_cast<char*>(controlURL.c_str()));
     if (message == nullptr) {
         napi_throw_error(env, nullptr, "Tailscale backend start returned a null status string");
         return nullptr;
@@ -616,181 +951,81 @@ napi_value BackendStart(napi_env env, napi_callback_info info)
 napi_value BackendStop(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendStop();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Backend stop returned a null status");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to create backend stop status");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendStop,
+        "Backend stop returned a null status",
+        "Failed to create backend stop status");
 }
 
 napi_value BackendLogout(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendLogout();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Backend logout returned a null status");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to create backend logout status");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendLogout,
+        "Backend logout returned a null status",
+        "Failed to create backend logout status");
 }
 
 napi_value BackendStatus(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendStatus();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Tailscale backend status returned a null string");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to convert the Tailscale backend status");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendStatus,
+        "Tailscale backend status returned a null string",
+        "Failed to convert the Tailscale backend status");
 }
 
 napi_value BackendAuthURL(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendAuthURL();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Tailscale login URL is unavailable");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to transfer the Tailscale login URL");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendAuthURL,
+        "Tailscale login URL is unavailable",
+        "Failed to transfer the Tailscale login URL");
 }
 
 napi_value BackendVpnConfig(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendVPNConfig();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Tailscale VPN config is unavailable");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to transfer the Tailscale VPN config");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendVPNConfig,
+        "Tailscale VPN config is unavailable",
+        "Failed to transfer the Tailscale VPN config");
 }
 
 napi_value BackendExitNodes(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendExitNodes();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Exit-node choices are unavailable");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to transfer exit-node choices");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendExitNodes,
+        "Exit-node choices are unavailable",
+        "Failed to transfer exit-node choices");
 }
 
 napi_value BackendPeers(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendPeers();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Peer summaries are unavailable");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to transfer peer summaries");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendPeers,
+        "Peer summaries are unavailable",
+        "Failed to transfer peer summaries");
 }
 
 napi_value BackendAccount(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendAccount();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Account summary is unavailable");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to transfer the account summary");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendAccount,
+        "Account summary is unavailable",
+        "Failed to transfer the account summary");
 }
 
 napi_value TailscaleVersion(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSTailscaleVersion();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Tailscale version is unavailable");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to transfer the Tailscale version");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSTailscaleVersion,
+        "Tailscale version is unavailable",
+        "Failed to transfer the Tailscale version");
 }
 
 napi_value BackendNetworkSettings(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendNetworkSettings();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Network settings are unavailable");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to transfer network settings");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendNetworkSettings,
+        "Network settings are unavailable",
+        "Failed to transfer network settings");
 }
 
 napi_value BackendSetNetworkSetting(napi_env env, napi_callback_info info)
@@ -801,14 +1036,9 @@ napi_value BackendSetNetworkSetting(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "backendSetNetworkSetting requires a key and boolean value");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Network setting key must be a string");
-        return nullptr;
-    }
-    std::vector<char> key(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], key.data(), key.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the network setting key");
+    std::string key;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxSmallArgBytes, true, key,
+            "Network setting key must be a string", "Failed to read the network setting key")) {
         return nullptr;
     }
     bool enabled = false;
@@ -816,7 +1046,7 @@ napi_value BackendSetNetworkSetting(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "Network setting value must be a boolean");
         return nullptr;
     }
-    char* message = TSBackendSetNetworkSetting(key.data(), enabled ? 1 : 0);
+    char* message = TSBackendSetNetworkSetting(const_cast<char*>(key.c_str()), enabled ? 1 : 0);
     if (message == nullptr) {
         napi_throw_error(env, nullptr, "Network setting update returned a null status");
         return nullptr;
@@ -839,17 +1069,12 @@ napi_value BackendSetExitNode(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "backendSetExitNode requires one selection");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "Exit-node selection must be a string");
+    std::string selection;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxSmallArgBytes, true, selection,
+            "Exit-node selection must be a string", "Failed to read the exit-node selection")) {
         return nullptr;
     }
-    std::vector<char> selection(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], selection.data(), selection.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the exit-node selection");
-        return nullptr;
-    }
-    char* message = TSBackendSetExitNode(selection.data());
+    char* message = TSBackendSetExitNode(const_cast<char*>(selection.c_str()));
     if (message == nullptr) {
         napi_throw_error(env, nullptr, "Exit-node update returned a null status");
         return nullptr;
@@ -867,22 +1092,12 @@ napi_value BackendSetExitNode(napi_env env, napi_callback_info info)
 napi_value BackendPeerProbe(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSBackendPeerProbe();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Peer probe returned a null status");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to create peer probe status");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSBackendPeerProbe,
+        "Peer probe returned a null status",
+        "Failed to create peer probe status");
 }
 
-napi_value BackendRestartWithTun(napi_env env, napi_callback_info info)
+napi_value BackendRestartWithTunImpl(napi_env env, napi_callback_info info, bool asynchronous)
 {
     size_t argc = 5;
     napi_value args[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
@@ -891,44 +1106,18 @@ napi_value BackendRestartWithTun(napi_env env, napi_callback_info info)
             "backendRestartWithTun requires state directory, device model, OS version, control server and TUN descriptor");
         return nullptr;
     }
-    size_t length = 0;
-    if (napi_get_value_string_utf8(env, args[0], nullptr, 0, &length) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "VPN backend state directory must be a string");
-        return nullptr;
-    }
-    std::vector<char> stateDir(length + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[0], stateDir.data(), stateDir.size(), &length) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the VPN backend state directory");
-        return nullptr;
-    }
-    size_t modelLength = 0;
-    if (napi_get_value_string_utf8(env, args[1], nullptr, 0, &modelLength) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "VPN backend device model must be a string");
-        return nullptr;
-    }
-    std::vector<char> deviceModel(modelLength + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[1], deviceModel.data(), deviceModel.size(), &modelLength) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the VPN backend device model");
-        return nullptr;
-    }
-    size_t osVersionLength = 0;
-    if (napi_get_value_string_utf8(env, args[2], nullptr, 0, &osVersionLength) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "VPN backend OS version must be a string");
-        return nullptr;
-    }
-    std::vector<char> osVersion(osVersionLength + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[2], osVersion.data(), osVersion.size(), &osVersionLength) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the VPN backend OS version");
-        return nullptr;
-    }
-    size_t controlLength = 0;
-    if (napi_get_value_string_utf8(env, args[3], nullptr, 0, &controlLength) != napi_ok) {
-        napi_throw_type_error(env, nullptr, "VPN backend control server must be a string");
-        return nullptr;
-    }
-    std::vector<char> controlURL(controlLength + 1, '\0');
-    if (napi_get_value_string_utf8(env, args[3], controlURL.data(), controlURL.size(), &controlLength) != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to read the VPN backend control server");
+    std::string directory;
+    std::string model;
+    std::string version;
+    std::string control;
+    if (!ReadBoundedUtf8Arg(env, args[0], kMaxPathBytes, true, directory,
+            "VPN backend state directory must be a string", "Failed to read the VPN backend state directory") ||
+        !ReadBoundedUtf8Arg(env, args[1], kMaxPathBytes, true, model,
+            "VPN backend device model must be a string", "Failed to read the VPN backend device model") ||
+        !ReadBoundedUtf8Arg(env, args[2], kMaxPathBytes, true, version,
+            "VPN backend OS version must be a string", "Failed to read the VPN backend OS version") ||
+        !ReadBoundedUtf8Arg(env, args[3], kMaxPathBytes, true, control,
+            "VPN backend control server must be a string", "Failed to read the VPN backend control server")) {
         return nullptr;
     }
     int32_t fd = -1;
@@ -936,8 +1125,37 @@ napi_value BackendRestartWithTun(napi_env env, napi_callback_info info)
         napi_throw_type_error(env, nullptr, "VPN TUN descriptor must be an integer");
         return nullptr;
     }
+    if (asynchronous) {
+        // Own a duplicate before queueing: teardown may close/reuse the system fd
+        // while the worker is waiting. RAII also covers queue/allocation failures.
+        const int duplicate = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+        if (duplicate < 0) {
+            napi_throw_error(env, nullptr, "Failed to retain VPN TUN descriptor");
+            return nullptr;
+        }
+        OwnedTunDescriptor owned(duplicate);
+        auto descriptor = std::make_shared<OwnedTunDescriptor>(std::move(owned));
+        return CreateAsyncStringPromise(env,
+            [directory = std::move(directory),
+             model = std::move(model),
+             version = std::move(version),
+             control = std::move(control),
+             descriptor]() {
+                return TSBackendRestartWithTun(
+                    const_cast<char*>(directory.c_str()),
+                    const_cast<char*>(model.c_str()),
+                    const_cast<char*>(version.c_str()),
+                    const_cast<char*>(control.c_str()),
+                    descriptor->fd);
+            },
+            "BackendRestartWithTunAsync");
+    }
     char* message = TSBackendRestartWithTun(
-        stateDir.data(), deviceModel.data(), osVersion.data(), controlURL.data(), fd);
+        const_cast<char*>(directory.c_str()),
+        const_cast<char*>(model.c_str()),
+        const_cast<char*>(version.c_str()),
+        const_cast<char*>(control.c_str()),
+        fd);
     if (message == nullptr) {
         napi_throw_error(env, nullptr, "VPN backend restart returned a null status");
         return nullptr;
@@ -952,22 +1170,28 @@ napi_value BackendRestartWithTun(napi_env env, napi_callback_info info)
     return result;
 }
 
+napi_value BackendRestartWithTun(napi_env env, napi_callback_info info)
+{
+    return BackendRestartWithTunImpl(env, info, false);
+}
+
+napi_value BackendRestartWithTunAsync(napi_env env, napi_callback_info info)
+{
+    return BackendRestartWithTunImpl(env, info, true);
+}
+
+napi_value BackendStatusAsync(napi_env env, napi_callback_info info)
+{
+    (void)info;
+    return CreateAsyncStringPromise(env, TSBackendStatus, "BackendStatusAsync");
+}
+
 napi_value ControlProbe(napi_env env, napi_callback_info info)
 {
     (void)info;
-    char* message = TSControlProbe();
-    if (message == nullptr) {
-        napi_throw_error(env, nullptr, "Tailscale control probe returned a null string");
-        return nullptr;
-    }
-    napi_value result = nullptr;
-    napi_status status = napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &result);
-    TSFreeString(message);
-    if (status != napi_ok) {
-        napi_throw_error(env, nullptr, "Failed to convert the Tailscale control probe status");
-        return nullptr;
-    }
-    return result;
+    return CallSyncString(env, TSControlProbe,
+        "Tailscale control probe returned a null string",
+        "Failed to convert the Tailscale control probe status");
 }
 
 napi_value TunFdProbe(napi_env env, napi_callback_info info)
@@ -997,77 +1221,85 @@ napi_value TunFdProbe(napi_env env, napi_callback_info info)
     }
     return result;
 }
-}
+} // namespace
 
 EXTERN_C_START
 static napi_value Init(napi_env env, napi_value exports)
 {
     napi_property_descriptor descriptors[] = {
-        {"hello", nullptr, Hello, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"probeEngine", nullptr, ProbeEngine, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"probeEngineAsync", nullptr, ProbeEngineAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendStart", nullptr, BackendStart, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendStop", nullptr, BackendStop, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendLogout", nullptr, BackendLogout, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendStatus", nullptr, BackendStatus, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendSnapshot", nullptr, BackendSnapshotAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendLocalSendRefreshAsync", nullptr, BackendLocalSendRefreshAsync, nullptr, nullptr, nullptr,
+        {"createExclusiveFile", nullptr, GuardCallback<CreateExclusiveFile>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendPathDiagnosticAsync", nullptr, GuardCallback<BackendPathDiagnosticAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"hello", nullptr, GuardCallback<Hello>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"probeEngine", nullptr, GuardCallback<ProbeEngine>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"probeEngineAsync", nullptr, GuardCallback<ProbeEngineAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendStart", nullptr, GuardCallback<BackendStart>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendStop", nullptr, GuardCallback<BackendStop>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendLogout", nullptr, GuardCallback<BackendLogout>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendStatus", nullptr, GuardCallback<BackendStatus>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendSnapshot", nullptr, GuardCallback<BackendSnapshotAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendPeerSnapshot", nullptr, GuardCallback<BackendPeerSnapshotAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendLocalSendRefreshAsync", nullptr, GuardCallback<BackendLocalSendRefreshAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildropIncomingSnapshot", nullptr, BackendTaildropIncomingSnapshotAsync,
+        {"backendTaildropIncomingSnapshot", nullptr, GuardCallback<BackendTaildropIncomingSnapshotAsync>,
             nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendStopAsync", nullptr, BackendStopAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendLogoutAsync", nullptr, BackendLogoutAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendAuthURLAsync", nullptr, BackendAuthURLAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendVpnConfigAsync", nullptr, BackendVpnConfigAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendAuthURL", nullptr, BackendAuthURL, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendVpnConfig", nullptr, BackendVpnConfig, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendExitNodes", nullptr, BackendExitNodes, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendPeers", nullptr, BackendPeers, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendAccount", nullptr, BackendAccount, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"tailscaleVersion", nullptr, TailscaleVersion, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendNetworkSettings", nullptr, BackendNetworkSettings, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendSetNetworkSetting", nullptr, BackendSetNetworkSetting, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendSetNetworkSettingAsync", nullptr, BackendSetNetworkSettingAsync, nullptr, nullptr, nullptr,
+        {"backendStopAsync", nullptr, GuardCallback<BackendStopAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendLogoutAsync", nullptr, GuardCallback<BackendLogoutAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendAuthURLAsync", nullptr, GuardCallback<BackendAuthURLAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendLoginWithAuthKeyAsync", nullptr, GuardCallback<BackendLoginWithAuthKeyAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendVpnConfigAsync", nullptr, GuardCallback<BackendVpnConfigAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendDnsConfigAsync", nullptr, GuardCallback<BackendDnsConfigAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendDnsRuntimeAsync", nullptr, GuardCallback<BackendDnsRuntimeAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendAuthURL", nullptr, GuardCallback<BackendAuthURL>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendVpnConfig", nullptr, GuardCallback<BackendVpnConfig>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendExitNodes", nullptr, GuardCallback<BackendExitNodes>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendPeers", nullptr, GuardCallback<BackendPeers>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendAccount", nullptr, GuardCallback<BackendAccount>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"tailscaleVersion", nullptr, GuardCallback<TailscaleVersion>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendNetworkSettings", nullptr, GuardCallback<BackendNetworkSettings>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendSetNetworkSetting", nullptr, GuardCallback<BackendSetNetworkSetting>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendSetNetworkSettingAsync", nullptr, GuardCallback<BackendSetNetworkSettingAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendSetExitNode", nullptr, BackendSetExitNode, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendSetExitNodeAsync", nullptr, BackendSetExitNodeAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendPeerProbe", nullptr, BackendPeerProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendPeerProbeAsync", nullptr, BackendPeerProbeAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendNetworkChangedAsync", nullptr, BackendNetworkChangedAsync, nullptr, nullptr, nullptr,
+        {"backendSetExitNode", nullptr, GuardCallback<BackendSetExitNode>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendSetExitNodeAsync", nullptr, GuardCallback<BackendSetExitNodeAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendPeerProbe", nullptr, GuardCallback<BackendPeerProbe>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendPeerProbeAsync", nullptr, GuardCallback<BackendPeerProbeAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendNetworkChangedAsync", nullptr, GuardCallback<BackendNetworkChangedAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendPeerConnectivityAsync", nullptr, BackendPeerConnectivityAsync, nullptr, nullptr, nullptr,
+        {"backendPeerConnectivityAsync", nullptr, GuardCallback<BackendPeerConnectivityAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendSunshineProbeAsync", nullptr, BackendSunshineProbeAsync, nullptr, nullptr, nullptr,
+        {"backendSunshineProbeAsync", nullptr, GuardCallback<BackendSunshineProbeAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendMediaServiceProbeAsync", nullptr, BackendMediaServiceProbeAsync, nullptr, nullptr, nullptr,
+        {"backendMediaServiceProbeAsync", nullptr, GuardCallback<BackendMediaServiceProbeAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"mediaProbeSelfTestAsync", nullptr, BackendMediaProbeSelfTestAsync, nullptr, nullptr, nullptr,
+        {"mediaProbeSelfTestAsync", nullptr, GuardCallback<BackendMediaProbeSelfTestAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildropSendAsync", nullptr, BackendTaildropSendAsync, nullptr, nullptr, nullptr,
+        {"backendTaildropSendAsync", nullptr, GuardCallback<BackendTaildropSendAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildropCancelAsync", nullptr, BackendTaildropCancelAsync, nullptr, nullptr, nullptr,
+        {"backendTaildropCancelAsync", nullptr, GuardCallback<BackendTaildropCancelAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildropReceiveAsync", nullptr, BackendTaildropReceiveAsync, nullptr, nullptr, nullptr,
+        {"backendTaildropReceiveAsync", nullptr, GuardCallback<BackendTaildropReceiveAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildriveListAsync", nullptr, BackendTaildriveListAsync, nullptr, nullptr, nullptr,
+        {"backendTaildriveListAsync", nullptr, GuardCallback<BackendTaildriveListAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildriveStatAsync", nullptr, BackendTaildriveStatAsync, nullptr, nullptr, nullptr,
+        {"backendTaildriveStatAsync", nullptr, GuardCallback<BackendTaildriveStatAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildriveMutateAsync", nullptr, BackendTaildriveMutateAsync, nullptr, nullptr, nullptr,
+        {"backendTaildriveMutateAsync", nullptr, GuardCallback<BackendTaildriveMutateAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildriveDownloadAsync", nullptr, BackendTaildriveDownloadAsync, nullptr, nullptr, nullptr,
+        {"backendTaildriveDownloadAsync", nullptr, GuardCallback<BackendTaildriveDownloadAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildriveManualDownloadAsync", nullptr, BackendTaildriveManualDownloadAsync,
+        {"backendTaildriveManualDownloadAsync", nullptr, GuardCallback<BackendTaildriveManualDownloadAsync>,
             nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendTaildriveUploadAsync", nullptr, BackendTaildriveUploadAsync, nullptr, nullptr, nullptr,
+        {"backendTaildriveUploadAsync", nullptr, GuardCallback<BackendTaildriveUploadAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendTaildriveTransferSnapshotAsync", nullptr, BackendTaildriveTransferSnapshotAsync,
+        {"backendTaildriveTransferSnapshotAsync", nullptr, GuardCallback<BackendTaildriveTransferSnapshotAsync>,
             nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"backendTaildriveCancelAsync", nullptr, BackendTaildriveCancelAsync, nullptr, nullptr, nullptr,
+        {"backendTaildriveCancelAsync", nullptr, GuardCallback<BackendTaildriveCancelAsync>, nullptr, nullptr, nullptr,
             napi_default, nullptr},
-        {"backendRestartWithTun", nullptr, BackendRestartWithTun, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"controlProbe", nullptr, ControlProbe, nullptr, nullptr, nullptr, napi_default, nullptr},
-        {"tunFdProbe", nullptr, TunFdProbe, nullptr, nullptr, nullptr, napi_default, nullptr}
+        {"backendRestartWithTun", nullptr, GuardCallback<BackendRestartWithTun>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendRestartWithTunAsync", nullptr, GuardCallback<BackendRestartWithTunAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"backendStatusAsync", nullptr, GuardCallback<BackendStatusAsync>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"controlProbe", nullptr, GuardCallback<ControlProbe>, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"tunFdProbe", nullptr, GuardCallback<TunFdProbe>, nullptr, nullptr, nullptr, napi_default, nullptr}
     };
     napi_status status = napi_define_properties(
         env, exports, sizeof(descriptors) / sizeof(descriptors[0]), descriptors);
@@ -1085,7 +1317,7 @@ static napi_module module = {
     .nm_register_func = Init,
     .nm_modname = "tailscale_ohos",
     .nm_priv = nullptr,
-    .reserved = {0}
+    .reserved = {nullptr, nullptr, nullptr, nullptr}
 };
 
 extern "C" __attribute__((constructor)) void RegisterTailscaleOhosModule()

@@ -18,6 +18,7 @@ type controlProbeController struct {
 	mu      sync.Mutex
 	running bool
 	result  string
+	probeFn func() string
 }
 
 var harmonyControlProbe controlProbeController
@@ -39,11 +40,20 @@ func (p *controlProbeController) startOrStatus() string {
 }
 
 func (p *controlProbeController) run() {
-	result := runControlProbe()
-	p.mu.Lock()
-	p.running = false
-	p.result = result
-	p.mu.Unlock()
+	result := fallbackControlProbe
+	defer func() {
+		p.mu.Lock()
+		p.running = false
+		p.result = result
+		p.mu.Unlock()
+	}()
+	probe := p.probeFn
+	if probe == nil {
+		probe = runControlProbe
+	}
+	guardGoroutine("controlProbe.run", nil, func() {
+		result = probe()
+	})
 }
 
 func runControlProbe() string {
