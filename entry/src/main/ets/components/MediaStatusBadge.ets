@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { MediaProbeState } from '../services/MediaIntegrationModels';
 import { MotionTokens } from './MotionTokens';
+import { UiTokens } from './UiTokens';
 
 @Component
 export struct MediaStatusBadge {
@@ -44,16 +45,17 @@ export struct MediaStatusBadge {
     if (this.badgeVisible) {
       Text(this.displayedState === 'checking' ? $r('app.string.media_services_checking') :
         this.mediaAvailableText())
-        .fontSize(10)
+        .fontSize(UiTokens.BADGE_SIZE)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.displayedServiceNames.length > 0 ? $r('app.color.status_media_available') :
           $r('app.color.status_probe_pending'))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+        .padding({ left: UiTokens.BADGE_PADDING_HORIZONTAL, right: UiTokens.BADGE_PADDING_HORIZONTAL,
+          top: UiTokens.BADGE_PADDING_VERTICAL, bottom: UiTokens.BADGE_PADDING_VERTICAL })
         .backgroundColor(this.displayedServiceNames.length > 0 ? $r('app.color.badge_background_media') :
           $r('app.color.badge_background_pending'))
-        .borderRadius(8)
+        .borderRadius(UiTokens.BADGE_RADIUS)
         .transition(
           TransitionEffect.asymmetric(
             TransitionEffect.OPACITY.animation({ duration: MotionTokens.NORMAL, curve: MotionTokens.curve() })

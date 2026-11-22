@@ -46,6 +46,8 @@ export class DiagnosticPrivacy {
 
   static redactForLog(value: string): string {
     return value
+      .replace(/\btskey-[A-Za-z0-9_-]+/g, '<redacted-key>')
+      .replace(/\b(?:auth[_-]?key|access[_-]?key)\s*[:=]\s*[^\s,;]+/gi, '<redacted-key>')
       .replace(/(https?:\/\/)[^\s"'<>]+/gi, '$1<redacted>')
       .replace(/\b(?:bearer|basic)\s+[^\s,;]+/gi, '<redacted-auth>')
       .replace(/\b(?:access[_-]?token|auth(?:orization)?|password|passwd|secret|private[_-]?key|cookie|set-cookie|x-[\w-]*token)\s*[:=]\s*[^\s,;]+/gi,
@@ -56,6 +58,15 @@ export class DiagnosticPrivacy {
 
   static exceedsByteLimit(value: string, maximum: number): boolean {
     return DiagnosticPrivacy.utf8ByteLength(value) > maximum;
+  }
+
+  static runtimeStateCode(status: string): number {
+    const normalized: string = status.toLowerCase();
+    const state: RegExpMatchArray | null = normalized.match(/(?:^|[\s|])state=(running|stopped|starting|needslogin|needsmachineauth)(?=[\s|]|$)/);
+    if (state !== null) {
+      return state[1] === 'running' ? 1 : state[1] === 'stopped' ? 2 : state[1] === 'starting' ? 3 : 4;
+    }
+    return normalized.startsWith('vpn extension destroyed') || normalized.startsWith('vpn disconnected') ? 2 : 0;
   }
 
   static utf8ByteLength(value: string): number {
@@ -90,7 +101,8 @@ export class DiagnosticPrivacy {
   }
 
   private static errorCode(value: string): number {
-    const match: RegExpMatchArray | null = value.match(/(?:code|errno)\s*[=:]\s*(-?\d+)/i);
-    return match === null ? 0 : Number(match[1]);
+    const match: RegExpMatchArray | null = value.match(/\b(?:code|errno)["']?\s*[=:]\s*(-?\d+)/i);
+    const code: number = match === null ? 0 : Number(match[1]);
+    return Number.isSafeInteger(code) ? code : 0;
   }
 }

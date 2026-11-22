@@ -1,15 +1,26 @@
-import nativeBridge from 'libtailscale_ohos.so';
+import { BackgroundRunningSettings } from './BackgroundRunningSettings';
+import { FeedbackEmailGateway } from '../services/FeedbackEmailGateway';
+import { FeedbackEmailTemplate } from '../services/FeedbackEmailTemplate';
+import { AccountProfiles, AccountProfile, ServerAccountProfiles } from '../services/AccountProfiles';
+import { CrashDiagnosticService } from '../services/CrashDiagnosticService';
+import { TailnetDnsPreferences } from '../services/TailnetDnsPreferences';
+import { DnsSettings, DnsSettingsStore } from '../services/DnsSettings';
+import { PathDiagnosticService } from '../services/PathDiagnosticService';
+import { LatestTaskPool } from '../services/LatestTaskPool';
+import { StorageUsage, StorageUsageScanner } from '../services/StorageUsageScanner';
+import { BackgroundImageStore } from '../services/BackgroundImageStore';
+import {
+  AppColorMode, DEFAULT_PERSONALIZATION_SETTINGS, PersonalizationPreferences
+} from '../services/PersonalizationPreferences';
 import { bundleManager, common, CompletionHandlerForAbilityStartCallback, Want } from '@kit.AbilityKit';
 import { BusinessError, deviceInfo, pasteboard } from '@kit.BasicServicesKit';
-import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
-import { image } from '@kit.ImageKit';
-import { LengthMetrics } from '@kit.ArkUI';
-import { media } from '@kit.MediaKit';
+import { LengthMetrics, window } from '@kit.ArkUI';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
   DiagnosticReportInput,
-  DiagnosticReportResult
+  DiagnosticReportResult,
+  DiagnosticReportService
 } from '../services/DiagnosticReportService';
 import {
   AccountDiagnosticsGateway,
@@ -17,58 +28,66 @@ import {
   NativeBridgeDiagnosticStatus
 } from '../services/AccountDiagnosticsGateway';
 import { DeviceNameService } from '../services/DeviceNameService';
-import {
-  HomeReadOnlyGateway,
-  HomeReadOnlyRequestGuard,
-  HomeTrafficStatus,
-  parseHomeTrafficStatus
-} from '../services/HomeReadOnlyGateway';
-import {
-  VpnCommandGateway,
-  VpnCommandState,
-  VpnCommandStateMachine,
-  VpnCoreCommand
-} from '../services/VpnCommandGateway';
-import {
-  NetworkSettingKey,
-  NetworkSettingsGateway,
-  NetworkSettingsUpdateQueue,
-  PendingNetworkSettingsUpdate
-} from '../services/NetworkSettingsGateway';
-import { TaildropSendGateway } from '../services/TaildropSendGateway';
-import { TaildropContentGateway } from '../services/TaildropContentGateway';
+import { NetworkSettingKey } from '../services/NetworkSettingsGateway';
+import { SharedFileDraft, SystemShareInbox } from '../services/SystemShareInbox';
 import {
   FileTransferPreferences,
   FileTransferTransport,
   LocalSendPortOverride
 } from '../services/FileTransferPreferences';
 import { TaildriveBrowser } from './TaildriveBrowser';
+import { TaildrivePreviewGateway } from '../services/TaildrivePreviewGateway';
+import { createLocalTextPasteData } from '../services/AppShellIntentAdapter';
+import BuildProfile from 'BuildProfile';
+import { TaildropReceiveResult } from '../services/TaildropReceiveGateway';
+import { APP_BACKGROUND_EVENT, APP_FOREGROUND_EVENT } from '../services/AppLifecycleEvents';
+import { PeerPathResult } from '../services/StreamingModels';
+import { DiscoveredMediaService } from '../services/MediaIntegrationModels';
 import {
-  TaildropNotificationActionRequest,
-  TaildropReceiveGateway,
-  TaildropReceiveRequest,
-  TaildropReceiveResult
-} from '../services/TaildropReceiveGateway';
-import { APP_FOREGROUND_EVENT } from '../services/AppLifecycleEvents';
-import { SunshineProbeService } from '../services/SunshineProbeService';
-import { PeerPathService } from '../services/PeerPathService';
-import { MoonlightLauncher } from '../services/MoonlightLauncher';
-import { buildStreamProfile } from '../services/StreamProfileBuilder';
-import { PeerPathResult, StreamLaunchProfile, SunshineProbeResult } from '../services/StreamingModels';
-import { HosPlayerLauncher } from '../services/HosPlayerLauncher';
+  DeviceMediaState,
+  DeviceStreamingState,
+  MediaSelfTestStatusKind,
+  PeerIntegrationController,
+  PeerIntegrationHost,
+  PeerIntegrationToastKey,
+  RemoteStreamLaunchIntent,
+  formatPeerDisplayName,
+  isPeerSunshineCandidate,
+  selectPrimaryTailscaleAddress
+} from '../services/PeerIntegrationController';
 import {
-  DiscoveredMediaService,
-  HosPlayerLaunchRequest,
-  MediaProbeResult
-} from '../services/MediaIntegrationModels';
-import { MediaServiceProbeService } from '../services/MediaServiceProbeService';
+  TaildropCachedFile,
+  TaildropMediaPreview,
+  TaildropSessionController,
+  TaildropSessionHost,
+  TaildropToastKey,
+  emptyTaildropReceive,
+  formatTaildropRecordDescription,
+  formatTaildropRecordTitle,
+  formatTaildropTransferDuration,
+  sanitizeTaildropDisplayText
+} from '../services/TaildropSessionController';
+import {
+  VpnLoginPromptKind,
+  VpnSessionController,
+  VpnSessionHost,
+  VpnTrafficSample,
+  sanitizeVpnDiagnosticCount,
+  sanitizeVpnDiagnosticToken
+} from '../services/VpnSessionController';
 import { DeviceConnectionInfoPanel } from './DeviceConnectionInfoPanel';
 import { DeviceActionButtons } from './DeviceActionButtons';
 import { CompactConnectedHomeHeader } from './CompactConnectedHomeHeader';
 import { ConnectionDetailsSheet } from './ConnectionDetailsSheet';
 import { MotionTokens } from './MotionTokens';
+import { UiTokens } from './UiTokens';
+import { LightAppearance } from './LightAppearance';
 import { DeviceDetailSheet } from './DeviceDetailSheet';
 import { NativeSettingsNavigation } from './NativeSettingsNavigation';
+import { AccountTextField } from './AccountTextField';
+import { ControlServerPresets, ControlServerPreset, ControlServerPresetCatalog } from '../services/ControlServerPresets';
+import { FeatureSetupGuide, FeatureSetupDialog } from './FeatureSetupGuide';
+import { transferGuideNotice } from '../services/FeatureGuideEntryRules';
 import { UpdateChangelogEntry, UpdateChangelogSheet } from './UpdateChangelogSheet';
 import { HomeConnectionSection } from './HomeConnectionSection';
 import { LegacyConnectedHomeHeader } from './LegacyConnectedHomeHeader';
@@ -88,12 +107,12 @@ import {
   HdsNavDestinationTitleMode,
   HdsNavigation,
   HdsNavigationAttribute,
+  HdsNavigationTitleBarOptions,
   HdsNavigationTitleMode,
   HdsTabs,
   HdsTabsAttribute,
   HdsTabsController,
   ScrollEffectType,
-  hdsEffect,
   hdsMaterial
 } from '@kit.UIDesignKit';
 import {
@@ -101,11 +120,11 @@ import {
   DEFAULT_CONTROL_SERVER_URL
 } from '../services/ControlServerConfig';
 import {
+  AppearanceOverlaySettings,
   SettingsPreferencesGateway,
   SettingsRequestGuard
 } from '../services/SettingsPreferencesGateway';
 import { DiagnosticPrivacy } from '../services/DiagnosticPrivacy';
-import { RecoverableCachePaths } from '../services/RecoverableCachePaths';
 import {
   ReleaseChangelogDefinition,
   RELEASE_CHANGELOG_ENTRIES
@@ -125,142 +144,66 @@ import {
 } from '../services/AnimationPreferences';
 import { AppSecurityPreferences, AppSecuritySettings } from '../services/AppSecurityPreferences';
 import { AppSecurityAuthenticator } from '../services/AppSecurityAuthenticator';
+import { resolveFileIconColorResource, resolveFileIconResource } from '../services/FileIconResolver';
+import {
+  AccountSummary,
+  ExitNodeChoice,
+  LocalSendStatus,
+  MeshArcReceiverStatus,
+  NetworkSettings,
+  PeerSummary,
+  TAILDROP_HISTORY_MEDIA_DIR_NAME,
+  TAILDROP_INBOX_DIR_NAME,
+  TaildropSnapshot,
+  TaildropTargetSummary,
+  TaildropTransferRecord,
+  TaildropTransferSummary,
+  TaildropWaitingFileSummary,
+  emptyMeshArcReceiverStatus,
+  emptyTaildropTransfer
+} from '@tailscale/common';
 
-interface LocalSendAppTarget {
-  bundleName: string;
-  moduleName: string;
-  abilityName: string;
+interface SettingsCategoryRowData {
+  icon: Resource;
+  title: ResourceStr;
+  summary: ResourceStr;
+  rowId: string;
+  action: () => void;
 }
 
-const MIN_CONNECTION_LOADING_MS: number = 250;
+interface StorageLegendRowData {
+  title: ResourceStr;
+  bytes: number;
+  color: ResourceColor;
+}
+
+interface StorageCleanupButtonData {
+  title: ResourceStr;
+  description: ResourceStr;
+  rowId: string;
+  enabled: boolean;
+  onClick: () => void;
+}
+
 const FEATURE_DIAGNOSTIC_LOG_DOMAIN: number = 0x0000;
 const FEATURE_DIAGNOSTIC_LOG_TAG: string = 'FeatureDiagnostics';
-const CONNECTION_START_FRAME_DELAY_MS: number = 32;
-const CONNECTION_POLL_INTERVAL_MS: number = 250;
-const BACKEND_READINESS_POLL_INTERVAL_MS: number = 250;
-const CACHE_SIZE_POLL_INTERVAL_MS: number = 500;
-const VPN_HEARTBEAT_FRESH_MS: number = 5000;
-const VPN_HEARTBEAT_CONFIRM_TIMEOUT_MS: number = 2500;
-const VPN_CONNECTED_GRACE_MS: number = 8000;
-const FILE_WATCH_CLOSE_WRITE: number = 0x8;
-const FAST_RECONNECT_TTL_MS: number = 15000;
+const CACHE_SIZE_POLL_INTERVAL_MS: number = 30000;
 const FAST_REFRESH_INTERVAL_MS: number = 2000;
 const OFFLINE_PEER_STATUS_REFRESH_INTERVAL_MS: number = 10000;
 const NORMAL_SERVICE_REFRESH_INTERVAL_MS: number = 30000;
-// Native refresh has a 15-second budget; allow its following peer snapshot
-// to finish before a later UI refresh can replace the command/response files.
-const LOCAL_SEND_REFRESH_TIMEOUT_MS: number = 25000;
 const STATUS_CROSS_FADE_MS: number = 180;
-const LOCAL_SEND_APP_TARGETS: LocalSendAppTarget[] = [
-  {
-    bundleName: 'cn.biandangroup.bcshare',
-    moduleName: 'entry',
-    abilityName: 'EntryAbility'
-  }
-];
-const VPN_STOP_POLL_INTERVAL_MS: number = 50;
-const VPN_STOP_POLL_MAX_ATTEMPTS: number = 150;
-const VPN_BACKEND_HANDOFF_REQUEST_FILE_NAME: string = 'vpn-backend-handoff-request.json';
-const VPN_BACKEND_HANDOFF_RESPONSE_FILE_NAME: string = 'vpn-backend-handoff-response.json';
-const LOCAL_SEND_REFRESH_REQUEST_FILE_NAME: string = 'localsend-refresh-request.json';
-const LOCAL_SEND_REFRESH_RESPONSE_FILE_NAME: string = 'localsend-refresh-response.json';
-const TAILDROP_SEND_REQUEST_FILE_NAME: string = 'taildrop-send-request.json';
-const TAILDROP_TARGETS_FILE_NAME: string = 'taildrop-targets.json';
-const TAILDROP_CANCEL_REQUEST_FILE_NAME: string = 'taildrop-cancel-request.json';
-const TAILDROP_INBOX_DIR_NAME: string = 'taildrop-inbox-export';
-const TAILDROP_RECEIVE_REQUEST_FILE_NAME: string = 'taildrop-receive-request.json';
-const TAILDROP_RECEIVE_RESPONSE_FILE_NAME: string = 'taildrop-receive-response.json';
-const TAILDROP_HISTORY_FILE_NAME: string = 'taildrop-history.json';
-const TAILDROP_INBOX_SNAPSHOT_FILE_NAME: string = 'taildrop-inbox-snapshot.json';
-const TAILDROP_HISTORY_MEDIA_DIR_NAME: string = 'taildrop-history-media';
-const TAILDROP_CACHE_RETENTION_MS: number = 7 * 24 * 60 * 60 * 1000;
-const TAILDROP_CACHE_EXPIRATION_CHECK_INTERVAL_MS: number = 60 * 60 * 1000;
-const TAILDROP_THUMBNAIL_EDGE_PX: number = 128;
-const TAILDROP_THUMBNAIL_JPEG_QUALITY: number = 72;
-const TAILDROP_HISTORY_LIMIT: number = 10;
-const TAILDROP_MAX_FILE_SELECTION: number = 10;
-const TAILDROP_MAX_MEDIA_SELECTION: number = 100;
-const TAILDROP_RECEIVE_BACKEND_TIMEOUT_MS: number = 45000;
-const TAILDROP_SAVE_TIMEOUT_MS: number = 60000;
-const TAILDROP_PENDING_DELETE_RETRY_MS: number = 5000;
-const TAILDROP_MEDIA_MIN_TIMESTAMP_MS: number = 946684800000;
-const TAILDROP_MEDIA_MAX_FUTURE_MS: number = 24 * 60 * 60 * 1000;
-const TAILDROP_MEDIA_MAX_DURATION_MS: number = 24 * 60 * 60 * 1000;
-const TAILDROP_TEXT_CLIPBOARD_MAX_BYTES: number = 1024 * 1024;
-const DEFAULT_LOCAL_SEND_PORT: number = 53317;
-const TAILDROP_IMAGE_EXTENSIONS: string[] = [
-  'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif', 'dng'
-];
-const TAILDROP_VIDEO_EXTENSIONS: string[] = [
-  'mp4', 'mov', 'm4v', '3gp', '3g2', 'mkv', 'webm'
-];
-const TAILDROP_TEXT_EXTENSIONS: string[] = [
-  'txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'json5', 'xml', 'yaml', 'yml', 'log',
-  'ini', 'conf', 'cfg', 'properties', 'env', 'sql', 'sh', 'ps1', 'bat', 'cmd', 'py',
-  'js', 'ts', 'ets', 'css', 'html', 'htm', 'java', 'kt', 'go', 'rs', 'c', 'cc', 'cpp',
-  'h', 'hpp'
-];
-const VPN_PEERS_FILE_NAME: string = 'vpn-peers.json';
-const VPN_STOP_REQUEST_FILE_NAME: string = 'vpn-stop-request.json';
-const VPN_STOP_RESPONSE_FILE_NAME: string = 'vpn-stop-response.json';
-const VPN_CONNECT_CONFIG_FILE_NAME: string = 'vpn-connect-config.json';
-const WELCOME_ACKNOWLEDGED_FILE_NAME: string = 'welcome-acknowledged';
-const UPDATE_CHANGELOG_SEEN_FILE_NAME: string = 'update-changelog-seen-version';
-const UPDATE_CHANGELOG_MARKER_PREFIX: string = 'only-on-update:';
 const DEFAULT_APP_VERSION_NAME: string = '0.9.10';
 const DEFAULT_APP_VERSION_CODE: number = 99000003;
-const FEEDBACK_EMAIL: string = 'zzx15821178583@gmail.com';
-
-interface ExitNodeChoice {
-  id: string;
-  name: string;
-  online: boolean;
-  selected: boolean;
-}
-
-interface PeerSummary {
-  key: string;
-  name: string;
-  os: string;
-  osVersion?: string;
-  deviceModel: string;
-  deviceType: string;
-  addresses: string[];
-  online: boolean;
-  exitNode: boolean;
-  keyExpired: boolean;
-  keyExpiryUnixMs: number;
-  localSend?: LocalSendStatus;
-}
-
-interface LocalSendStatus {
-  state: string;
-  protocol?: string;
-  port?: number;
-  version?: string;
-  checkedAtMs?: number;
-}
+const FEEDBACK_EMAIL: string = 'flypigj@gmail.com';
 
 interface FileTransferCapabilities {
   tailsend: boolean;
   localSend: boolean;
 }
 
-interface NetworkSettings {
-  routeAll: boolean;
-  exitNodeAllowLANAccess: boolean;
-}
+type TrafficSample = VpnTrafficSample;
 
-interface TrafficSample {
-  downloadBytesPerSecond: number;
-  uploadBytesPerSecond: number;
-}
-
-interface VpnBackendHandoffRequest {
-  requestId: number;
-}
-
-  class BrowserStartParameters {
+class BrowserStartParameters {
   uri: string;
 
   constructor(uri: string) {
@@ -279,203 +222,6 @@ class SecureLoginAbilityStartCallback {
   onError(code: number, name: string, message: string): void {
     this.errorHandler(code, name, message);
   }
-}
-
-interface VpnBackendHandoffResponse {
-  requestId: number;
-  status: string;
-}
-
-interface LocalSendRefreshResponse {
-  requestId: number;
-  status: string;
-}
-
-interface DeviceStreamingState {
-  peerKey: string;
-  sunshine: SunshineProbeResult;
-  path: PeerPathResult;
-  checking: boolean;
-  launching: boolean;
-}
-
-interface DeviceMediaState {
-  peerKey: string;
-  result: MediaProbeResult;
-  checking: boolean;
-  launching: boolean;
-}
-
-interface MediaProbeSelfTestResult {
-  state: string;
-  cases: number;
-  errorMessage?: string;
-}
-
-interface AccountSummary {
-  displayName: string;
-  loginName: string;
-  profilePicURL: string;
-  tailnetName: string;
-  deviceName: string;
-  addresses: string[];
-  needsApproval: boolean;
-  keyExpired: boolean;
-  keyExpiryUnixMs: number;
-}
-
-interface TaildropTargetSummary {
-  key: string;
-  name: string;
-  os: string;
-  osVersion?: string;
-  deviceModel: string;
-  deviceType: string;
-  online: boolean;
-}
-
-interface TaildropSnapshot {
-  state: string;
-  reason: string;
-  targets: TaildropTargetSummary[];
-  waitingFiles: TaildropWaitingFileSummary[];
-  inboxReason: string;
-  transfer: TaildropTransferSummary;
-  updatedAtMs?: number;
-}
-
-interface TaildropWaitingFileSummary {
-  name: string;
-  size: number;
-  receivedAtMs: number;
-}
-
-interface TaildropTransferSummary {
-  requestId: number;
-  state: string;
-  reason: string;
-  targetKey: string;
-  targetName: string;
-  fileName: string;
-  fileIndex: number;
-  fileCount: number;
-  fileBytes: number;
-  fileSize: number;
-  bytesSent: number;
-  totalBytes: number;
-  previewPath: string;
-  completedAtMs: number;
-}
-
-interface TaildropSendFile {
-  path: string;
-  name: string;
-  size: number;
-  previewPath: string;
-}
-
-interface TaildropSendRequest {
-  requestId: number;
-  targetKey: string;
-  outboxRoot: string;
-  files: TaildropSendFile[];
-}
-
-interface TaildropCancelRequest {
-  requestId: number;
-}
-
-interface TaildropMediaPreview {
-  requestId: number;
-  name: string;
-  size: number;
-  path: string;
-  thumbnailPath: string;
-  mediaType: photoAccessHelper.PhotoType;
-}
-
-interface TaildropCachedFile {
-  requestId: number;
-  name: string;
-  size: number;
-  path: string;
-}
-
-interface TaildropTransferRecord {
-  requestId: number;
-  direction: string;
-  state: string;
-  reason: string;
-  targetKey: string;
-  targetName: string;
-  fileName: string;
-  fileCount: number;
-  totalBytes: number;
-  previewPath: string;
-  completedAtMs: number;
-}
-
-interface PersistedTaildropHistory {
-  records: TaildropTransferRecord[];
-}
-
-interface PersistedTaildropInbox {
-  files: TaildropWaitingFileSummary[];
-  inboxReason: string;
-  mediaPreviews?: TaildropMediaPreview[];
-  cachedFiles?: TaildropCachedFile[];
-  pendingDeletes?: TaildropWaitingFileSummary[];
-}
-
-interface PersistedPeerSnapshot {
-  peers: PeerSummary[];
-  meshArcReceiver?: MeshArcReceiverStatus;
-  updatedAtMs: number;
-}
-
-interface MeshArcReceiverStatus {
-  state: string;
-  protocol?: string;
-  httpStatus?: number;
-  sent: number;
-  registered: number;
-  checkedAtMs?: number;
-}
-
-function emptyMeshArcReceiverStatus(): MeshArcReceiverStatus {
-  return { state: 'idle', sent: 0, registered: 0 };
-}
-
-interface VpnStopRequest {
-  requestId: number;
-}
-
-interface VpnStopResponse {
-  requestId: number;
-  status: string;
-}
-
-interface BackendSnapshot {
-  status: string;
-  exitNodes: ExitNodeChoice[];
-  peers: PeerSummary[];
-  networkSettings: NetworkSettings;
-  account: AccountSummary;
-  taildrop: TaildropSnapshot;
-}
-
-function emptyTaildropTransfer(): TaildropTransferSummary {
-  return {
-    requestId: 0, state: 'idle', reason: '', targetKey: '', targetName: '', fileName: '',
-    fileIndex: 0, fileCount: 0, fileBytes: 0, fileSize: 0, bytesSent: 0, totalBytes: 0,
-    previewPath: '', completedAtMs: 0
-  };
-}
-
-function emptyTaildropReceive(): TaildropReceiveResult {
-  return {
-    requestId: 0, action: '', state: 'idle', reason: '', name: '', size: 0, path: ''
-  };
 }
 
 class PeerDataSource implements IDataSource {
@@ -539,12 +285,22 @@ export struct BridgeStatus {
   @State appVersion: string = DEFAULT_APP_VERSION_NAME;
   @State appVersionCode: number = DEFAULT_APP_VERSION_CODE;
   @State tailscaleVersion: string = '—';
-  @State exitNodeStatus: string = '未使用出口节点';
+  @State exitNodeStatus: ResourceStr = $r('app.string.exit_node_status_none');
   @State logoutStatus: string = '';
   @State diagnosticsUnlocked: boolean = false;
   @State diagnosticsExpanded: boolean = false;
   @State diagnosticReportStatus: string = '';
   @State diagnosticReportInProgress: boolean = false;
+  @State standaloneDiagnosticsVisible: boolean = false;
+  @State tailnetDnsEnabled: boolean = true;
+  @State dnsSettingsEnabled: boolean = false;
+  @State dnsPrimaryInput: string = '';
+  @State dnsSecondaryInput: string = '';
+  @State dnsSearchDomainsInput: string = '';
+  @State dnsSettingsStatus: string = '';
+  @State crashCaptureEnabled: boolean = false;
+  @State pathDiagnosticBusy: boolean = false;
+  @State pathDiagnosticStatus: string = '';
   @State diagnosticQuickTransferEnabled: boolean = true;
   @State diagnosticServiceMonitoringEnabled: boolean = true;
   @State diagnosticSecurityEnabled: boolean = true;
@@ -584,7 +340,6 @@ export struct BridgeStatus {
   @State taildropTextPreviewVisible: boolean = false;
   @State taildropTextInput: string = '';
   @State taildropTextInputCanSend: boolean = false;
-  @State controlServerInputFocused: boolean = false;
   @State taildropReceivedText: string = '';
   @State taildropTransferRate: number = 0;
   @State taildropTransferEtaSeconds: number = 0;
@@ -602,6 +357,9 @@ export struct BridgeStatus {
   @State remotePortPeerKey: string = '';
   @State remotePortInput: string = '';
   @State loginInProgress: boolean = false;
+  @State @Watch('onSecurityPrivacyStateChanged') authKeyLoginVisible: boolean = false;
+  @State authKeyInput: string = '';
+  @State authKeyStatus: string = '';
   @State loginPrompt: ResourceStr = '';
   @State connectInProgress: boolean = false;
   @State exitNodeUpdateInProgress: boolean = false;
@@ -614,20 +372,34 @@ export struct BridgeStatus {
   @State hasAuthenticatedSession: boolean = false;
   @State currentTab: number = 0;
   @State activeTab: number = 0;
+  @State private backgroundRunningHighlighted: boolean = false;
+  private backgroundRunningReveal: number = 0;
   @State navigationOrder: NavigationTabId[] = [...DEFAULT_NAVIGATION_ORDER];
   @State hiddenNavigationTabs: NavigationTabId[] = [...DEFAULT_NAVIGATION_HIDDEN];
   @State navigationBottomMargin: number = DEFAULT_NAVIGATION_BOTTOM_MARGIN;
   @State navigationDraggingId: string = '';
   @State activeNavigationId: NavigationTabId = 'home';
+  @State private filesPageActivated: boolean = false;
+  private navigationRevision: number = 0;
   @State meshSendPreferredTransport: string = '';
   @StorageLink('taildropOpenInbox') @Watch('onTaildropOpenInbox') taildropOpenInbox: number = 0;
+  @StorageLink('systemShareRevision') @Watch('onSystemShare') systemShareRevision: number = 0;
+  @StorageLink('systemShareError') @Watch('onSystemShareError') systemShareError: number = 0;
+  @State private sharedFileCount: number = 0;
+  @State private sharedFileSummary: string = '';
+  @State private sharedFileSending: boolean = false;
   @StorageLink('taildropNotificationAction') @Watch('onTaildropNotificationAction')
   taildropNotificationAction: string = '';
+  @State accountProfileId: string = 'default';
+  @State accountProfiles: AccountProfile[] = [];
+  @State accountProfileStatus: string = '';
   @State controlServerURL: string = DEFAULT_CONTROL_SERVER_URL;
   @State controlServerInput: string = DEFAULT_CONTROL_SERVER_URL;
   @State controlServerConfirmed: boolean = false;
   @State controlServerStatus: string = '';
   @State controlServerEditorVisible: boolean = true;
+  @State controlServerPresets: ControlServerPreset[] = [];
+  @State controlServerSwitching: boolean = false;
   @State controlServerTipMessage: string = '';
   @State diagnosticActionStatus: string = '';
   @State diagnosticActionInProgress: boolean = false;
@@ -636,29 +408,49 @@ export struct BridgeStatus {
   @State animationDuration: number = DEFAULT_ANIMATION_SETTINGS.duration;
   @State animationAmplitude: number = DEFAULT_ANIMATION_SETTINGS.amplitude;
   @State animationDamping: number = DEFAULT_ANIMATION_SETTINGS.damping;
+  @State contextGuideVisible: boolean = false;
+  @State contextGuideSection: string = '';
+  @State contextGuidePresentation: number = 0;
+  private contextGuideController?: CustomDialogController;
   @State nativeSettingsVisible: boolean = false;
+  @State connectionButtonPressed: boolean = false;
   @State nativeSettingsPage: string = 'background';
   @State settingsDetailActive: boolean = false;
-  @State appLockEnabled: boolean = false;
-  @State folderLockEnabled: boolean = false;
-  @State securityPreferencesReady: boolean = false;
-  @StorageLink('taildriveLockedFolderPaths') lockedFolderPaths: string[] = [];
+  @State @Watch('onSecurityPrivacyStateChanged') appLockEnabled: boolean = false;
+  @State @Watch('onSecurityPrivacyStateChanged') folderLockEnabled: boolean = false;
+  @State @Watch('onSecurityPrivacyStateChanged') securityPreferencesReady: boolean = false;
+  @StorageLink('taildriveLockedFolderPaths') @Watch('onSecurityPrivacyStateChanged') lockedFolderPaths: string[] = [];
   @State @Watch('onAppLockRequiredChanged') appLockRequired: boolean = false;
   @State appLockAuthenticating: boolean = false;
   @State securitySettingsAuthenticating: boolean = false;
   @State appLockMessage: string = '';
+  private windowPrivacySyncSeq: number = 0;
   @State nativeSettingsBackgroundUri: string = '';
+  @State backgroundUnavailable: boolean = false;
+  @State personalizationColorMode: AppColorMode = DEFAULT_PERSONALIZATION_SETTINGS.colorMode;
+  @State backgroundBrightnessValue: number = DEFAULT_PERSONALIZATION_SETTINGS.backgroundBrightness;
+  private backgroundSelectionGeneration: number = 0;
+  private personalizationSaveTimer: number = -1;
+  private personalizationSavePending: boolean = false;
+  private navigationSaveQueue: Promise<void> = Promise.resolve();
+  private navigationMarginSaveTimer: number = -1;
   @State immersiveColorBackgroundEnabled: boolean = false;
   @State nativeSettingsBackgroundPickerInProgress: boolean = false;
+  @State storageUsageReady: boolean = false;
+  @State storageScanFailed: boolean = false;
+  @State storageRingProgress: number = 0;
+  private storageRingPageShown: boolean = false;
+  private storageRingAnimationStarted: boolean = false;
+  private storageRingGeneration: number = 0;
   @State nativeStorageAppDataBytes: number = 0;
   @State nativeStorageReceivedBytes: number = 0;
   @State nativeStorageTemporaryBytes: number = 0;
-  @State storageSummaryBytes: number = 0;
-  @State storageUsageRingProgress: number = 0;
   @State connectedHomeLayoutMode: ConnectedHomeLayoutMode = DEFAULT_CONNECTED_HOME_LAYOUT;
   @State cacheSizeBytes: number = 0;
   @State cacheSizeLoading: boolean = true;
   @State cacheClearInProgress: boolean = false;
+  @State private taildropPreviewCachePresent: boolean = false;
+  @State private missingTaildropPreviewPaths: string[] = [];
   @State @Watch('onConnectionDetailsVisibilityChanged') connectionDetailsVisible: boolean = false;
   @State deviceDetailVisible: boolean = false;
   @State updateChangelogVisible: boolean = false;
@@ -678,32 +470,16 @@ export struct BridgeStatus {
   @State expandedPeerKeys: string[] = [];
   @State taildriveTargetMachineName: string = '';
   @State taildriveTargetRequestId: number = 0;
-  private connectionPollTimer: number = -1;
-  private connectionStatusWatcher?: fileIo.Watcher;
-  private connectionCompletionTimer: number = -1;
-  private connectionStartedAtMs: number = 0;
+  private remoteFilesNavigationRequestId: number = 0;
   private connectionDurationTimer: number = -1;
   @State connectionDurationNowMs: number = 0;
-  private backendReadinessPollTimer: number = -1;
   private backendRestartDeferred: boolean = false;
-  private vpnBackendWasRunningBeforeConnect: boolean = false;
-  private vpnBackendHandoffInFlight: boolean = false;
-  private vpnFailedExtensionRecoveryInFlight: boolean = false;
-  private cachedVpnConnectConfig: string = '';
-  private cachedVpnConnectConfigAtMs: number = 0;
-  private healthPollTimer: number = -1;
   private serviceRefreshTimer: number = -1;
   private serviceRefreshInFlight: boolean = false;
-  private localSendRefreshRequestId: number = 0;
-  private localSendRefreshPromise?: Promise<void>;
   private homeLatencyRefreshTimer: number = -1;
   private offlinePeerStatusRefreshTimer: number = -1;
-  private homeLatencyRefreshInFlight: boolean = false;
   private deviceDetailRefreshTimer: number = -1;
   private transferProtocolRefreshTimer: number = -1;
-  private transferProtocolRefreshInFlight: boolean = false;
-  private transferProtocolManualRefreshQueued: boolean = false;
-  private loginPollTimer: number = -1;
   private homeScroller: Scroller = new Scroller();
   private transferScroller: Scroller = new Scroller();
   private filesScroller: Scroller = new Scroller();
@@ -712,9 +488,11 @@ export struct BridgeStatus {
   private settingsScroller: Scroller = new Scroller();
   private settingsAccountDetailScroller: Scroller = new Scroller();
   private settingsNetworkDetailScroller: Scroller = new Scroller();
+  private settingsBackgroundRunningDetailScroller: Scroller = new Scroller();
   private settingsAppearanceDetailScroller: Scroller = new Scroller();
   private settingsStorageDetailScroller: Scroller = new Scroller();
   private settingsAboutDetailScroller: Scroller = new Scroller();
+  private featureGuideScroller: Scroller = new Scroller();
   private settingsSecurityDetailScroller: Scroller = new Scroller();
   private settingsPathStack: NavPathStack = new NavPathStack();
   private settingsNavigationLockUntilMs: number = 0;
@@ -730,18 +508,16 @@ export struct BridgeStatus {
   private lifecycleTimers: number[] = [];
   private lifecycleGeneration: number = 0;
   private appShellReady: boolean = false;
+  private remoteStreamAppInForeground: boolean = true;
+  private deviceDetailPresentationId: number = 0;
   private externalTabNavigationTimer: number = -1;
+  private tabChangeRequestId: number = 0;
   private pendingExternalTabIndex: number = -1;
   private cacheRefreshScheduled: boolean = false;
   private cacheSizeRefreshInFlight: boolean = false;
-  private cacheSizeRefreshTimer: number = -1;
+  private cacheSizeRefreshPending: boolean = false;
+  private readonly storageScanPool: LatestTaskPool<number> = new LatestTaskPool<number>(1);
   private cacheSizePollTimer: number = -1;
-  private cacheClearRequestedFromSettings: boolean = false;
-  private taildropCacheExpirationCheckedAtMs: number = 0;
-  private refreshInFlight: boolean = false;
-  private backendRestartPromise: Promise<void> | undefined = undefined;
-  private homeReadOnlyGateway: HomeReadOnlyGateway = new HomeReadOnlyGateway();
-  private homeReadOnlyRequestGuard: HomeReadOnlyRequestGuard = new HomeReadOnlyRequestGuard();
   private settingsPreferencesGateway: SettingsPreferencesGateway = new SettingsPreferencesGateway();
   private settingsRequestGuard: SettingsRequestGuard = new SettingsRequestGuard();
   private accountDiagnosticsGateway: AccountDiagnosticsGateway = new AccountDiagnosticsGateway();
@@ -749,156 +525,483 @@ export struct BridgeStatus {
     new AccountDiagnosticsRequestGuard();
   private diagnosticProbeRequestGuard: AccountDiagnosticsRequestGuard =
     new AccountDiagnosticsRequestGuard();
+  private pathDiagnosticRequestGuard: AccountDiagnosticsRequestGuard = new AccountDiagnosticsRequestGuard();
   private diagnosticReportRequestGuard: AccountDiagnosticsRequestGuard =
-    new AccountDiagnosticsRequestGuard();
-  private diagnosticMediaRequestGuard: AccountDiagnosticsRequestGuard =
     new AccountDiagnosticsRequestGuard();
   private diagnosticActionRequestGuard: AccountDiagnosticsRequestGuard =
     new AccountDiagnosticsRequestGuard();
   private logoutInProgress: boolean = false;
-  private vpnCommandGateway: VpnCommandGateway = new VpnCommandGateway();
-  private vpnCommandStateMachine: VpnCommandStateMachine = new VpnCommandStateMachine();
-  private networkSettingsGateway: NetworkSettingsGateway = new NetworkSettingsGateway();
-  private taildropSendGateway: TaildropSendGateway = new TaildropSendGateway();
-  private taildropContentGateway: TaildropContentGateway = new TaildropContentGateway();
-  private taildropReceiveGateway: TaildropReceiveGateway = new TaildropReceiveGateway();
-  private taildropNotificationActionInFlight?: TaildropNotificationActionRequest;
-  private exitNodeUpdateQueue: NetworkSettingsUpdateQueue = new NetworkSettingsUpdateQueue();
-  private routeAllUpdateQueue: NetworkSettingsUpdateQueue = new NetworkSettingsUpdateQueue();
-  private exitNodeLanUpdateQueue: NetworkSettingsUpdateQueue = new NetworkSettingsUpdateQueue();
-  private connectCommandId: number = 0;
-  private loginCommandId: number = 0;
-  private disconnectCommandId: number = 0;
-  private exitNodeUpdatePromise: Promise<void> | undefined = undefined;
-  private routeAllUpdatePromise: Promise<void> | undefined = undefined;
-  private exitNodeLanUpdatePromise: Promise<void> | undefined = undefined;
   private vpnConflictDialogVisible: boolean = false;
   private welcomeDialogVisible: boolean = false;
   private appVersionMetadataReady: boolean = false;
   private updateChangelogShowPending: boolean = false;
-  private trafficSession: number = 0;
-  private trafficLastHeartbeatMs: number = 0;
-  private trafficLastDownloadBytes: number = 0;
-  private trafficLastUploadBytes: number = 0;
-  private lastConfirmedVpnStatus: string = '';
-  private lastConfirmedVpnHeartbeatMs: number = 0;
-  private vpnStatusGraceActive: boolean = false;
-  private vpnHeartbeatObservationStartedAtMs: number = 0;
-  private vpnHeartbeatBaselineMs: number = 0;
-  private vpnHeartbeatConfirmed: boolean = false;
-  private vpnStopPollTimer: number = -1;
-  private vpnStopRequestId: number = 0;
-  private peerSnapshotSignature: string = '';
   private featureServiceLogSignature: string = '';
-  private lastHandledTaildropRequestId: number = 0;
-  private taildropRequestSubmittedAtMs: number = 0;
-  private taildropProgressSampleRequestId: number = 0;
-  private taildropProgressSampleBytes: number = 0;
-  private taildropProgressSampleMs: number = 0;
-  private taildropReceiveResponseInFlight: boolean = false;
-  private taildropReceiveStateStartedAtMs: number = 0;
-  private taildropReceiveDestinationUri: string = '';
-  private taildropReceiveExpectedSize: number = 0;
-  private taildropReceiveMediaType?: photoAccessHelper.PhotoType;
-  private taildropReceivePreviewPath: string = '';
-  private taildropReceiveThumbnailPath: string = '';
-  private taildropReceiveStrategy: string = 'none';
-  private taildropPendingDeletes: TaildropWaitingFileSummary[] = [];
-  private taildropPendingDeleteRetryAtMs: number = 0;
-  private taildropAutoPrefetchKey: string = '';
-  private taildropAutoPrefetchFailedKeys: string[] = [];
-  private taildropPendingTextPreview?: TaildropWaitingFileSummary;
-  private taildropPendingMediaSave?: TaildropWaitingFileSummary;
-  private taildropNotificationActionRetryScheduled: boolean = false;
   private taildropPickerOpen: boolean = false;
-  private taildropTextTarget?: TaildropTargetSummary;
   private peerDataSource: PeerDataSource = new PeerDataSource();
-  private sunshineProbeService?: SunshineProbeService;
-  private peerPathService?: PeerPathService;
-  private moonlightLauncher?: MoonlightLauncher;
-  private mediaServiceProbeService?: MediaServiceProbeService;
-  private hosPlayerLauncher?: HosPlayerLauncher;
-  private streamingRequestIds: Map<string, number> = new Map();
-  private mediaRequestIds: Map<string, number> = new Map();
-  private peerServiceRefreshInFlight: Set<string> = new Set();
-  private autoSunshineFailureCounts: Map<string, number> = new Map();
-  private autoMediaFailureCounts: Map<string, number> = new Map();
-  private autoProbedPeerSessions: Map<string, number> = new Map();
   private appForegroundListener: () => void = () => this.handleAppForeground();
+  private appBackgroundListener: () => void = () => this.handleAppBackground();
 
-  private mergePeerLocalSend(incoming: PeerSummary, current: PeerSummary | undefined): PeerSummary {
-    const incomingStatus: LocalSendStatus | undefined = incoming.localSend;
-    const currentStatus: LocalSendStatus | undefined = current?.localSend;
-    if (currentStatus === undefined) {
-      return incoming;
-    }
-    if (incomingStatus === undefined) {
-      const merged: PeerSummary = {
-        key: incoming.key, name: incoming.name, os: incoming.os, osVersion: incoming.osVersion,
-        deviceModel: incoming.deviceModel, deviceType: incoming.deviceType, addresses: incoming.addresses,
-        online: incoming.online, exitNode: incoming.exitNode, keyExpired: incoming.keyExpired,
-        keyExpiryUnixMs: incoming.keyExpiryUnixMs, localSend: currentStatus
-      };
-      return merged;
-    }
-    const incomingCheckedAt: number = incomingStatus.checkedAtMs ?? 0;
-    const currentCheckedAt: number = currentStatus.checkedAtMs ?? 0;
-    if (currentCheckedAt > incomingCheckedAt) {
-      const merged: PeerSummary = {
-        key: incoming.key, name: incoming.name, os: incoming.os, osVersion: incoming.osVersion,
-        deviceModel: incoming.deviceModel, deviceType: incoming.deviceType, addresses: incoming.addresses,
-        online: incoming.online, exitNode: incoming.exitNode, keyExpired: incoming.keyExpired,
-        keyExpiryUnixMs: incoming.keyExpiryUnixMs, localSend: currentStatus
-      };
-      return merged;
-    }
-    return incoming;
+  private abilityContext(): common.UIAbilityContext {
+    return this.getUIContext().getHostContext() as common.UIAbilityContext;
   }
 
-  private mergePeers(peers: PeerSummary[]): PeerSummary[] {
-    return peers.map((peer: PeerSummary) => this.mergePeerLocalSend(peer,
-      this.peers.find((current: PeerSummary) => current.key === peer.key)));
-  }
-
-  private applyPeers(peers: PeerSummary[]): void {
-    // The backend and VPN extension briefly replace their snapshot during a
-    // connection handoff. Keep the last authenticated directory mounted until
-    // a non-empty snapshot arrives. Explicit logout/reset paths are not in a
-    // connecting or disconnecting handoff and can still clear the list normally.
-    if (peers.length === 0 && this.peers.length > 0 &&
-      (this.connectInProgress || this.disconnectInProgress || this.isConnecting())) {
-      return;
+  private readonly vpnSessionHost: VpnSessionHost = {
+    getFilesDir: (): string => this.abilityContext().filesDir,
+    getCacheDir: (): string => this.abilityContext().cacheDir,
+    getLifecycleGeneration: (): number => this.lifecycleGeneration,
+    isAppShellReady: (): boolean => this.appShellReady,
+    isAppLockRequired: (): boolean => this.appLockRequired,
+    isLogoutInProgress: (): boolean => this.logoutInProgress,
+    isDiagnosticActionInProgress: (): boolean => this.diagnosticActionInProgress,
+    isCacheClearInProgress: (): boolean => this.cacheClearInProgress,
+    isTaildropSendActive: (): boolean => this.taildropSendActive(),
+    isTaildropReceiveInProgress: (): boolean => this.taildropReceiveInProgress,
+    isTaildropMediaSaveInProgress: (): boolean => this.taildropMediaSaveInProgress,
+    shouldPollHealthFast: (): boolean => this.taildropSessionController.shouldPollHealthFast(),
+    getBackendStatus: (): string => this.backendStatus,
+    setBackendStatus: (status: string): void => { this.backendStatus = status; },
+    getVpnStatus: (): string => this.vpnStatus,
+    setVpnStatus: (status: string): void => { this.vpnStatus = status; },
+    isBackendReady: (): boolean => this.backendReady,
+    setBackendReady: (ready: boolean): void => { this.backendReady = ready; },
+    isBackendInitializationVisible: (): boolean => this.backendInitializationVisible,
+    setBackendInitializationVisible: (visible: boolean): void => { this.backendInitializationVisible = visible; },
+    setDevicesLoading: (loading: boolean): void => { this.devicesLoading = loading; },
+    hasAuthenticatedSession: (): boolean => this.hasAuthenticatedSession,
+    setHasAuthenticatedSession: (authenticated: boolean): void => { this.hasAuthenticatedSession = authenticated; },
+    isConnectInProgress: (): boolean => this.connectInProgress,
+    setConnectInProgressState: (inProgress: boolean): void => { this.connectInProgress = inProgress; },
+    isDisconnectInProgress: (): boolean => this.disconnectInProgress,
+    setDisconnectInProgress: (inProgress: boolean): void => { this.disconnectInProgress = inProgress; },
+    isLoginInProgress: (): boolean => this.loginInProgress,
+    setLoginInProgress: (inProgress: boolean): void => { this.loginInProgress = inProgress; },
+    getLoginHandoffStatus: (): string => this.loginHandoffStatus,
+    setLoginHandoffStatus: (status: string): void => { this.loginHandoffStatus = status; },
+    setLoginPromptKind: (kind: VpnLoginPromptKind): void => { this.applyLoginPromptKind(kind); },
+    isAuthKeyLoginVisible: (): boolean => this.authKeyLoginVisible,
+    setAuthKeyLoginVisible: (visible: boolean): void => { this.authKeyLoginVisible = visible; },
+    getAuthKeyInput: (): string => this.authKeyInput,
+    setAuthKeyInput: (input: string): void => { this.authKeyInput = input; },
+    getAuthKeyStatus: (): string => this.authKeyStatus,
+    setAuthKeyStatus: (status: string): void => { this.authKeyStatus = status; },
+    isControlServerConfirmed: (): boolean => this.controlServerConfirmed,
+    setControlServerConfirmed: (confirmed: boolean): void => { this.controlServerConfirmed = confirmed; },
+    getControlServerURL: (): string => this.controlServerURL,
+    setControlServerURL: (url: string): void => { this.controlServerURL = url; },
+    setControlServerInput: (input: string): void => { this.controlServerInput = input; },
+    setControlServerStatus: (status: string): void => { this.controlServerStatus = status; },
+    setControlServerEditorVisible: (visible: boolean): void => { this.controlServerEditorVisible = visible; },
+    setControlServerPresets: (presets: ControlServerPreset[]): void => { this.controlServerPresets = presets; },
+    isControlServerSwitching: (): boolean => this.controlServerSwitching,
+    setControlServerSwitching: (switching: boolean): void => { this.controlServerSwitching = switching; },
+    getAccountProfileId: (): string => this.accountProfileId,
+    setAccountProfileId: (id: string): void => { this.accountProfileId = id; },
+    getAccountProfiles: (): AccountProfile[] => this.accountProfiles,
+    setAccountProfiles: (profiles: AccountProfile[]): void => { this.accountProfiles = profiles; },
+    setAccountProfileStatus: (status: string): void => { this.accountProfileStatus = status; },
+    getPeers: (): PeerSummary[] => this.peers,
+    onPeersUpdated: (mergedPeers: PeerSummary[]): void => { this.applyMergedPeersToShell(mergedPeers); },
+    onPeerPresenceInvalidated: (peerKey: string): void => {
+      this.peerIntegrationController.invalidatePeerPresence(peerKey);
+    },
+    setMeshArcReceiver: (status: MeshArcReceiverStatus): void => { this.meshArcReceiver = status; },
+    setAccountSummary: (summary: AccountSummary): void => { this.accountSummary = summary; },
+    setAvatarLoadFailed: (failed: boolean): void => { this.avatarLoadFailed = failed; },
+    getExitNodes: (): ExitNodeChoice[] => this.exitNodes,
+    setExitNodes: (choices: ExitNodeChoice[]): void => { this.exitNodes = choices; },
+    isExitNodeUpdateInProgress: (): boolean => this.exitNodeUpdateInProgress,
+    setExitNodeUpdateInProgress: (inProgress: boolean): void => { this.exitNodeUpdateInProgress = inProgress; },
+    isExitNodeStatusFailed: (): boolean =>
+      typeof this.exitNodeStatus === 'string' && this.exitNodeStatus.startsWith('FAILED'),
+    setExitNodeNoneStatus: (): void => { this.exitNodeStatus = $r('app.string.exit_node_status_none'); },
+    setExitNodeSelectedStatus: (name: string): void => {
+      this.exitNodeStatus = $r('app.string.exit_node_selected', name);
+    },
+    setExitNodeUnavailableStatus: (): void => {
+      this.exitNodeStatus = $r('app.string.exit_node_list_unavailable');
+    },
+    setExitNodeRawStatus: (status: string): void => { this.exitNodeStatus = status; },
+    getNetworkSettings: (): NetworkSettings => this.networkSettings,
+    setNetworkSettings: (settings: NetworkSettings): void => { this.networkSettings = settings; },
+    setNetworkSettingStatus: (status: string): void => { this.networkSettingStatus = status; },
+    isRouteAllUpdateInProgress: (): boolean => this.routeAllUpdateInProgress,
+    setRouteAllUpdateInProgress: (inProgress: boolean): void => { this.routeAllUpdateInProgress = inProgress; },
+    isExitNodeLanUpdateInProgress: (): boolean => this.exitNodeLanUpdateInProgress,
+    setExitNodeLanUpdateInProgress: (inProgress: boolean): void => { this.exitNodeLanUpdateInProgress = inProgress; },
+    setTrafficDownloadBytes: (bytes: number): void => { this.trafficDownloadBytes = bytes; },
+    setTrafficUploadBytes: (bytes: number): void => { this.trafficUploadBytes = bytes; },
+    setTrafficDownloadRate: (rate: number): void => { this.trafficDownloadRate = rate; },
+    setTrafficUploadRate: (rate: number): void => { this.trafficUploadRate = rate; },
+    getTrafficSamples: (): TrafficSample[] => this.trafficSamples,
+    setTrafficSamples: (samples: TrafficSample[]): void => { this.trafficSamples = samples; },
+    isVpnConflictDialogVisible: (): boolean => this.vpnConflictDialogVisible,
+    setVpnConflictDialogVisible: (visible: boolean): void => { this.vpnConflictDialogVisible = visible; },
+    showVpnConflictAlertDialog: (): void => { this.openVpnConflictDialog(); },
+    syncHomeTitleCompact: (compact: boolean): void => { this.syncHomeTitleCompact(compact); },
+    setHomeTitleCompact: (compact: boolean): void => { this.homeTitleCompact = compact; },
+    setBackendRestartDeferred: (deferred: boolean): void => { this.backendRestartDeferred = deferred; },
+    deviceModel: (): string => this.deviceModel(),
+    harmonyOSHostinfoVersion: (): string => this.harmonyOSHostinfoVersion(),
+    openControlServerSettings: (): void => { this.openControlServerSettings(); },
+    openSecureLoginBrowser: (authUrl: string): Promise<void> =>
+      this.openSecureLoginBrowser(this.abilityContext(), authUrl),
+    confirmControlServerSelection: (normalizedUrl: string): ControlServerSettings | undefined =>
+      this.settingsPreferencesGateway.confirmControlServer(this.abilityContext(), normalizedUrl),
+    invalidateAccountGuard: (): void => { this.accountRequestGuard.invalidate(); },
+    clearControlServerShellState: (): void => { this.clearControlServerPresentation(); },
+    reloadTaildropStorageForActiveIdentity: (): void => {
+      this.taildropSessionController.reloadStorageForActiveIdentity();
+    },
+    resetTaildropSnapshot: (): void => { this.resetTaildropSnapshot(); },
+    applyBackendTaildropSnapshot: (snapshot: TaildropSnapshot): void => {
+      this.applyBackendTaildropSnapshot(snapshot);
+    },
+    onLiveExtensionTick: (): void => {
+      this.taildropSessionController.checkTaildropReceiveTimeout();
+      this.taildropSessionController.processTaildropReceiveResponse();
+    },
+    resetStreamingStatesForDisconnect: (): void => { this.resetStreamingStatesForDisconnect(); },
+    autoProbeConnectedPeerServices: (): void => { this.autoProbeConnectedPeerServices(); },
+    syncOfflinePeerStatusRefreshPolling: (): void => { this.syncOfflinePeerStatusRefreshPolling(); },
+    syncWindowPrivacyMode: (): void => { this.syncWindowPrivacyMode(); },
+    logServiceStatusIfChanged: (): void => { this.logServiceStatusIfChanged(); },
+    scheduleLifecycleTask: (task: () => void, delayMs: number): number =>
+      this.scheduleLifecycleTask(task, delayMs),
+    recordDiagnosticEvent: (event: string, phase: string, code: number = 0): void => {
+      this.recordDiagnosticEvent(event, phase, code);
     }
-    const mergedPeers: PeerSummary[] = this.mergePeers(peers);
-    this.peers.forEach((previous: PeerSummary) => {
-      const current: PeerSummary | undefined = mergedPeers.find((peer: PeerSummary) => peer.key === previous.key);
-      if (current !== undefined && current.online === previous.online) {
-        return;
-      }
-      // A peer reconnects independently of our VPN session. Discard results
-      // and service-discovery markers belonging to its previous connection.
-      this.sunshineProbeService?.cancel(previous.key);
-      this.peerPathService?.cancel(previous.key);
-      this.mediaServiceProbeService?.cancel(previous.key);
-      this.sunshineProbeService?.clearCache(previous.key);
-      this.peerPathService?.clearCache(previous.key);
-      this.mediaServiceProbeService?.clearCache(previous.key);
-      this.streamingRequestIds.delete(previous.key);
-      this.mediaRequestIds.delete(previous.key);
-      this.autoProbedPeerSessions.delete(previous.key);
-      this.autoSunshineFailureCounts.delete(previous.key);
-      this.autoMediaFailureCounts.delete(previous.key);
+  };
+
+  private readonly vpnSessionController: VpnSessionController = new VpnSessionController(this.vpnSessionHost);
+
+  private readonly taildropSessionHost: TaildropSessionHost = {
+    getAbilityContext: (): common.UIAbilityContext => this.abilityContext(),
+    getFilesDir: (): string => this.abilityContext().filesDir,
+    getCacheDir: (): string => this.abilityContext().cacheDir,
+    getServerFilesRoot: (): string => this.serverFilesRoot(),
+    getLifecycleGeneration: (): number => this.lifecycleGeneration,
+    getControlServerEpoch: (): number => this.controlServerEpoch,
+    isAppShellReady: (): boolean => this.appShellReady,
+    isSecurityPreferencesReady: (): boolean => this.securityPreferencesReady,
+    isAppLockRequired: (): boolean => this.appLockRequired,
+    isAppLockAuthenticating: (): boolean => this.appLockAuthenticating,
+    isSecurityCoverActive: (): boolean => this.isSecurityCoverActive(),
+    isConnected: (): boolean => this.isConnected(),
+    getBackendStatus: (): string => this.backendStatus,
+    isDiagnosticReportInProgress: (): boolean => this.diagnosticReportInProgress,
+    getTaildropState: (): string => this.taildropState,
+    setTaildropState: (state: string): void => { this.taildropState = state; },
+    getTaildropReason: (): string => this.taildropReason,
+    setTaildropReason: (reason: string): void => { this.taildropReason = reason; },
+    getTaildropTargets: (): TaildropTargetSummary[] => this.displayedTaildropTargets(),
+    setTaildropTargets: (targets: TaildropTargetSummary[]): void => { this.taildropTargets = targets; },
+    getTaildropWaitingFiles: (): TaildropWaitingFileSummary[] => this.taildropWaitingFiles,
+    setTaildropWaitingFiles: (files: TaildropWaitingFileSummary[]): void => { this.taildropWaitingFiles = files; },
+    getTaildropInboxReason: (): string => this.taildropInboxReason,
+    setTaildropInboxReason: (reason: string): void => { this.taildropInboxReason = reason; },
+    getTaildropTransfer: (): TaildropTransferSummary => this.taildropTransfer,
+    setTaildropTransfer: (transfer: TaildropTransferSummary): void => { this.taildropTransfer = transfer; },
+    getTaildropReceive: (): TaildropReceiveResult => this.taildropReceive,
+    setTaildropReceive: (receive: TaildropReceiveResult): void => { this.taildropReceive = receive; },
+    getTaildropMediaPreviews: (): TaildropMediaPreview[] => this.taildropMediaPreviews,
+    setTaildropMediaPreviews: (previews: TaildropMediaPreview[]): void => { this.taildropMediaPreviews = previews; },
+    getTaildropCachedFiles: (): TaildropCachedFile[] => this.taildropCachedFiles,
+    setTaildropCachedFiles: (files: TaildropCachedFile[]): void => { this.taildropCachedFiles = files; },
+    getTaildropHistory: (): TaildropTransferRecord[] => this.taildropHistory,
+    setTaildropHistory: (records: TaildropTransferRecord[]): void => { this.taildropHistory = records; },
+    isTaildropPreparing: (): boolean => this.taildropPreparing,
+    setTaildropPreparing: (preparing: boolean): void => { this.taildropPreparing = preparing; },
+    isTaildropReceiveInProgress: (): boolean => this.taildropReceiveInProgress,
+    setTaildropReceiveInProgress: (inProgress: boolean): void => { this.taildropReceiveInProgress = inProgress; },
+    isTaildropMediaSaveInProgress: (): boolean => this.taildropMediaSaveInProgress,
+    setTaildropMediaSaveInProgress: (inProgress: boolean): void => { this.taildropMediaSaveInProgress = inProgress; },
+    isTaildropTextEditorVisible: (): boolean => this.taildropTextEditorVisible,
+    setTaildropTextEditorVisible: (visible: boolean): void => { this.taildropTextEditorVisible = visible; },
+    isTaildropTextPreviewVisible: (): boolean => this.taildropTextPreviewVisible,
+    setTaildropTextPreviewVisible: (visible: boolean): void => { this.taildropTextPreviewVisible = visible; },
+    getTaildropTextInput: (): string => this.taildropTextInput,
+    setTaildropTextInput: (input: string): void => { this.taildropTextInput = input; },
+    setTaildropTextInputCanSend: (canSend: boolean): void => { this.taildropTextInputCanSend = canSend; },
+    getTaildropReceivedText: (): string => this.taildropReceivedText,
+    setTaildropReceivedText: (text: string): void => { this.taildropReceivedText = text; },
+    getTaildropTransferRate: (): number => this.taildropTransferRate,
+    setTaildropTransferRate: (rate: number): void => { this.taildropTransferRate = rate; },
+    getTaildropTransferEtaSeconds: (): number => this.taildropTransferEtaSeconds,
+    setTaildropTransferEtaSeconds: (seconds: number): void => { this.taildropTransferEtaSeconds = seconds; },
+    isTaildropCancelPending: (): boolean => this.taildropCancelPending,
+    setTaildropCancelPending: (pending: boolean): void => { this.taildropCancelPending = pending; },
+    isTaildropPreviewCachePresent: (): boolean => this.taildropPreviewCachePresent,
+    setTaildropPreviewCachePresent: (present: boolean): void => { this.taildropPreviewCachePresent = present; },
+    getMissingTaildropPreviewPaths: (): string[] => this.missingTaildropPreviewPaths,
+    setMissingTaildropPreviewPaths: (paths: string[]): void => { this.missingTaildropPreviewPaths = paths; },
+    isCacheClearInProgress: (): boolean => this.cacheClearInProgress,
+    setCacheClearInProgress: (inProgress: boolean): void => { this.cacheClearInProgress = inProgress; },
+    setTaildropPickerOpen: (open: boolean): void => { this.taildropPickerOpen = open; },
+    getTaildropNotificationAction: (): string => this.taildropNotificationAction,
+    clearTaildropNotificationAction: (): void => { AppStorage.setOrCreate('taildropNotificationAction', ''); },
+    scheduleExternalTabNavigation: (tabIndex: number): void => { this.scheduleExternalTabNavigation(tabIndex); },
+    scrollTransferToTop: (): void => { this.transferScroller.scrollEdge(Edge.Top); },
+    onCacheContentsChanged: (): void => { this.notifyCacheContentsChanged(); },
+    refreshCacheSize: (showLoading: boolean = false): void => { this.refreshCacheSize(showLoading); },
+    scheduleLifecycleTask: (task: () => void, delayMs: number): number =>
+      this.scheduleLifecycleTask(task, delayMs),
+    showTaildropToast: (key: TaildropToastKey): void => { this.showTaildropToast(key); },
+    recordDiagnosticEvent: (event: string, phase: string, code: number = 0): void => {
+      this.recordDiagnosticEvent(event, phase, code);
+    }
+  };
+
+  private readonly taildropSessionController: TaildropSessionController =
+    new TaildropSessionController(this.taildropSessionHost);
+
+  private readonly peerIntegrationHost: PeerIntegrationHost = {
+    getAbilityContext: (): common.UIAbilityContext => this.abilityContext(),
+    getFilesDir: (): string => this.abilityContext().filesDir,
+    getLifecycleGeneration: (): number => this.lifecycleGeneration,
+    getNavigationRevision: (): number => this.navigationRevision,
+    getTrafficSession: (): number => this.vpnSessionController.trafficSession,
+    isAppShellReady: (): boolean => this.appShellReady,
+    isRemoteStreamAppInForeground: (): boolean => this.remoteStreamAppInForeground,
+    setRemoteStreamAppInForeground: (inForeground: boolean): void => {
+      this.remoteStreamAppInForeground = inForeground;
+    },
+    isAppLockRequired: (): boolean => this.appLockRequired,
+    isAppLockAuthenticating: (): boolean => this.appLockAuthenticating,
+    isConnected: (): boolean => this.isConnected(),
+    getPeers: (): PeerSummary[] => this.peers,
+    peerEffectivelyOnline: (peer: PeerSummary): boolean => this.peerEffectivelyOnline(peer),
+    getSelectedPeerKey: (): string => this.selectedPeerKey,
+    isDeviceDetailVisible: (): boolean => this.deviceDetailVisible,
+    setDeviceDetailVisible: (visible: boolean): void => { this.deviceDetailVisible = visible; },
+    getDeviceDetailPresentationId: (): number => this.deviceDetailPresentationId,
+    isDeviceDetailServiceRefreshInFlight: (): boolean => this.deviceDetailServiceRefreshInFlight,
+    setDeviceDetailServiceRefreshInFlight: (inFlight: boolean): void => {
+      this.deviceDetailServiceRefreshInFlight = inFlight;
+    },
+    isTransferProtocolRefreshing: (): boolean => this.transferProtocolRefreshing,
+    setTransferProtocolRefreshing: (refreshing: boolean): void => {
+      this.transferProtocolRefreshing = refreshing;
+    },
+    getStreamingStates: (): DeviceStreamingState[] => this.streamingStates,
+    setStreamingStates: (states: DeviceStreamingState[]): void => { this.streamingStates = states; },
+    getMediaStates: (): DeviceMediaState[] => this.mediaStates,
+    setMediaStates: (states: DeviceMediaState[]): void => { this.mediaStates = states; },
+    isFakeMediaServiceOnline: (): boolean => this.fakeMediaServiceOnline,
+    getFakeJellyfinName: (): string =>
+      this.resolveResourceString($r('app.string.diagnostic_fake_jellyfin_name')),
+    isMediaSelfTestInProgress: (): boolean => this.mediaSelfTestInProgress,
+    setMediaSelfTestInProgress: (inProgress: boolean): void => { this.mediaSelfTestInProgress = inProgress; },
+    setMediaSelfTestStatusKind: (kind: MediaSelfTestStatusKind): void => {
+      this.applyMediaSelfTestStatusKind(kind);
+    },
+    getLocalSendPortOverrides: (): LocalSendPortOverride[] => this.localSendPortOverrides,
+    setLocalSendPortOverrides: (overrides: LocalSendPortOverride[]): void => {
+      this.localSendPortOverrides = overrides;
+    },
+    getRemotePortPeerKey: (): string => this.remotePortPeerKey,
+    getRemotePortInput: (): string => this.remotePortInput,
+    setRemotePortEditorVisible: (visible: boolean): void => { this.remotePortEditorVisible = visible; },
+    setTaildropFocusedTargetKey: (key: string): void => { this.taildropFocusedTargetKey = key; },
+    getTaildropFocusedTargetKey: (): string => this.taildropFocusedTargetKey,
+    refreshBackendStatus: (): Promise<void> => this.refreshBackendStatus(),
+    refreshPeerSnapshot: (): void => { this.refreshPeerSnapshot(); },
+    refreshTaildropSnapshot: (connected: boolean = this.isConnected()): void => {
+      this.refreshTaildropSnapshot(connected);
+    },
+    logServiceStatusIfChanged: (): void => { this.logServiceStatusIfChanged(); },
+    scheduleLifecycleTask: (task: () => void, delayMs: number): number =>
+      this.scheduleLifecycleTask(task, delayMs),
+    showPeerIntegrationToast: (key: PeerIntegrationToastKey): void => {
+      this.showPeerIntegrationToast(key);
+    },
+    showDerpStreamConfirmationDialog: (
+      peer: PeerSummary,
+      state: DeviceStreamingState,
+      intent: RemoteStreamLaunchIntent
+    ): void => {
+      this.showDerpStreamConfirmation(peer, state, intent);
+    },
+    showMoonlightRequiredDialog: (hostAddress: string): void => {
+      this.showMoonlightRequiredAlertDialog(hostAddress);
+    },
+    copyHosPlayerPrototypeText: (prototypeLink: string): void => {
+      this.copyPlainText(prototypeLink, $r('app.string.hosplayer_import_link_copied_toast'));
+    },
+    recordDiagnosticEvent: (event: string, phase: string, code: number = 0): void => {
+      this.recordDiagnosticEvent(event, phase, code);
+    },
+    recordFeatureDiagnosticEvent: (event: string, phase: string, code: number = 0): void => {
+      this.recordFeatureDiagnosticEvent(event, phase, code);
+    }
+  };
+
+  private readonly peerIntegrationController: PeerIntegrationController =
+    new PeerIntegrationController(this.peerIntegrationHost, {
+      accountDiagnosticsGateway: this.accountDiagnosticsGateway
     });
+
+  private applyLoginPromptKind(kind: VpnLoginPromptKind): void {
+    if (kind === 'login_loading') {
+      this.loginPrompt = $r('app.string.login_loading');
+    } else if (kind === 'login_browser_prompt') {
+      this.loginPrompt = $r('app.string.login_browser_prompt');
+    } else if (kind === 'auth_key_loading') {
+      this.loginPrompt = $r('app.string.auth_key_loading');
+    } else {
+      this.loginPrompt = '';
+    }
+  }
+
+  private applyMediaSelfTestStatusKind(kind: MediaSelfTestStatusKind): void {
+    if (kind === 'running') {
+      this.mediaSelfTestStatus = this.resolveResourceString($r('app.string.diagnostic_media_self_test_running'));
+    } else if (kind === 'passed') {
+      this.mediaSelfTestStatus = this.resolveResourceString($r('app.string.diagnostic_media_self_test_passed'));
+    } else if (kind === 'failed_export') {
+      this.mediaSelfTestStatus = this.resolveResourceString($r('app.string.diagnostic_media_self_test_failed_export'));
+    } else {
+      this.mediaSelfTestStatus = this.resolveResourceString($r('app.string.diagnostic_media_self_test_unavailable'));
+    }
+  }
+
+  private resolveTaildropToastResource(key: TaildropToastKey): Resource {
+    switch (key) {
+      case 'settings_clear_cache_busy':
+        return $r('app.string.settings_clear_cache_busy');
+      case 'settings_all_local_files_cleared':
+        return $r('app.string.settings_all_local_files_cleared');
+      case 'settings_cache_cleared':
+        return $r('app.string.settings_cache_cleared');
+      case 'settings_all_local_files_clear_failed':
+        return $r('app.string.settings_all_local_files_clear_failed');
+      case 'settings_clear_cache_failed':
+        return $r('app.string.settings_clear_cache_failed');
+      case 'transfer_send_completed':
+        return $r('app.string.transfer_send_completed');
+      case 'transfer_send_target_unavailable':
+        return $r('app.string.transfer_send_target_unavailable');
+      case 'transfer_admin_disabled_title':
+        return $r('app.string.transfer_admin_disabled_title');
+      case 'transfer_send_disconnected':
+        return $r('app.string.transfer_send_disconnected');
+      case 'transfer_send_cancelled':
+        return $r('app.string.transfer_send_cancelled');
+      case 'transfer_send_permission_denied':
+        return $r('app.string.transfer_send_permission_denied');
+      case 'transfer_send_no_space':
+        return $r('app.string.transfer_send_no_space');
+      case 'transfer_send_file_unavailable':
+        return $r('app.string.transfer_send_file_unavailable');
+      case 'transfer_send_file_changed':
+        return $r('app.string.transfer_send_file_changed');
+      case 'transfer_busy_message':
+        return $r('app.string.transfer_busy_message');
+      case 'transfer_send_backend_unavailable':
+        return $r('app.string.transfer_send_backend_unavailable');
+      case 'transfer_send_interrupted':
+        return $r('app.string.transfer_send_interrupted');
+      case 'transfer_send_failed':
+        return $r('app.string.transfer_send_failed');
+      case 'transfer_history_cleared':
+        return $r('app.string.transfer_history_cleared');
+      case 'transfer_connect_first_title':
+        return $r('app.string.transfer_connect_first_title');
+      case 'transfer_file_selection_failed':
+        return $r('app.string.transfer_file_selection_failed');
+      case 'transfer_file_copy_failed':
+        return $r('app.string.transfer_file_copy_failed');
+      case 'transfer_cancel_failed':
+        return $r('app.string.transfer_cancel_failed');
+      case 'transfer_retry_choose_content':
+        return $r('app.string.transfer_retry_choose_content');
+      case 'transfer_receive_failed':
+        return $r('app.string.transfer_receive_failed');
+      case 'transfer_receive_picker_failed':
+        return $r('app.string.transfer_receive_picker_failed');
+      case 'transfer_discard_completed':
+        return $r('app.string.transfer_discard_completed');
+      case 'transfer_cache_cleared':
+        return $r('app.string.transfer_cache_cleared');
+      case 'transfer_clear_cache_failed':
+        return $r('app.string.transfer_clear_cache_failed');
+      case 'transfer_save_timeout':
+        return $r('app.string.transfer_save_timeout');
+      case 'transfer_media_ready_to_save':
+        return $r('app.string.transfer_media_ready_to_save');
+      case 'transfer_media_save_failed':
+        return $r('app.string.transfer_media_save_failed');
+      case 'transfer_image_saved':
+        return $r('app.string.transfer_image_saved');
+      case 'transfer_text_copied':
+        return $r('app.string.transfer_text_copied');
+      case 'transfer_receive_completed':
+        return $r('app.string.transfer_receive_completed');
+      case 'transfer_receive_unavailable':
+        return $r('app.string.transfer_receive_unavailable');
+      case 'transfer_receive_no_space':
+        return $r('app.string.transfer_receive_no_space');
+      case 'transfer_discard_failed':
+        return $r('app.string.transfer_discard_failed');
+      case 'transfer_receive_delete_failed':
+        return $r('app.string.transfer_receive_delete_failed');
+      case 'transfer_gallery_failed':
+        return $r('app.string.transfer_gallery_failed');
+      case 'transfer_text_copy_failed':
+        return $r('app.string.transfer_text_copy_failed');
+    }
+  }
+
+  private showTaildropToast(key: TaildropToastKey): void {
+    this.showToast(this.resolveTaildropToastResource(key));
+  }
+
+  private resolvePeerIntegrationToastResource(key: PeerIntegrationToastKey): Resource {
+    switch (key) {
+      case 'transfer_tailscale_network_not_connected':
+        return $r('app.string.transfer_tailscale_network_not_connected');
+      case 'transfer_remote_port_invalid':
+        return $r('app.string.transfer_remote_port_invalid');
+      case 'transfer_remote_port_saved':
+        return $r('app.string.transfer_remote_port_saved');
+      case 'transfer_localsend_open_failed':
+        return $r('app.string.transfer_localsend_open_failed');
+      case 'peer_service_connect_and_online_toast':
+        return $r('app.string.peer_service_connect_and_online_toast');
+      case 'stream_connect_required_toast':
+        return $r('app.string.stream_connect_required_toast');
+      case 'stream_target_offline_toast':
+        return $r('app.string.stream_target_offline_toast');
+      case 'stream_sunshine_probe_error_toast':
+        return $r('app.string.stream_sunshine_probe_error_toast');
+      case 'stream_path_probe_timeout_toast':
+        return $r('app.string.stream_path_probe_timeout_toast');
+      case 'stream_sunshine_timeout_toast':
+        return $r('app.string.stream_sunshine_timeout_toast');
+      case 'stream_sunshine_unavailable_toast':
+        return $r('app.string.stream_sunshine_unavailable_toast');
+      case 'stream_sunshine_failed_toast':
+        return $r('app.string.stream_sunshine_failed_toast');
+      case 'stream_target_unreachable_toast':
+        return $r('app.string.stream_target_unreachable_toast');
+      case 'stream_moonlight_open_failed_toast':
+        return $r('app.string.stream_moonlight_open_failed_toast');
+      case 'hosplayer_open_failed_toast':
+        return $r('app.string.hosplayer_open_failed_toast');
+      case 'hosplayer_unsafe_endpoint_toast':
+        return $r('app.string.hosplayer_unsafe_endpoint_toast');
+      case 'hosplayer_import_link_failed_toast':
+        return $r('app.string.hosplayer_import_link_failed_toast');
+    }
+  }
+
+  private showPeerIntegrationToast(key: PeerIntegrationToastKey): void {
+    this.showToast(this.resolvePeerIntegrationToastResource(key));
+  }
+
+  private applyMergedPeersToShell(mergedPeers: PeerSummary[]): void {
     this.peers = mergedPeers;
     this.peerDataSource.replaceAll(mergedPeers);
-    this.streamingStates = this.streamingStates.filter((state: DeviceStreamingState) => {
-      const peer: PeerSummary | undefined = mergedPeers.find((item: PeerSummary) => item.key === state.peerKey);
-      return peer !== undefined && peer.online;
-    });
-    this.mediaStates = this.mediaStates.filter((state: DeviceMediaState) => {
-      const peer: PeerSummary | undefined = mergedPeers.find((item: PeerSummary) => item.key === state.peerKey);
-      return peer !== undefined && peer.online;
-    });
+    this.peerIntegrationController.pruneOfflineServiceStates(mergedPeers);
     if (this.selectedPeerKey.length > 0) {
       const selectedPeer: PeerSummary | undefined = mergedPeers.find((peer: PeerSummary) =>
         peer.key === this.selectedPeerKey);
@@ -921,15 +1024,22 @@ export struct BridgeStatus {
     if (this.selectedPeerKey.length === 0 && mergedPeers.length > 0) {
       this.selectedPeerKey = mergedPeers[0].key;
     }
-    if (this.isConnected()) {
-      this.scheduleLifecycleTask(() => this.autoProbeConnectedPeerServices(), 50);
-    }
+  }
+
+  private applyPeers(peers: PeerSummary[]): void {
+    this.vpnSessionController.applyPeers(peers);
   }
 
   aboutToAppear(): void {
     this.lifecycleGeneration++;
+    this.remoteStreamAppInForeground = true;
+    this.taildropPreparing = false;
+    this.sharedFileSending = false;
     AppStorage.setOrCreate('taildriveFilesTabActive', this.activeNavigationId === 'files');
     this.appShellReady = true;
+    this.standaloneDiagnosticsVisible = false;
+    this.diagnosticReportInProgress = false;
+    this.pathDiagnosticBusy = false;
     this.connectionDetailsVisible = false;
     this.deviceDetailVisible = false;
     this.selectedPeerTitleName = '';
@@ -939,26 +1049,34 @@ export struct BridgeStatus {
     this.securityPreferencesReady = false;
     this.updateChangelogVisible = false;
     this.updateChangelogShowPending = false;
-    this.homeReadOnlyRequestGuard.invalidate();
     this.accountRequestGuard.invalidate();
     this.diagnosticProbeRequestGuard.invalidate();
     this.diagnosticReportRequestGuard.invalidate();
-    this.diagnosticMediaRequestGuard.invalidate();
+    this.feedbackEmailStatus = '';
+    this.pathDiagnosticRequestGuard.invalidate();
     this.diagnosticActionRequestGuard.invalidate();
-    this.vpnCommandStateMachine.invalidateLifecycle();
-    this.onTaildropOpenInbox();
-    this.onTaildropNotificationAction();
-    this.lastConfirmedVpnStatus = '';
-    this.lastConfirmedVpnHeartbeatMs = 0;
-    this.vpnStatusGraceActive = false;
-    this.vpnHeartbeatObservationStartedAtMs = Date.now();
-    this.vpnHeartbeatBaselineMs = 0;
-    this.vpnHeartbeatConfirmed = false;
+    this.peerIntegrationController.resetOnAppear();
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.vpnSessionController.resetOnAppear(context.filesDir);
+    this.onTaildropOpenInbox();
+    this.onSystemShare();
+    this.onSystemShareError();
+    this.onTaildropNotificationAction();
     context.eventHub.on(APP_FOREGROUND_EVENT, this.appForegroundListener);
+    this.tailnetDnsEnabled = TailnetDnsPreferences.enabled(context.filesDir);
+    const customDns: DnsSettings = DnsSettingsStore.load(context.filesDir);
+    this.dnsSettingsEnabled = customDns.enabled;
+    this.dnsPrimaryInput = customDns.primary;
+    this.dnsSecondaryInput = customDns.secondary;
+    this.dnsSearchDomainsInput = DnsSettingsStore.formatSearchDomains(customDns.searchDomains);
+    this.dnsSettingsStatus = '';
+    context.eventHub.on(APP_BACKGROUND_EVENT, this.appBackgroundListener);
     this.loadGlowLevel();
     this.loadAppearancePreferences();
     this.fakeMediaServiceOnline = false;
+    if (typeof this.syncWindowPrivacyMode === 'function') {
+      this.syncWindowPrivacyMode();
+    }
     this.loadSettingsPreferences(context);
     this.loadSecurityPreferences(context);
     this.loadNavigationPreferences(context);
@@ -966,24 +1084,25 @@ export struct BridgeStatus {
     this.loadFileTransferPreference(context);
     this.refreshCacheSize();
     this.resetDiagnosticsMode();
+    this.scheduleLifecycleTask(() => DiagnosticReportService.cleanupCache(context.cacheDir), 0);
     this.backendReady = false;
     this.devicesLoading = true;
     this.verifyNativeBridge();
     this.loadAppVersion();
-    this.loadTaildropHistory();
-    this.loadPersistedTaildropInbox();
+    this.taildropSessionController.reloadStorageForActiveIdentity();
     this.maybeExpireTaildropCache();
     this.scheduleLifecycleTask(() => this.showUpdateChangelogIfNeeded(), 350);
     this.scheduleLifecycleTask(() => this.showWelcomeDialogIfNeeded(), 350);
     this.recordDiagnosticEvent('ui_opened', 'lifecycle');
     const vpnIsLive: boolean = this.refreshVpnProbeStatus();
+    if (this.controlServerConfirmed) this.refreshPeerSnapshot(true);
     if (!this.controlServerConfirmed) {
       this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
       this.backendReady = true;
       this.backendInitializationVisible = false;
       this.devicesLoading = false;
       if (vpnIsLive) {
-        this.vpnCommandGateway.stopVpnExtension(this.vpnWant()).catch(() => {
+        this.vpnSessionController.stopVpnExtensionDirect().catch(() => {
           // The extension also refuses to restore its backend without a confirmed server.
         });
       }
@@ -1012,6 +1131,10 @@ export struct BridgeStatus {
   }
 
   aboutToDisappear(): void {
+    this.contextGuideController?.close();
+    this.contextGuideController = undefined;
+    this.contextGuideVisible = false;
+    this.vpnSessionController.teardownOnDisappear();
     this.lifecycleGeneration++;
     AppStorage.setOrCreate('taildriveFilesTabActive', false);
     this.appShellReady = false;
@@ -1019,16 +1142,16 @@ export struct BridgeStatus {
     this.pendingExternalTabIndex = -1;
     this.transferScrollRestoreTimer = -1;
     this.settingsScrollRestoreTimer = -1;
-    this.homeReadOnlyRequestGuard.invalidate();
     this.settingsRequestGuard.invalidate();
     this.accountRequestGuard.invalidate();
     this.diagnosticProbeRequestGuard.invalidate();
     this.diagnosticReportRequestGuard.invalidate();
-    this.diagnosticMediaRequestGuard.invalidate();
+    this.feedbackEmailStatus = '';
+    this.pathDiagnosticRequestGuard.invalidate();
     this.diagnosticActionRequestGuard.invalidate();
-    this.vpnCommandStateMachine.invalidateLifecycle();
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     context.eventHub.off(APP_FOREGROUND_EVENT, this.appForegroundListener);
+    context.eventHub.off(APP_BACKGROUND_EVENT, this.appBackgroundListener);
     this.vpnConflictDialogVisible = false;
     this.welcomeDialogVisible = false;
     this.connectionDetailsVisible = false;
@@ -1038,43 +1161,48 @@ export struct BridgeStatus {
     this.remotePortEditorVisible = false;
     this.updateChangelogVisible = false;
     this.updateChangelogShowPending = false;
-    this.stopConnectionPolling();
     this.stopConnectionDurationPolling();
-    this.clearConnectionCompletionTimer();
-    this.stopBackendReadinessPolling();
-    this.stopHealthPolling();
     this.stopServiceRefreshPolling();
     this.stopOfflinePeerStatusRefreshPolling();
     this.stopHomeLatencyRefreshPolling();
     this.stopDeviceDetailRefreshPolling();
     this.stopTransferProtocolRefreshPolling();
-    this.stopLoginPolling();
+    this.authKeyInput = '';
+    this.authKeyLoginVisible = false;
+    if (this.authKeyStatus === 'loading') {
+      this.authKeyStatus = '';
+      this.loginInProgress = false;
+      this.loginPrompt = '';
+    }
     this.stopCacheSizePolling();
-    this.streamingRequestIds.clear();
-    this.mediaRequestIds.clear();
-    this.peerServiceRefreshInFlight.clear();
-    this.autoSunshineFailureCounts.clear();
-    this.autoMediaFailureCounts.clear();
-    this.streamingStates.forEach((state: DeviceStreamingState) => {
-      this.sunshineProbeService?.cancel(state.peerKey);
-      this.peerPathService?.cancel(state.peerKey);
-    });
-    this.mediaStates.forEach((state: DeviceMediaState) => {
-      this.mediaServiceProbeService?.cancel(state.peerKey);
-    });
-    this.stopVpnStopPolling();
+    this.peerIntegrationController.teardownOnDisappear();
     this.flushAnimationPreferences();
+    this.flushPersonalizationPreferences();
+    this.flushNavigationMarginPreferences();
     this.clearLifecycleTimers();
     this.resetDiagnosticsMode();
   }
 
   private handleAppForeground(): void {
+    this.remoteStreamAppInForeground = true;
+    if (typeof this.syncWindowPrivacyMode === 'function') {
+      this.syncWindowPrivacyMode();
+    }
     this.requireAppAuthentication();
     const generation: number = this.lifecycleGeneration;
     const vpnIsLive: boolean = this.refreshVpnProbeStatus();
     this.maybeExpireTaildropCache();
     this.startHealthPolling();
+    this.startServiceRefreshPolling();
+    this.syncHomeLatencyRefreshPolling();
+    this.syncOfflinePeerStatusRefreshPolling();
     this.syncTransferProtocolRefreshPolling();
+    if (this.connectionDetailsVisible) {
+      this.startConnectionDurationPolling();
+    }
+    if (this.deviceDetailVisible) {
+      this.startDeviceDetailRefreshPolling();
+    }
     if (this.activeNavigationId === 'settings') {
       this.startCacheSizePolling();
     }
@@ -1092,14 +1220,44 @@ export struct BridgeStatus {
     this.scheduleLifecycleTask(() => this.refreshVpnProbeStatus(), 1200);
   }
 
+  private handleAppBackground(): void {
+    this.handleRemoteStreamAppBackground();
+    this.connectionButtonPressed = false;
+    this.stopServiceRefreshPolling();
+    this.stopOfflinePeerStatusRefreshPolling();
+    this.stopHomeLatencyRefreshPolling();
+    this.stopTransferProtocolRefreshPolling();
+    this.stopConnectionDurationPolling();
+    this.stopCacheSizePolling();
+    if (!this.connectInProgress && !this.disconnectInProgress && !this.taildropReceiveInProgress &&
+      typeof this.stopHealthPolling === 'function') {
+      this.stopHealthPolling();
+    }
+    if (this.deviceDetailRefreshTimer >= 0) {
+      clearInterval(this.deviceDetailRefreshTimer);
+      this.deviceDetailRefreshTimer = -1;
+    }
+    this.flushPersonalizationPreferences();
+    this.flushNavigationMarginPreferences();
+    if (typeof this.flushAnimationPreferences === 'function') {
+      this.flushAnimationPreferences();
+    }
+  }
+
   private scheduleLifecycleTask(task: () => void, delayMs: number): number {
     const generation: number = this.lifecycleGeneration;
-    const timer: number = setTimeout(() => {
+    let fired: boolean = false;
+    let timer: number = -1;
+    timer = setTimeout(() => {
+      fired = true;
+      this.lifecycleTimers = this.lifecycleTimers.filter((entry: number) => entry !== timer);
       if (generation === this.lifecycleGeneration) {
         task();
       }
     }, delayMs);
-    this.lifecycleTimers.push(timer);
+    if (!fired) {
+      this.lifecycleTimers.push(timer);
+    }
     return timer;
   }
 
@@ -1131,15 +1289,6 @@ export struct BridgeStatus {
     return `${this.appVersion}:${this.appVersionCode}`;
   }
 
-  private updateChangelogSeenMarker(versionKey: string): string {
-    return `${UPDATE_CHANGELOG_MARKER_PREFIX}${versionKey}`;
-  }
-
-  private updateChangelogSeenPath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${UPDATE_CHANGELOG_SEEN_FILE_NAME}`;
-  }
-
   private showUpdateChangelogIfNeeded(): void {
     this.updateChangelogShowPending = true;
     if (!this.appShellReady || !this.appVersionMetadataReady || !this.securityPreferencesReady ||
@@ -1149,11 +1298,8 @@ export struct BridgeStatus {
     }
     const versionKey: string = this.updateChangelogVersionKey();
     try {
-      const path: string = this.updateChangelogSeenPath();
-      // The prefixed marker intentionally invalidates the legacy raw-version
-      // marker written by the former "Don't show again" action.
-      if (fileIo.accessSync(path) &&
-        fileIo.readTextSync(path).trim() === this.updateChangelogSeenMarker(versionKey)) {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (this.settingsPreferencesGateway.hasSeenUpdateChangelog(context.filesDir, versionKey)) {
         this.updateChangelogShowPending = false;
         return;
       }
@@ -1169,7 +1315,10 @@ export struct BridgeStatus {
   private dismissUpdateChangelog(onlyOnUpdate: boolean): void {
     const versionKey: string = this.updateChangelogVersionKey();
     if (onlyOnUpdate) {
-      this.writePrivateTextFile(this.updateChangelogSeenPath(), this.updateChangelogSeenMarker(versionKey));
+      try {
+        const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+        this.settingsPreferencesGateway.markUpdateChangelogSeen(context.filesDir, versionKey);
+      } catch (_error) {}
       this.recordDiagnosticEvent('update_changelog_only_on_update', 'lifecycle');
     } else {
       this.recordDiagnosticEvent('update_changelog_dismissed', 'lifecycle');
@@ -1216,8 +1365,7 @@ export struct BridgeStatus {
       versionCode: index === 0 ? this.appVersionCode : entry.versionCode,
       releaseDate: useChinese ? entry.releaseDateZh : entry.releaseDateEn,
       changes: useChinese ? entry.changesZh : entry.changesEn,
-      current: index === 0,
-      imageResource: index === 0 ? $r('app.media.mesharc_hosplayer_collab') : undefined
+      current: index === 0
     }));
   }
 
@@ -1226,6 +1374,9 @@ export struct BridgeStatus {
     this.controlServerURL = settings.controlURL;
     this.controlServerInput = settings.controlURL;
     this.controlServerConfirmed = settings.confirmed;
+    const catalog: ControlServerPresetCatalog | undefined = ControlServerPresets.ensure(context.filesDir, settings.controlURL);
+    this.controlServerPresets = catalog?.servers ?? [];
+    this.loadAccountProfiles();
     this.controlServerEditorVisible = !settings.confirmed;
     this.controlServerTipMessage = context.resourceManager.getStringSync(
       $r('app.string.control_server_first_run_tip').id);
@@ -1243,30 +1394,132 @@ export struct BridgeStatus {
   }
 
   private loadSecurityPreferences(context: common.UIAbilityContext): void {
+    const generation: number = this.lifecycleGeneration;
     AppSecurityPreferences.load(context).then((settings: AppSecuritySettings) => {
-      if (!this.appShellReady) {
+      if (!this.appShellReady || generation !== this.lifecycleGeneration) {
         return;
       }
       this.appLockEnabled = settings.appLockEnabled;
       this.folderLockEnabled = settings.folderLockEnabled;
       AppStorage.setOrCreate('taildriveLockedFolderPaths', settings.lockedFolderPaths);
       this.securityPreferencesReady = true;
+      if (typeof this.syncWindowPrivacyMode === 'function') {
+        this.syncWindowPrivacyMode();
+      }
       this.requireAppAuthentication();
+      if (!this.appLockEnabled && !this.appLockRequired &&
+        typeof this.resumeDeferredTaildropShellActions === 'function') {
+        this.resumeDeferredTaildropShellActions();
+      }
       if (this.updateChangelogShowPending) {
         this.showUpdateChangelogIfNeeded();
       }
     }).catch(() => {
-      this.appLockEnabled = false;
-      this.folderLockEnabled = false;
-      AppStorage.setOrCreate('taildriveLockedFolderPaths', []);
+      if (!this.appShellReady || generation !== this.lifecycleGeneration) return;
+      const defaultFallback: AppSecuritySettings = {
+        appLockEnabled: false,
+        folderLockEnabled: false,
+        lockedFolderPaths: []
+      };
+      const fallback: AppSecuritySettings = typeof AppSecurityPreferences.loadFallback === 'function' ?
+        AppSecurityPreferences.loadFallback(context.filesDir) : defaultFallback;
+      this.appLockEnabled = fallback.appLockEnabled;
+      this.folderLockEnabled = fallback.folderLockEnabled;
+      AppStorage.setOrCreate('taildriveLockedFolderPaths', fallback.lockedFolderPaths);
       this.securityPreferencesReady = true;
+      if (typeof this.syncWindowPrivacyMode === 'function') {
+        this.syncWindowPrivacyMode();
+      }
+      if (fallback.appLockEnabled) {
+        this.requireAppAuthentication();
+      } else if (!this.appLockRequired &&
+        typeof this.resumeDeferredTaildropShellActions === 'function') {
+        this.resumeDeferredTaildropShellActions();
+      }
       if (this.updateChangelogShowPending) {
         this.showUpdateChangelogIfNeeded();
       }
     });
   }
 
+  private resumeDeferredTaildropShellActions(): void {
+    if (!this.appShellReady || !this.securityPreferencesReady || this.appLockRequired) {
+      return;
+    }
+    if (typeof this.onTaildropOpenInbox === 'function') {
+      this.onTaildropOpenInbox();
+    }
+    if (typeof this.onTaildropNotificationAction === 'function') {
+      this.onTaildropNotificationAction();
+    }
+  }
+
+  private isSecurityCoverActive(): boolean {
+    return !this.securityPreferencesReady || this.appLockRequired;
+  }
+
+  private onSecurityPrivacyStateChanged(): void {
+    this.syncWindowPrivacyMode();
+  }
+
+  private currentWindowPrivacyRequired(filesDir: string): boolean {
+    if (!this.securityPreferencesReady) {
+      try {
+        return typeof AppSecurityPreferences.isPrivacyProtectionArmedSync === 'function' ?
+          AppSecurityPreferences.isPrivacyProtectionArmedSync(filesDir) : false;
+      } catch (_error) {
+        return true;
+      }
+    }
+    const storedPaths: string[] | undefined = typeof AppStorage !== 'undefined' &&
+      typeof AppStorage.get === 'function' ?
+      AppStorage.get<string[]>('taildriveLockedFolderPaths') : undefined;
+    const appStorageLockedCount: number = Array.isArray(storedPaths) ? storedPaths.length : 0;
+    const localLockedCount: number = Array.isArray(this.lockedFolderPaths) ? this.lockedFolderPaths.length : 0;
+    return this.appLockEnabled || this.folderLockEnabled || localLockedCount > 0 ||
+      appStorageLockedCount > 0 || this.appLockRequired || this.authKeyLoginVisible;
+  }
+
+  private syncWindowPrivacyMode(): void {
+    const nextSeq: number = (typeof this.windowPrivacySyncSeq === 'number' ? this.windowPrivacySyncSeq : 0) + 1;
+    this.windowPrivacySyncSeq = nextSeq;
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const generation: number = this.lifecycleGeneration;
+      window.getLastWindow(context).then((win: window.Window): Promise<void> | void => {
+        if (!this.appShellReady || generation !== this.lifecycleGeneration ||
+          nextSeq !== this.windowPrivacySyncSeq) {
+          return;
+        }
+        if (win !== undefined && typeof win.setWindowPrivacyMode === 'function') {
+          const privacyRequired: boolean = this.currentWindowPrivacyRequired(context.filesDir);
+          return win.setWindowPrivacyMode(privacyRequired);
+        }
+      }).catch(() => {});
+    } catch (_error) {
+      // Window privacy mode is best-effort when UI context or window is detached.
+    }
+  }
+
   private onAppLockRequiredChanged(): void {
+    if (typeof this.syncWindowPrivacyMode === 'function') {
+      this.syncWindowPrivacyMode();
+    }
+    if (this.appLockRequired) {
+      this.invalidateRemoteStreamLaunch();
+      this.authKeyInput = '';
+      this.authKeyLoginVisible = false;
+      this.deviceDetailVisible = false;
+      this.stopDeviceDetailRefreshPolling();
+      this.fileTransferMethodVisible = false;
+      this.mediaMethodVisible = false;
+      this.nativeSettingsVisible = false;
+      this.connectionDetailsVisible = false;
+    }
+    if (!this.appLockRequired && this.appShellReady && this.securityPreferencesReady &&
+      typeof this.resumeDeferredTaildropShellActions === 'function') {
+      this.resumeDeferredTaildropShellActions();
+    }
     // The update-log sheet renders the same lock surface inside its native
     // bindSheet, so it remains protected even above the outer content cover.
     if (!this.appLockRequired && this.appShellReady && this.updateChangelogShowPending) {
@@ -1342,6 +1595,9 @@ export struct BridgeStatus {
       this.appLockEnabled = enabled;
       this.appLockRequired = false;
       this.appLockMessage = '';
+      if (typeof this.syncWindowPrivacyMode === 'function') {
+        this.syncWindowPrivacyMode();
+      }
       this.recordFeatureDiagnosticEvent('app_lock_setting_saved', phase);
     } catch (error) {
       const businessError: BusinessError = error as BusinessError;
@@ -1379,6 +1635,23 @@ export struct BridgeStatus {
       }
       await AppSecurityPreferences.saveFolderLockEnabled(context, enabled);
       this.folderLockEnabled = enabled;
+      if (enabled) {
+        try {
+          const storedPaths: string[] | undefined = typeof AppStorage !== 'undefined' &&
+            typeof AppStorage.get === 'function' ?
+            AppStorage.get<string[]>('taildriveLockedFolderPaths') : undefined;
+          const lockedPaths: string[] = Array.isArray(storedPaths) && storedPaths.length > 0 ?
+            storedPaths : (Array.isArray(this.lockedFolderPaths) ? this.lockedFolderPaths : []);
+          if (lockedPaths.length > 0 && typeof TaildrivePreviewGateway === 'function') {
+            new TaildrivePreviewGateway().purgeProtectedPreviews(context, lockedPaths);
+          }
+        } catch (_purgeError) {
+          // Best-effort preview purge when enabling folder lock.
+        }
+      }
+      if (typeof this.syncWindowPrivacyMode === 'function') {
+        this.syncWindowPrivacyMode();
+      }
       this.recordFeatureDiagnosticEvent('folder_lock_setting_saved', phase);
     } catch (error) {
       const businessError: BusinessError = error as BusinessError;
@@ -1391,26 +1664,18 @@ export struct BridgeStatus {
     }
   }
 
-  private welcomeAcknowledgedPath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${WELCOME_ACKNOWLEDGED_FILE_NAME}`;
-  }
-
   private showWelcomeDialogIfNeeded(): void {
     if (this.welcomeDialogVisible) {
       return;
     }
-    if (this.updateChangelogVisible || this.updateChangelogShowPending) {
+    if (!this.securityPreferencesReady || this.appLockRequired || this.appLockAuthenticating ||
+      this.updateChangelogVisible || this.updateChangelogShowPending) {
       this.scheduleLifecycleTask(() => this.showWelcomeDialogIfNeeded(), 240);
       return;
     }
-    const markerPath: string = this.welcomeAcknowledgedPath();
-    try {
-      if (fileIo.accessSync(markerPath)) {
-        return;
-      }
-    } catch (_error) {
-      // A missing marker means this is the first acknowledged launch.
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    if (this.settingsPreferencesGateway.isWelcomeAcknowledged(context.filesDir)) {
+      return;
     }
     this.welcomeDialogVisible = true;
     this.getUIContext().showAlertDialog({
@@ -1420,7 +1685,7 @@ export struct BridgeStatus {
       secondaryButton: {
         value: $r('app.string.welcome_dialog_action'),
         action: () => {
-          this.writePrivateTextFile(markerPath, 'acknowledged');
+          this.settingsPreferencesGateway.acknowledgeWelcome(context.filesDir);
           this.welcomeDialogVisible = false;
           this.recordDiagnosticEvent('welcome_dialog_acknowledged', 'first_run');
           if (this.updateChangelogShowPending) {
@@ -1433,10 +1698,13 @@ export struct BridgeStatus {
   }
 
   private openFeedbackEmail(): void {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    context.openLink(`mailto:${FEEDBACK_EMAIL}`, { appLinkingOnly: false })
-      .then(() => this.recordDiagnosticEvent('feedback_email_opened', 'about'))
-      .catch(() => this.showToast($r('app.string.feedback_open_failed')));
+    this.generateDiagnosticReport(true);
+  }
+
+  private feedbackEmailFailed(requestGeneration: number, code: number): void {
+    if (!this.diagnosticReportRequestGuard.isCurrent(requestGeneration) || this.feedbackEmailStatus === 'failed') return;
+    this.feedbackEmailStatus = 'failed';
+    this.recordDiagnosticEvent('feedback_email_unavailable', 'compose', code);
   }
 
   private showControlServerTip(): void {
@@ -1453,12 +1721,15 @@ export struct BridgeStatus {
   }
 
   private loadNavigationPreferences(context: common.UIAbilityContext): void {
+    const generation: number = this.lifecycleGeneration;
     NavigationPreferences.load(context).then((settings: NavigationSettings) => {
+      if (!this.appShellReady || generation !== this.lifecycleGeneration) return;
       this.navigationOrder = [...settings.order];
       this.hiddenNavigationTabs = [...settings.hidden];
       this.navigationBottomMargin = settings.bottomMargin;
       this.syncNavigationSelection(this.activeNavigationId, false);
     }).catch(() => {
+      if (!this.appShellReady || generation !== this.lifecycleGeneration) return;
       this.navigationOrder = [...DEFAULT_NAVIGATION_ORDER];
       this.hiddenNavigationTabs = [...DEFAULT_NAVIGATION_HIDDEN];
       this.navigationBottomMargin = DEFAULT_NAVIGATION_BOTTOM_MARGIN;
@@ -1503,11 +1774,56 @@ export struct BridgeStatus {
     }
   }
 
+  private revealBackgroundRunningSetting(): void {
+    const request: number = ++this.backgroundRunningReveal;
+    this.backgroundRunningHighlighted = false;
+    this.settingsPathStack.clear();
+    this.navigateToNavigationTab('settings', false);
+    this.scheduleLifecycleTask(() => this.scrollToBackgroundRunning(request, 0), 150);
+  }
+
+  private scrollToBackgroundRunning(request: number, attempt: number): void {
+    if (request !== this.backgroundRunningReveal || this.activeNavigationId !== 'settings' || this.settingsDetailActive) {
+      return;
+    }
+    const ui = this.getUIContext();
+    try {
+      const geometry = ui.getComponentUtils();
+      const viewport = geometry.getRectangleById('settings-root-scroll');
+      const row = geometry.getRectangleById('settings-background-running-entry');
+      if (viewport.size.height <= 0 || row.size.height <= 0) {
+        throw new Error('Settings row has not been laid out');
+      }
+      const offset: number = ui.px2vp(row.windowOffset.y - viewport.windowOffset.y -
+        (viewport.size.height - row.size.height) / 2);
+      this.settingsScroller.scrollTo({ xOffset: 0, yOffset: Math.max(0, this.readSettingsScrollOffset() + offset),
+        animation: { duration: MotionTokens.duration(220), curve: Curve.EaseOut } });
+    } catch (_error) {
+      if (attempt < 4) {
+        this.scheduleLifecycleTask(() => this.scrollToBackgroundRunning(request, attempt + 1), 100);
+      }
+      return;
+    }
+    for (let edge: number = 0; edge < 4; edge++) {
+      const highlighted: boolean = edge % 2 === 0;
+      this.scheduleLifecycleTask(() => {
+        if (request === this.backgroundRunningReveal) {
+          ui.animateTo({ duration: MotionTokens.duration(140), curve: Curve.EaseInOut }, () => {
+            this.backgroundRunningHighlighted = highlighted && this.activeNavigationId === 'settings' &&
+              !this.settingsDetailActive;
+          });
+        }
+      }, 260 + edge * 340);
+    }
+  }
+
   private navigateToTab(index: number): void {
     this.navigateToNavigationTab(this.navigationTabIdForLogicalIndex(index), true);
   }
 
   private navigateToNavigationTab(id: NavigationTabId, revealHidden: boolean): void {
+    this.invalidateRemoteStreamLaunch();
+    this.navigationRevision++;
     if (revealHidden && this.hiddenNavigationTabs.includes(id)) {
       this.hiddenNavigationTabs = this.hiddenNavigationTabs.filter(
         (candidate: NavigationTabId) => candidate !== id);
@@ -1517,6 +1833,7 @@ export struct BridgeStatus {
   }
 
   private syncNavigationSelection(preferredId: NavigationTabId, changeController: boolean): void {
+    this.tabChangeRequestId++;
     const visible: NavigationTabId[] = this.visibleNavigationTabs();
     if (visible.length === 0) {
       this.hiddenNavigationTabs = [...DEFAULT_NAVIGATION_HIDDEN];
@@ -1525,6 +1842,10 @@ export struct BridgeStatus {
     }
     const selectedId: NavigationTabId = visible.includes(preferredId) ? preferredId : visible[0];
     const selectedIndex: number = visible.indexOf(selectedId);
+    if (selectedId !== this.activeNavigationId) {
+      this.invalidateRemoteStreamLaunch();
+      this.navigationRevision++;
+    }
     this.activeNavigationId = selectedId;
     this.settingsDetailActive = selectedId === 'settings' && this.settingsPathStack.size() > 0;
     this.activeTab = selectedIndex;
@@ -1540,10 +1861,33 @@ export struct BridgeStatus {
     }
   }
 
+  private scheduleNavigationTabChange(index: number, committed: boolean): void {
+    const id: NavigationTabId | undefined = this.navigationTabAt(index);
+    if (id === undefined) {
+      return;
+    }
+    const requestId: number = ++this.tabChangeRequestId;
+    // HdsTabs can emit its callbacks while reconciling the controlled index.
+    // Apply state changes after that render, and discard superseded callbacks.
+    this.scheduleLifecycleTask(() => {
+      if (requestId === this.tabChangeRequestId && this.navigationTabAt(index) === id) {
+        this.handleNavigationTabChange(index, committed);
+      }
+    }, 0);
+  }
+
   private handleNavigationTabChange(index: number, committed: boolean): void {
     const id: NavigationTabId | undefined = this.navigationTabAt(index);
     if (id === undefined) {
       return;
+    }
+    if (id === this.activeNavigationId && index === this.activeTab &&
+      (!committed || index === this.currentTab)) {
+      return;
+    }
+    if (id !== this.activeNavigationId) {
+      this.invalidateRemoteStreamLaunch();
+      this.navigationRevision++;
     }
     this.activeNavigationId = id;
     if (id === 'settings') {
@@ -1555,7 +1899,7 @@ export struct BridgeStatus {
       this.settingsDetailActive = false;
     }
     this.activeTab = index;
-    if (committed) {
+    if (committed && this.currentTab !== index) {
       this.currentTab = index;
     }
     this.publishFilesTabActive(index);
@@ -1564,8 +1908,21 @@ export struct BridgeStatus {
     this.syncTransferProtocolRefreshPolling();
   }
 
+  private handleNavigationTabClick(index: number): void {
+    if (this.navigationTabAt(index) !== undefined) {
+      this.invalidateRemoteStreamLaunch();
+      this.navigationRevision++;
+    }
+  }
+
   private publishFilesTabActive(index: number): void {
-    AppStorage.setOrCreate('taildriveFilesTabActive', this.navigationTabAt(index) === 'files');
+    const active: boolean = this.navigationTabAt(index) === 'files';
+    AppStorage.setOrCreate('taildriveFilesTabActive', active);
+    if (active) {
+      // Keep the existing file browser after its first real selection so that
+      // returning from Settings preserves the directory and in-flight actions.
+      this.filesPageActivated = true;
+    }
   }
 
   private scheduleExternalTabNavigation(index: number): void {
@@ -1589,76 +1946,49 @@ export struct BridgeStatus {
   }
 
   private onTaildropOpenInbox(): void {
+    if (!this.appShellReady || !this.securityPreferencesReady || this.appLockRequired) {
+      return;
+    }
     if (this.taildropOpenInbox > 0) {
+      AppStorage.setOrCreate('taildropOpenInbox', 0);
       this.scheduleExternalTabNavigation(1);
     }
   }
 
-  private onTaildropNotificationAction(): void {
-    const request: TaildropNotificationActionRequest | undefined =
-      this.taildropReceiveGateway.parseNotificationAction(this.taildropNotificationAction);
-    if (request === undefined) {
-      return;
-    }
-    this.scheduleExternalTabNavigation(1);
-    if (request.action !== 'save') {
-      AppStorage.setOrCreate('taildropNotificationAction', '');
-      return;
-    }
-    const file: TaildropWaitingFileSummary | undefined = this.taildropWaitingFiles.find(
-      (candidate: TaildropWaitingFileSummary) =>
-        candidate.name === request.fileName && candidate.size === request.size &&
-          (request.receivedAtMs < 0 || candidate.receivedAtMs === request.receivedAtMs));
-    if (file !== undefined) {
-      if (!this.taildropReceiveGateway.claimNotificationAction(request)) {
-        AppStorage.setOrCreate('taildropNotificationAction', '');
-        return;
-      }
-      this.taildropNotificationActionInFlight = request;
-      AppStorage.setOrCreate('taildropNotificationAction', '');
-      this.taildropNotificationActionRetryScheduled = false;
-      this.saveTaildropFileFromNotification(file);
-    } else if (!this.taildropNotificationActionRetryScheduled) {
-      this.taildropNotificationActionRetryScheduled = true;
-      this.scheduleLifecycleTask(() => {
-        this.taildropNotificationActionRetryScheduled = false;
-        this.onTaildropNotificationAction();
-      }, 800);
+  private onSystemShare(): void {
+    const draft: SharedFileDraft | undefined = SystemShareInbox.first();
+    this.sharedFileCount = draft?.uris.length ?? 0;
+    this.sharedFileSummary = typeof SystemShareInbox.summarizeFileNames === 'function' ?
+      SystemShareInbox.summarizeFileNames(draft) : '';
+    if (this.sharedFileCount > 0 && this.appShellReady) {
+      this.scheduleExternalTabNavigation(1);
     }
   }
 
-  private saveTaildropFileFromNotification(file: TaildropWaitingFileSummary): void {
-    if (this.taildropSendActive() || this.taildropReceiveInProgress) {
-      this.showToast($r('app.string.transfer_busy_message'));
-      this.releaseTaildropNotificationActionClaim();
-      return;
+  private onSystemShareError(): void {
+    if (this.systemShareError > 0 && this.appShellReady) {
+      AppStorage.setOrCreate('systemShareError', 0);
+      this.showToast($r('app.string.system_share_invalid'));
     }
-    const kind: string = this.taildropContentKind(file);
-    if (kind === 'text') {
-      const cached: TaildropCachedFile | undefined = this.findTaildropCachedFile(file);
-      if (cached !== undefined) {
-        if (this.showCachedTaildropTextPreview(cached)) {
-          this.copyTaildropTextPreview();
-        } else {
-          this.releaseTaildropNotificationActionClaim();
-        }
-      } else {
-        this.startTaildropReceive(file);
+  }
+
+  private async sendSharedFiles(target: TaildropTargetSummary): Promise<void> {
+    const draft: SharedFileDraft | undefined = SystemShareInbox.first();
+    if (draft === undefined || this.sharedFileSending || this.appLockRequired ||
+      this.appLockAuthenticating || !this.ensureTaildropSendAvailable(target)) { return; }
+    this.sharedFileSending = true;
+    const generation: number = this.lifecycleGeneration;
+    try {
+      if (await this.queueTaildropFiles(target, draft.uris)) {
+        SystemShareInbox.remove(draft.id);
       }
-      return;
+    } finally {
+      if (generation === this.lifecycleGeneration) { this.sharedFileSending = false; }
     }
-    if (kind === 'image' || kind === 'video') {
-      const preview: TaildropMediaPreview | undefined = this.findTaildropMediaPreview(file);
-      if (preview !== undefined) {
-        this.releaseTaildropNotificationActionClaim();
-        this.showToast($r('app.string.transfer_media_ready_to_save'));
-      } else {
-        this.releaseTaildropNotificationActionClaim();
-        this.startTaildropReceive(file);
-      }
-      return;
-    }
-    this.startPreparedTaildropFileSave(file);
+  }
+
+  private onTaildropNotificationAction(): void {
+    this.taildropSessionController.onTaildropNotificationAction();
   }
 
   private toggleControlServerEditor(): void {
@@ -1669,7 +1999,7 @@ export struct BridgeStatus {
   }
 
   private saveControlServer(): void {
-    if (this.isConnected() || this.isConnecting()) {
+    if (!this.canSwitchControlServer()) {
       this.controlServerStatus = 'disconnect';
       this.recordDiagnosticEvent('control_server_confirm_blocked', 'connected');
       return;
@@ -1709,52 +2039,105 @@ export struct BridgeStatus {
     this.recordDiagnosticEvent('control_server_http_risk_shown', 'confirmation');
   }
 
+  private canSwitchControlServer(): boolean {
+    return this.vpnSessionController.canSwitchControlServer();
+  }
+
+  private selectControlServerPreset(index: number): void {
+    if (!this.canSwitchControlServer() || index < 0 || index >= this.controlServerPresets.length) return;
+    this.controlServerInput = this.controlServerPresets[index].controlURL;
+    this.saveControlServer();
+  }
+
+  private controlServerPresetOptions(): SelectOption[] {
+    return this.controlServerPresets.map((server: ControlServerPreset): SelectOption => ({
+      value: server.controlURL === DEFAULT_CONTROL_SERVER_URL ? 'Tailscale' : server.controlURL
+    }));
+  }
+
+  private selectedControlServerPreset(): number {
+    return Math.max(0, this.controlServerPresets.findIndex(
+      (server: ControlServerPreset) => server.controlURL === this.controlServerURL));
+  }
+
   private persistControlServer(normalized: string): void {
+    this.vpnSessionController.persistControlServer(normalized);
+  }
+
+  private controlServerEpoch: number = 0;
+
+  private clearControlServerPresentation(): void {
+    this.controlServerEpoch++;
+    this.backendStatus = 'STOPPED';
+    this.networkSettings = { routeAll: true, exitNodeAllowLANAccess: false };
+    this.networkSettingStatus = '';
+    this.accountRequestGuard.invalidate();
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const settings: ControlServerSettings | undefined =
-      this.settingsPreferencesGateway.confirmControlServer(context, normalized);
-    if (settings === undefined) {
-      this.controlServerStatus = 'failed';
-      this.recordDiagnosticEvent('control_server_confirm_failed', 'storage');
-      return;
+    this.vpnSessionController.clearControlServerIpcFiles(context.filesDir);
+    this.vpnStatus = 'HarmonyOS VPN Extension stopped';
+    this.hasAuthenticatedSession = false;
+    this.deviceDetailVisible = false;
+    this.resetStreamingStatesForDisconnect();
+    this.applyPeers([]);
+    this.exitNodes = [];
+    this.authKeyInput = '';
+    this.authKeyStatus = '';
+    this.authKeyLoginVisible = false;
+    this.loginHandoffStatus = 'Secure Login Pending';
+    this.applyAccountSummary({ displayName: '', loginName: '', profilePicURL: '', tailnetName: '',
+      deviceName: '', addresses: [], needsApproval: false, keyExpired: false, keyExpiryUnixMs: 0 });
+    this.taildriveTargetMachineName = '';
+    this.taildriveTargetRequestId = 0;
+    this.remoteFilesNavigationRequestId++;
+    this.fileTransferMethodVisible = false;
+    this.mediaMethodVisible = false;
+    this.taildropFocusedTargetKey = '';
+    this.taildropPendingFocusTargetKey = '';
+    this.taildropSessionController.resetForControlServerSwitch();
+  }
+
+  private loadAccountProfiles(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const state: ServerAccountProfiles = AccountProfiles.ensure(context.filesDir, this.controlServerURL);
+      this.accountProfiles = state.profiles;
+      this.accountProfileId = state.activeId;
+      this.accountProfileStatus = '';
+    } catch (_error) {
+      this.accountProfiles = [];
+      this.accountProfileId = '';
+      this.accountProfileStatus = 'failed';
     }
-    const changed: boolean = !this.controlServerConfirmed || this.controlServerURL !== settings.controlURL;
-    this.controlServerURL = settings.controlURL;
-    this.controlServerInput = settings.controlURL;
-    this.controlServerConfirmed = true;
-    this.controlServerStatus = 'saved';
-    this.recordDiagnosticEvent('control_server_confirmed',
-      settings.controlURL === DEFAULT_CONTROL_SERVER_URL ? 'official' : 'custom');
-    this.controlServerEditorVisible = false;
-    if (changed) {
-      const completionGeneration: number = this.settingsRequestGuard.begin();
-      this.backendReady = false;
-      this.backendInitializationVisible = true;
-      this.devicesLoading = true;
-      // A first-run confirmation has no backend to stop. Avoid adding a
-      // needless async stop/start window before the first login request.
-      const stopPromise: Promise<string> = this.backendStatus.includes('control server not configured') ?
-        Promise.resolve('OK | backend already stopped') : this.vpnCommandGateway.stopBackend();
-      const restartPromise: Promise<void> = stopPromise
-        .catch(() => 'FAILED | backend stop')
-        .then(() => {
-          if (!this.settingsRequestGuard.isCurrent(completionGeneration)) {
-            return;
-          }
-          this.startBackend();
-          this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
-        });
-      this.backendRestartPromise = restartPromise;
-      restartPromise.then(() => {
-        if (this.backendRestartPromise === restartPromise) {
-          this.backendRestartPromise = undefined;
-        }
-      }, () => {
-        if (this.backendRestartPromise === restartPromise) {
-          this.backendRestartPromise = undefined;
-        }
-      });
-    }
+  }
+
+  private accountProfileLabel(profile: AccountProfile, index: number): string {
+    if (profile.label.length > 0) return `${profile.label} · ${index + 1}`;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return context.resourceManager.getStringSync($r('app.string.account_profile_number').id, index + 1);
+  }
+
+  private accountProfileOptions(): SelectOption[] {
+    return this.accountProfiles.map((profile: AccountProfile, index: number): SelectOption => ({
+      value: this.accountProfileLabel(profile, index)
+    }));
+  }
+
+  private activeAccountProfileLabel(): string {
+    const index: number = this.accountProfiles.findIndex((item: AccountProfile) => item.id === this.accountProfileId);
+    return index >= 0 ? this.accountProfileLabel(this.accountProfiles[index], index) : '';
+  }
+
+  private stopWaitingForAccountLogin(): void {
+    this.vpnSessionController.stopWaitingForAccountLogin();
+  }
+
+  private persistAccountProfile(id: string, create: boolean = false): void {
+    this.vpnSessionController.persistAccountProfile(id, create);
+  }
+
+  private serverFilesRoot(): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    return AccountProfiles.cacheRoot(context.filesDir, context.filesDir, this.controlServerURL, this.accountProfileId);
   }
 
   private controlServerStatusText(): ResourceStr {
@@ -1786,32 +2169,8 @@ export struct BridgeStatus {
     }
   }
 
-  private startBackend(showInitialization: boolean = true): void {
-    this.backendRestartDeferred = false;
-    if (!this.controlServerConfirmed) {
-      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
-      this.backendReady = true;
-      this.backendInitializationVisible = false;
-      this.devicesLoading = false;
-      return;
-    }
-    this.peerSnapshotSignature = '';
-    this.backendReady = false;
-    this.backendInitializationVisible = showInitialization;
-    this.devicesLoading = true;
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      this.recordDiagnosticEvent('backend_start_requested', showInitialization ? 'visible' : 'silent');
-      this.backendStatus = this.vpnCommandGateway.startBackend(
-        `${context.filesDir}/tailscale`, this.deviceModel(), this.harmonyOSHostinfoVersion(), this.controlServerURL);
-      this.startBackendReadinessPolling();
-    } catch (error) {
-      this.recordDiagnosticEvent('backend_start_failed', 'start');
-      this.backendStatus = DiagnosticPrivacy.formatNativeFailure('Tailscale Backend Failed', error);
-      this.backendReady = true;
-      this.backendInitializationVisible = false;
-      this.devicesLoading = false;
-    }
+  private startBackend(showInitialization: boolean = true, serverSwitchOwner: boolean = false): void {
+    this.vpnSessionController.startBackend(showInitialization, serverSwitchOwner);
   }
 
   private deviceModel(): string {
@@ -1851,273 +2210,112 @@ export struct BridgeStatus {
   }
 
   private async refreshBackendStatus(): Promise<void> {
-    if (!this.controlServerConfirmed) {
-      this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
-      this.backendReady = true;
-      this.backendInitializationVisible = false;
-      this.devicesLoading = false;
-      return;
-    }
-    if (this.refreshInFlight) {
-      return;
-    }
-    const generation: number = this.lifecycleGeneration;
-    const homeReadGeneration: number = this.homeReadOnlyRequestGuard.begin();
-    this.refreshInFlight = true;
-    try {
-      const snapshot: BackendSnapshot = await this.homeReadOnlyGateway.readBackendSnapshot<BackendSnapshot>();
-      if (generation !== this.lifecycleGeneration || !this.homeReadOnlyRequestGuard.isCurrent(homeReadGeneration)) {
-        return;
-      }
-      this.backendStatus = snapshot.status;
-      if (!this.isConnected()) {
-        this.applyBackendTaildropSnapshot(snapshot.taildrop);
-      }
-      if (this.backendStatus.includes('state=Running')) {
-        this.backendReady = true;
-        this.backendInitializationVisible = false;
-        this.devicesLoading = false;
-        this.hasAuthenticatedSession = true;
-        if (!this.exitNodeUpdateInProgress) {
-          this.exitNodes = snapshot.exitNodes;
-        }
-        this.applyPeers(snapshot.peers);
-        if (!this.routeAllUpdateInProgress && !this.exitNodeLanUpdateInProgress) {
-          this.networkSettings = snapshot.networkSettings;
-        }
-        this.applyAccountSummary(snapshot.account);
-        this.completeSecureLoginAfterAuthentication();
-      } else if (snapshot.account.needsApproval || this.backendStatus.includes('NeedsMachineAuth')) {
-        this.backendReady = true;
-        this.backendInitializationVisible = false;
-        this.devicesLoading = false;
-        this.hasAuthenticatedSession = true;
-        this.exitNodes = [];
-        this.applyPeers([]);
-        this.applyAccountSummary(snapshot.account);
-        this.completeSecureLoginAfterAuthentication();
-      } else if (this.needsLogin()) {
-        this.backendReady = true;
-        this.backendInitializationVisible = false;
-        this.devicesLoading = false;
-        this.hasAuthenticatedSession = false;
-        this.applyPeers([]);
-        this.exitNodes = [];
-        this.applyAccountSummary(snapshot.account);
-      } else if (this.backendStatus.startsWith('FAILED')) {
-        this.backendReady = true;
-        this.backendInitializationVisible = false;
-        this.devicesLoading = false;
-      }
-    } catch (error) {
-      if (generation !== this.lifecycleGeneration || !this.homeReadOnlyRequestGuard.isCurrent(homeReadGeneration)) {
-        return;
-      }
-      this.backendStatus = DiagnosticPrivacy.formatNativeFailure('Tailscale Backend Failed', error);
-      this.backendReady = true;
-      this.backendInitializationVisible = false;
-      this.devicesLoading = false;
-    } finally {
-      this.refreshInFlight = false;
-    }
+    await this.vpnSessionController.refreshBackendStatus();
   }
 
   private refreshExitNodes(): void {
-    try {
-      const choicesText: string = this.networkSettingsGateway.readExitNodes();
-      this.exitNodes = JSON.parse(choicesText) as ExitNodeChoice[];
-      const selected: ExitNodeChoice | undefined = this.exitNodes.find(
-        (choice: ExitNodeChoice) => choice.selected);
-      this.exitNodeStatus = selected === undefined ? '未使用出口节点' : `已选择：${selected.name}`;
-    } catch (_error) {
-      this.exitNodes = [];
-      this.exitNodeStatus = '出口节点列表暂不可用';
-    }
+    this.vpnSessionController.refreshExitNodes();
   }
 
   private queueExitNodeUpdate(id: string): void {
-    this.exitNodeUpdateQueue.enqueue(id);
-    this.exitNodeUpdateInProgress = true;
-    if (this.exitNodeUpdatePromise === undefined) {
-      this.exitNodeUpdatePromise = this.drainExitNodeUpdates();
-    }
-  }
-
-  private async drainExitNodeUpdates(): Promise<void> {
-    while (true) {
-      const update: PendingNetworkSettingsUpdate | undefined = this.exitNodeUpdateQueue.beginNext();
-      if (update === undefined) {
-        break;
-      }
-      try {
-        const status: string = await this.networkSettingsGateway.writeExitNode(update.value);
-        if (this.exitNodeUpdateQueue.isCurrent(update.generation)) {
-          this.exitNodeStatus = status;
-          if (!status.startsWith('FAILED')) {
-            this.refreshExitNodes();
-            this.refreshBackendStatus();
-          }
-        }
-      } catch (_error) {
-        if (this.exitNodeUpdateQueue.isCurrent(update.generation)) {
-          this.exitNodeStatus = 'FAILED | exit node | update unavailable';
-        }
-      } finally {
-        this.exitNodeUpdateQueue.finish();
-      }
-    }
-    this.exitNodeUpdateInProgress = false;
-    this.exitNodeUpdatePromise = undefined;
+    this.vpnSessionController.queueExitNodeUpdate(id);
   }
 
   private refreshNetworkSettings(): void {
+    this.vpnSessionController.refreshNetworkSettings();
+  }
+
+  private toggleTailnetDns(): void {
+    if (!this.appShellReady || !this.remoteStreamAppInForeground || !this.securityPreferencesReady ||
+      this.isConnected() || this.isConnecting() || !this.isAuthenticated() ||
+      this.appLockRequired || this.appLockAuthenticating || this.securitySettingsAuthenticating) return;
     try {
-      const settingsText: string = this.networkSettingsGateway.readNetworkSettings();
-      this.networkSettings = JSON.parse(settingsText) as NetworkSettings;
-    } catch (_error) {
-      this.networkSettingStatus = 'FAILED | network setting | unavailable';
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const enabled: boolean = !this.tailnetDnsEnabled;
+      if (!TailnetDnsPreferences.save(context.filesDir, enabled)) {
+        this.showToast($r('app.string.network_setting_failed'));
+        return;
+      }
+      this.tailnetDnsEnabled = enabled;
+    } catch (_error) { this.showToast($r('app.string.network_setting_failed')); }
+  }
+
+  private canEditCustomDns(): boolean {
+    return this.appShellReady && this.remoteStreamAppInForeground && this.securityPreferencesReady &&
+      !this.appLockRequired && !this.appLockAuthenticating && !this.securitySettingsAuthenticating &&
+      !this.isConnected() && !this.isConnecting() && this.isAuthenticated();
+  }
+
+  private saveCustomDns(): void {
+    if (!this.canEditCustomDns()) return;
+    const primary: string = this.dnsPrimaryInput.trim();
+    const secondary: string = this.dnsSecondaryInput.trim();
+    if ((this.dnsSettingsEnabled && primary.length === 0) ||
+      (primary.length > 0 && !DnsSettingsStore.isValidAddress(primary))) {
+      this.dnsSettingsStatus = 'invalid_primary';
+      return;
+    }
+    if (secondary.length > 0 && !DnsSettingsStore.isValidAddress(secondary)) {
+      this.dnsSettingsStatus = 'invalid_secondary';
+      return;
+    }
+    const raw: string[] = this.dnsSearchDomainsInput.split(',').map((value: string) => value.trim())
+      .filter((value: string) => value.length > 0);
+    if (!DnsSettingsStore.isValidSearchDomains(raw)) {
+      this.dnsSettingsStatus = 'invalid_domains';
+      return;
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const saved: DnsSettings | undefined = DnsSettingsStore.save(context.filesDir, {
+      enabled: this.dnsSettingsEnabled, primary: primary, secondary: secondary,
+      searchDomains: DnsSettingsStore.parseSearchDomains(this.dnsSearchDomainsInput)
+    });
+    if (saved === undefined) { this.dnsSettingsStatus = 'failed'; return; }
+    this.dnsPrimaryInput = saved.primary;
+    this.dnsSecondaryInput = saved.secondary;
+    this.dnsSearchDomainsInput = DnsSettingsStore.formatSearchDomains(saved.searchDomains);
+    this.dnsSettingsStatus = 'saved';
+  }
+
+  private customDnsStatusText(): ResourceStr {
+    switch (this.dnsSettingsStatus) {
+      case 'saved': return $r('app.string.setting_dns_saved');
+      case 'invalid_primary': return $r('app.string.setting_dns_invalid_primary');
+      case 'invalid_secondary': return $r('app.string.setting_dns_invalid_secondary');
+      case 'invalid_domains': return $r('app.string.setting_dns_invalid_search_domains');
+      default: return $r('app.string.setting_dns_save_failed');
     }
   }
 
   private toggleNetworkSetting(key: NetworkSettingKey): void {
-    const enabled: boolean = key === 'routeAll' ?
-      !this.networkSettings.routeAll : !this.networkSettings.exitNodeAllowLANAccess;
-    this.queueNetworkSettingUpdate(key, enabled);
-  }
-
-  private queueNetworkSettingUpdate(key: NetworkSettingKey, enabled: boolean): void {
-    if (key === 'routeAll') {
-      this.networkSettings = {
-        routeAll: enabled,
-        exitNodeAllowLANAccess: this.networkSettings.exitNodeAllowLANAccess
-      };
-    } else {
-      this.networkSettings = {
-        routeAll: this.networkSettings.routeAll,
-        exitNodeAllowLANAccess: enabled
-      };
-    }
-    const queue: NetworkSettingsUpdateQueue = key === 'routeAll' ?
-      this.routeAllUpdateQueue : this.exitNodeLanUpdateQueue;
-    queue.enqueue(enabled ? 'true' : 'false');
-    if (key === 'routeAll') {
-      this.routeAllUpdateInProgress = true;
-      if (this.routeAllUpdatePromise === undefined) {
-        this.routeAllUpdatePromise = this.drainNetworkSettingUpdates(key, queue);
-      }
-      return;
-    }
-    this.exitNodeLanUpdateInProgress = true;
-    if (this.exitNodeLanUpdatePromise === undefined) {
-      this.exitNodeLanUpdatePromise = this.drainNetworkSettingUpdates(key, queue);
-    }
-  }
-
-  private async drainNetworkSettingUpdates(key: NetworkSettingKey,
-    queue: NetworkSettingsUpdateQueue): Promise<void> {
-    while (true) {
-      const update: PendingNetworkSettingsUpdate | undefined = queue.beginNext();
-      if (update === undefined) {
-        break;
-      }
-      try {
-        const status: string = await this.networkSettingsGateway.writeNetworkSetting(key,
-          update.value === 'true');
-        if (queue.isCurrent(update.generation)) {
-          this.networkSettingStatus = status;
-          if (!status.startsWith('FAILED')) {
-            this.refreshBackendStatus();
-          }
-        }
-      } catch (_error) {
-        if (queue.isCurrent(update.generation)) {
-          this.networkSettingStatus = 'FAILED | network setting | update unavailable';
-        }
-      } finally {
-        queue.finish();
-      }
-    }
-    if (key === 'routeAll') {
-      this.routeAllUpdateInProgress = false;
-      this.routeAllUpdatePromise = undefined;
-    } else {
-      this.exitNodeLanUpdateInProgress = false;
-      this.exitNodeLanUpdatePromise = undefined;
-    }
-    if (!this.routeAllUpdateInProgress && !this.exitNodeLanUpdateInProgress) {
-      this.refreshNetworkSettings();
-    }
+    this.vpnSessionController.toggleNetworkSetting(key);
   }
 
   private openSecureLogin(): void {
-    if (this.loginInProgress || !this.controlServerConfirmed) {
-      if (!this.controlServerConfirmed) {
-        this.openControlServerSettings();
-      }
-      return;
-    }
-    this.loginPrompt = $r('app.string.login_loading');
-    this.loginInProgress = true;
-    this.loginCommandId = this.vpnCommandStateMachine.begin(VpnCoreCommand.LOGIN);
-    if (this.loginCommandId === 0) {
-      this.loginInProgress = false;
-      this.loginPrompt = '';
-      return;
-    }
-    this.loginHandoffStatus = 'Preparing secure login';
-    this.stopLoginPolling();
-    const restartPromise: Promise<void> | undefined = this.backendRestartPromise;
-    if (restartPromise !== undefined) {
-      // Control-server confirmation may still be finishing its stop/start
-      // transition. Queue the login poll behind it so the first tap cannot
-      // race the native backend lifecycle.
-      const commandId: number = this.loginCommandId;
-      restartPromise.then(() => {
-        if (this.vpnCommandStateMachine.isActive(commandId)) {
-          this.scheduleSecureLoginPoll(commandId, 150);
-        }
-      }, () => {
-        this.finishSecureLogin(commandId, 'FAILED | backend restart');
-      });
-      return;
-    }
-    if (this.backendNeedsStart()) {
-      this.startBackend(false);
-    }
-    // Keep one visible frame for the in-button LoadingProgress before a fast
-    // handoff switches the foreground application to the system browser.
-    const commandId: number = this.loginCommandId;
-    this.scheduleSecureLoginPoll(commandId, 150);
+    this.vpnSessionController.openSecureLogin();
   }
 
-  private scheduleSecureLoginPoll(commandId: number, delayMs: number): void {
-    this.loginPollTimer = setTimeout(() => this.pollSecureLogin(0, commandId), delayMs);
+  private toggleAuthKeyLogin(): void {
+    this.vpnSessionController.toggleAuthKeyLogin();
   }
 
-  private finishSecureLogin(commandId: number, status: string): void {
-    if (!this.vpnCommandStateMachine.isActive(commandId)) {
-      return;
+  private async submitAuthKeyLogin(): Promise<void> {
+    await this.vpnSessionController.submitAuthKeyLogin();
+  }
+
+  private authKeyStatusText(): ResourceStr {
+    switch (this.authKeyStatus) {
+      case 'empty': return $r('app.string.auth_key_empty');
+      case 'invalid': return $r('app.string.auth_key_invalid');
+      case 'management_key': return $r('app.string.auth_key_management_key');
+      case 'loading': return $r('app.string.auth_key_loading');
+      case 'timeout': return $r('app.string.auth_key_timeout');
+      case 'rejected': return $r('app.string.auth_key_rejected');
+      case 'backend_not_ready': return $r('app.string.auth_key_backend_not_ready');
+      case 'authenticated': return $r('app.string.auth_key_success');
+      case 'needs_approval': return $r('app.string.auth_key_needs_approval');
+      default: return $r('app.string.auth_key_failed');
     }
-    this.loginHandoffStatus = status;
-    this.loginInProgress = false;
-    this.loginPrompt = '';
-    this.vpnCommandStateMachine.complete(commandId, VpnCommandState.NEEDS_LOGIN);
-  }
-
-  private completeSecureLoginAfterAuthentication(): void {
-    if (!this.loginInProgress || this.loginHandoffStatus !== 'Secure login page opened' ||
-      !this.vpnCommandStateMachine.isActive(this.loginCommandId)) {
-      return;
-    }
-    this.loginInProgress = false;
-    this.loginPrompt = '';
-    this.loginHandoffStatus = 'Secure Login Pending';
-    this.vpnCommandStateMachine.complete(this.loginCommandId, VpnCommandState.RUNNING);
-  }
-
-  private backendNeedsStart(): boolean {
-    return !this.backendReady || this.backendStatus.includes('Stopped') ||
-      this.backendStatus.includes('not started') || this.backendStatus.startsWith('FAILED');
   }
 
   private async openSecureLoginBrowser(context: common.UIAbilityContext,
@@ -2168,72 +2366,8 @@ export struct BridgeStatus {
     await context.startAbility(want);
   }
 
-  private async pollSecureLogin(attempt: number, commandId: number): Promise<void> {
-    if (!this.vpnCommandStateMachine.isActive(commandId)) {
-      return;
-    }
-    try {
-      const authUrl: string = await this.vpnCommandGateway.requestLoginUrl();
-      if (!this.vpnCommandStateMachine.isActive(commandId)) {
-        return;
-      }
-      const backendStillStarting: boolean = authUrl.startsWith('PENDING') ||
-        authUrl === 'FAILED | login URL | backend not ready' ||
-        authUrl === 'FAILED | login URL | status unavailable' ||
-        authUrl === 'FAILED | login URL | interactive login request';
-      if (backendStillStarting) {
-        if (attempt >= 60) {
-          this.finishSecureLogin(commandId, 'FAILED | login URL | timed out');
-          return;
-        }
-        if (attempt > 0 && attempt % 10 === 0) {
-          this.refreshBackendStatus();
-          if (this.backendNeedsStart()) {
-            this.startBackend(false);
-          }
-        }
-        this.loginPollTimer = setTimeout(() => this.pollSecureLogin(attempt + 1, commandId), 400);
-        return;
-      }
-      if (!authUrl.startsWith('https://') && !authUrl.startsWith('http://')) {
-        this.finishSecureLogin(commandId, authUrl.startsWith('FAILED') ? authUrl :
-          'FAILED | login URL | rejected unexpected origin');
-        return;
-      }
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      this.loginHandoffStatus = 'Opening secure login in system browser';
-      this.loginPrompt = $r('app.string.login_browser_prompt');
-      this.openSecureLoginBrowser(context, authUrl)
-        .then(() => {
-          if (!this.vpnCommandStateMachine.isActive(commandId)) {
-            return;
-          }
-          this.recordDiagnosticEvent('secure_login_browser_opened', 'handoff');
-          this.loginHandoffStatus = 'Secure login page opened';
-          this.refreshBackendStatus();
-        })
-        .catch(() => {
-          if (!this.vpnCommandStateMachine.isActive(commandId)) {
-            return;
-          }
-          this.recordDiagnosticEvent('secure_login_browser_failed', 'handoff');
-          this.finishSecureLogin(commandId, 'FAILED | secure browser handoff');
-        });
-    } catch (error) {
-      if (!this.vpnCommandStateMachine.isActive(commandId)) {
-        return;
-      }
-      this.recordDiagnosticEvent('secure_login_browser_failed', 'handoff');
-      this.finishSecureLogin(commandId,
-        DiagnosticPrivacy.formatNativeFailure('FAILED | secure browser handoff', error));
-    }
-  }
-
   private stopLoginPolling(): void {
-    if (this.loginPollTimer >= 0) {
-      clearTimeout(this.loginPollTimer);
-      this.loginPollTimer = -1;
-    }
+    this.vpnSessionController.stopLoginPolling();
   }
 
   private runControlProbe(): void {
@@ -2249,356 +2383,16 @@ export struct BridgeStatus {
     }
   }
 
-  private vpnWant(): Want {
-    return {
-      bundleName: 'io.github.tailscaleohos',
-      abilityName: 'TailscaleVpnExtensionAbility'
-    };
-  }
-
-  private stageVpnConnectConfig(config: string): boolean {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return this.vpnCommandGateway.stageConnectConfig(context.filesDir,
-      VPN_CONNECT_CONFIG_FILE_NAME, config);
-  }
-
-  private cacheVpnReconnectConfig(): boolean {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    try {
-      const handoff = this.vpnCommandGateway.readConnectConfig(context.filesDir,
-        VPN_CONNECT_CONFIG_FILE_NAME);
-      if (handoff === undefined) {
-        return false;
-      }
-      const ageMs: number = Date.now() - handoff.createdAtMs;
-      if (handoff.createdAtMs <= 0 || ageMs < 0 || ageMs > FAST_RECONNECT_TTL_MS ||
-        handoff.config.length === 0 || handoff.config.length > 8192 || handoff.config.startsWith('FAILED')) {
-        return false;
-      }
-      this.cachedVpnConnectConfig = handoff.config;
-      this.cachedVpnConnectConfigAtMs = handoff.createdAtMs;
-      return true;
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  private tryFastReconnect(commandId: number): boolean {
-    const ageMs: number = Date.now() - this.cachedVpnConnectConfigAtMs;
-    if (!this.backendRestartDeferred || this.cachedVpnConnectConfig.length === 0 ||
-      ageMs < 0 || ageMs > FAST_RECONNECT_TTL_MS) {
-      return false;
-    }
-    if (!this.stageVpnConnectConfig(this.cachedVpnConnectConfig)) {
-      this.recordDiagnosticEvent('fast_reconnect_failed', 'persistence');
-      return false;
-    }
-    this.backendRestartDeferred = false;
-    this.recordDiagnosticEvent('fast_reconnect_used', 'cached_config');
-    this.requestVpnExtensionStart(commandId);
-    return true;
-  }
-
-  private deferBackendRestart(): boolean {
-    if (!this.cacheVpnReconnectConfig()) {
-      return false;
-    }
-    this.backendRestartDeferred = true;
-    this.backendReady = true;
-    this.backendInitializationVisible = false;
-    this.devicesLoading = false;
-    this.recordDiagnosticEvent('backend_restart_deferred', 'fast_reconnect_window');
-    this.scheduleLifecycleTask(() => {
-      if (!this.backendRestartDeferred || this.isConnected() || this.isConnecting() ||
-        this.disconnectInProgress) {
-        return;
-      }
-      this.backendRestartDeferred = false;
-      this.recordDiagnosticEvent('backend_restart_deferred_completed', 'timeout');
-      this.startBackend(false);
-    }, FAST_RECONNECT_TTL_MS);
-    return true;
-  }
-
-  private startBackendReadinessPolling(): void {
-    this.stopBackendReadinessPolling();
-    this.scheduleBackendReadinessPoll(this.lifecycleGeneration, 0);
-  }
-
-  private scheduleBackendReadinessPoll(generation: number, delayMs: number): void {
-    this.backendReadinessPollTimer = setTimeout(() => {
-      if (generation !== this.lifecycleGeneration || this.isConnected()) {
-        return;
-      }
-      this.refreshBackendStatus().finally(() => {
-        if (generation !== this.lifecycleGeneration || this.backendReady ||
-          this.backendStatus.startsWith('FAILED') || this.backendStatus.startsWith('STOPPED')) {
-          this.stopBackendReadinessPolling();
-          return;
-        }
-        this.scheduleBackendReadinessPoll(generation, BACKEND_READINESS_POLL_INTERVAL_MS);
-      });
-    }, delayMs);
-  }
-
-  private stopBackendReadinessPolling(): void {
-    if (this.backendReadinessPollTimer >= 0) {
-      clearTimeout(this.backendReadinessPollTimer);
-      this.backendReadinessPollTimer = -1;
-    }
-  }
-
-  private beginVpnConnection(): void {
-    if (!this.controlServerConfirmed) {
-      this.openControlServerSettings();
-      return;
-    }
-    if (this.connectInProgress || this.disconnectInProgress || this.isConnecting()) {
-      return;
-    }
-    this.connectCommandId = this.vpnCommandStateMachine.begin(VpnCoreCommand.CONNECT);
-    if (this.connectCommandId === 0) {
-      return;
-    }
-    this.setConnectInProgress(true);
-    void this.beginVpnConnectionAfterExitNodeUpdate();
-  }
-
-  private async beginVpnConnectionAfterExitNodeUpdate(): Promise<void> {
-    const commandId: number = this.connectCommandId;
-    const exitNodeUpdate: Promise<void> | undefined = this.exitNodeUpdatePromise;
-    if (exitNodeUpdate !== undefined) {
-      await exitNodeUpdate;
-    }
-    const routeAllUpdate: Promise<void> | undefined = this.routeAllUpdatePromise;
-    if (routeAllUpdate !== undefined) {
-      await routeAllUpdate;
-    }
-    const exitNodeLanUpdate: Promise<void> | undefined = this.exitNodeLanUpdatePromise;
-    if (exitNodeLanUpdate !== undefined) {
-      await exitNodeLanUpdate;
-    }
-    if (!this.connectInProgress || !this.controlServerConfirmed || !this.vpnCommandStateMachine.isActive(commandId)) {
-      return;
-    }
-    if (this.exitNodeStatus.startsWith('FAILED')) {
-      this.setConnectInProgress(false);
-      return;
-    }
-    this.clearConnectionCompletionTimer();
-    this.connectionStartedAtMs = Date.now();
-    try {
-      this.vpnBackendWasRunningBeforeConnect = this.vpnCommandGateway.backendStatus().includes('state=Running');
-    } catch (_error) {
-      this.vpnBackendWasRunningBeforeConnect = this.backendStatus.includes('state=Running');
-    }
-    this.recordDiagnosticEvent('connect_requested', 'preflight');
-    // Leave one rendering frame for the loading state before native/VPN calls.
-    this.scheduleLifecycleTask(() => this.startVpnProbe(commandId), CONNECTION_START_FRAME_DELAY_MS);
-  }
-
-  private async startVpnProbe(commandId: number): Promise<void> {
-    if (!this.vpnCommandStateMachine.isActive(commandId)) {
-      return;
-    }
-    try {
-      if (this.tryFastReconnect(commandId)) {
-        return;
-      }
-      const backendConfig: string = await this.backendVpnConfigWithRecovery(commandId);
-      if (!this.vpnCommandStateMachine.isActive(commandId)) {
-        return;
-      }
-      if (backendConfig.startsWith('FAILED')) {
-        this.recordDiagnosticEvent('vpn_preflight_failed', 'backend_config');
-        this.vpnStatus = 'Sign in to Tailscale before connecting';
-        this.clearConnectionCompletionTimer();
-        this.setConnectInProgress(false);
-        this.vpnCommandStateMachine.complete(commandId, VpnCommandState.NEEDS_LOGIN);
-        return;
-      }
-      if (this.stageVpnConnectConfig(backendConfig)) {
-        this.recordDiagnosticEvent('vpn_config_handoff_staged', 'preflight');
-      } else {
-        this.recordDiagnosticEvent('vpn_config_handoff_failed', 'persistence');
-        this.vpnStatus = 'FAILED | VPN preflight | config handoff unavailable';
-        this.clearConnectionCompletionTimer();
-        this.setConnectInProgress(false);
-        this.vpnCommandStateMachine.complete(commandId, VpnCommandState.STOPPED);
-        return;
-      }
-      this.requestVpnExtensionStart(commandId);
-    } catch (_error) {
-      this.recordDiagnosticEvent('vpn_preflight_failed', 'exception');
-      this.vpnStatus = 'FAILED | VPN preflight | backend unavailable';
-      this.clearConnectionCompletionTimer();
-      this.setConnectInProgress(false);
-      this.vpnCommandStateMachine.complete(commandId, VpnCommandState.STOPPED);
-    }
-  }
-
-  private async backendVpnConfigWithRecovery(commandId: number): Promise<string> {
-    let backendConfig: string = await this.vpnCommandGateway.requestVpnConfig();
-    if (!backendConfig.startsWith('FAILED')) {
-      return backendConfig;
-    }
-    this.recordDiagnosticEvent('backend_recovery_requested', 'connect_preflight');
-    this.startBackend(false);
-    for (let attempt: number = 0; attempt < 20; attempt++) {
-      await new Promise<void>((resolve: () => void) => setTimeout(resolve, 500));
-      if (!this.connectInProgress || !this.controlServerConfirmed || !this.vpnCommandStateMachine.isActive(commandId)) {
-        return backendConfig;
-      }
-      backendConfig = await this.vpnCommandGateway.requestVpnConfig();
-      if (!backendConfig.startsWith('FAILED')) {
-        this.recordDiagnosticEvent('backend_recovery_completed', 'connect_preflight');
-        return backendConfig;
-      }
-    }
-    this.recordDiagnosticEvent('backend_recovery_failed', 'connect_preflight');
-    return backendConfig;
+  private beginVpnConnection(automatic: boolean = false): void {
+    this.vpnSessionController.beginVpnConnection(automatic);
   }
 
   private applyAccountSummary(account: AccountSummary): void {
-    this.accountSummary = {
-      displayName: account.displayName,
-      loginName: account.loginName,
-      profilePicURL: account.profilePicURL,
-      tailnetName: account.tailnetName,
-      deviceName: DeviceNameService.withoutHuaweiBrand(
-        account.deviceName.length > 0 ? account.deviceName : this.deviceModel()),
-      addresses: account.addresses,
-      needsApproval: account.needsApproval,
-      keyExpired: account.keyExpired,
-      keyExpiryUnixMs: account.keyExpiryUnixMs
-    };
-    this.avatarLoadFailed = false;
-  }
-
-  private requestVpnExtensionStart(commandId: number): void {
-    this.clearVpnBackendHandoffFiles();
-    this.vpnStatus = 'Requesting HarmonyOS VPN authorization';
-    this.vpnCommandGateway.startVpnExtension(this.vpnWant())
-      .then(() => {
-        if (!this.vpnCommandStateMachine.isActive(commandId)) {
-          return;
-        }
-        this.recordDiagnosticEvent('vpn_start_requested', 'system');
-        this.vpnStatus = 'HarmonyOS VPN Extension start requested';
-        this.startConnectionPolling();
-      })
-      .catch((error: BusinessError) => {
-        if (!this.vpnCommandStateMachine.isActive(commandId)) {
-          return;
-        }
-        this.recordDiagnosticEvent('vpn_start_failed', 'system', error.code);
-        this.vpnStatus = `FAILED | VPN start | code=${error.code}`;
-        this.clearConnectionCompletionTimer();
-        this.setConnectInProgress(false);
-        this.vpnCommandStateMachine.complete(commandId, VpnCommandState.STOPPED);
-      });
+    this.vpnSessionController.applyAccountSummary(account);
   }
 
   private stopVpnProbe(): void {
-    if (this.disconnectInProgress) {
-      return;
-    }
-    this.lastConfirmedVpnStatus = '';
-    this.lastConfirmedVpnHeartbeatMs = 0;
-    this.vpnStatusGraceActive = false;
-    this.clearConnectionCompletionTimer();
-    this.setConnectInProgress(false);
-    this.vpnCommandStateMachine.complete(this.connectCommandId, VpnCommandState.STOPPED);
-    this.disconnectCommandId = this.vpnCommandStateMachine.begin(VpnCoreCommand.DISCONNECT);
-    if (this.disconnectCommandId === 0) {
-      return;
-    }
-    this.disconnectInProgress = true;
-    this.recordDiagnosticEvent('disconnect_requested', 'user');
-    this.stopVpnStopPolling();
-    this.vpnStopRequestId = Date.now();
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.vpnCommandGateway.writeCommandFile(context.filesDir, VPN_STOP_RESPONSE_FILE_NAME, '');
-    const request: VpnStopRequest = { requestId: this.vpnStopRequestId };
-    if (!this.vpnCommandGateway.writeCommandFile(context.filesDir, VPN_STOP_REQUEST_FILE_NAME,
-      JSON.stringify(request))) {
-      this.finishVpnExtensionStop(this.disconnectCommandId);
-      return;
-    }
-    this.pollVpnStopResponse(0, this.disconnectCommandId);
-  }
-
-  private pollVpnStopResponse(attempt: number, commandId: number): void {
-    if (!this.disconnectInProgress || !this.vpnCommandStateMachine.isActive(commandId)) {
-      return;
-    }
-    if (attempt >= VPN_STOP_POLL_MAX_ATTEMPTS) {
-      this.recordDiagnosticEvent('vpn_backend_stop_timeout', 'disconnect');
-      this.vpnCommandStateMachine.timeout(commandId);
-      this.finishVpnExtensionStop(commandId);
-      return;
-    }
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const responseText = this.vpnCommandGateway.readCommandFile(context.filesDir,
-        VPN_STOP_RESPONSE_FILE_NAME);
-      if (responseText !== undefined && responseText.trim().length > 0) {
-        const response: VpnStopResponse = JSON.parse(responseText) as VpnStopResponse;
-        if (response.requestId === this.vpnStopRequestId) {
-          this.vpnCommandGateway.writeCommandFile(context.filesDir, VPN_STOP_RESPONSE_FILE_NAME, '');
-          this.backendStatus = response.status;
-          this.finishVpnExtensionStop(commandId);
-          return;
-        }
-      }
-    } catch (_error) {
-      // The Extension may be replacing the response file. Retry briefly before
-      // falling back to the lifecycle stop, whose onDestroy path also closes it.
-    }
-    this.vpnStopPollTimer = setTimeout(() => {
-      this.pollVpnStopResponse(attempt + 1, commandId);
-    }, VPN_STOP_POLL_INTERVAL_MS);
-  }
-
-  private stopVpnStopPolling(): void {
-    if (this.vpnStopPollTimer >= 0) {
-      clearTimeout(this.vpnStopPollTimer);
-      this.vpnStopPollTimer = -1;
-    }
-  }
-
-  private finishVpnExtensionStop(commandId: number): void {
-    this.stopVpnStopPolling();
-    this.vpnCommandGateway.stopVpnExtension(this.vpnWant())
-      .then(() => {
-        if (!this.vpnCommandStateMachine.isActive(commandId) &&
-          this.vpnCommandStateMachine.currentState() !== VpnCommandState.TIMED_OUT) {
-          this.disconnectInProgress = false;
-          return;
-        }
-        this.recordDiagnosticEvent('disconnect_completed', 'system');
-        this.vpnStatus = 'HarmonyOS VPN Extension stopped';
-        this.disconnectInProgress = false;
-        this.homeTitleCompact = false;
-        this.vpnCommandStateMachine.complete(commandId, VpnCommandState.STOPPED);
-        this.stopConnectionPolling();
-        if (!this.deferBackendRestart()) {
-          this.startBackend(false);
-          this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
-        }
-      })
-      .catch((error: BusinessError) => {
-        if (!this.vpnCommandStateMachine.isActive(commandId) &&
-          this.vpnCommandStateMachine.currentState() !== VpnCommandState.TIMED_OUT) {
-          this.disconnectInProgress = false;
-          return;
-        }
-        this.recordDiagnosticEvent('disconnect_failed', 'system', error.code);
-        this.vpnStatus = `FAILED | VPN stop | code=${error.code}`;
-        this.disconnectInProgress = false;
-        this.homeTitleCompact = false;
-        this.vpnCommandStateMachine.complete(commandId, VpnCommandState.STOPPED);
-      });
+    this.vpnSessionController.stopVpnProbe();
   }
 
   private confirmLogout(): void {
@@ -2621,6 +2415,7 @@ export struct BridgeStatus {
   }
 
   private async logout(): Promise<void> {
+    this.cancelVpnAutoRecovery();
     if (this.logoutInProgress) {
       return;
     }
@@ -2633,13 +2428,17 @@ export struct BridgeStatus {
       }
       this.logoutStatus = status;
       if (!this.logoutStatus.startsWith('FAILED')) {
+        this.clearCachedPeerDirectory();
+        this.authKeyStatus = '';
+        this.authKeyInput = '';
+        this.authKeyLoginVisible = false;
         this.loginInProgress = false;
         this.loginPrompt = '';
         this.hasAuthenticatedSession = false;
         this.stopLoginPolling();
         this.applyPeers([]);
         this.exitNodes = [];
-        this.exitNodeStatus = '未使用出口节点';
+        this.exitNodeStatus = $r('app.string.exit_node_status_none');
         this.loginHandoffStatus = 'Secure Login Pending';
         this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 500);
       }
@@ -2653,66 +2452,6 @@ export struct BridgeStatus {
         this.logoutInProgress = false;
       }
     }
-  }
-
-  private resetTrafficMetrics(): void {
-    this.trafficSession = 0;
-    this.trafficLastHeartbeatMs = 0;
-    this.trafficLastDownloadBytes = 0;
-    this.trafficLastUploadBytes = 0;
-    this.trafficDownloadBytes = 0;
-    this.trafficUploadBytes = 0;
-    this.trafficDownloadRate = 0;
-    this.trafficUploadRate = 0;
-    this.trafficSamples = [];
-  }
-
-  private updateTrafficMetrics(status: string, heartbeatMs: number): void {
-    if (!status.includes('state=Running')) {
-      return;
-    }
-    const traffic: HomeTrafficStatus = parseHomeTrafficStatus(status);
-    const session: number = traffic.session;
-    const uploadBytes: number = traffic.uploadBytes;
-    const downloadBytes: number = traffic.downloadBytes;
-    if (session <= 0 || heartbeatMs <= 0) {
-      return;
-    }
-    if (session !== this.trafficSession || heartbeatMs <= this.trafficLastHeartbeatMs) {
-      if (session !== this.trafficSession) {
-        this.trafficSession = session;
-        this.connectionStartedAtMs = session;
-        this.trafficLastHeartbeatMs = heartbeatMs;
-        this.trafficLastDownloadBytes = downloadBytes;
-        this.trafficLastUploadBytes = uploadBytes;
-        this.trafficDownloadBytes = downloadBytes;
-        this.trafficUploadBytes = uploadBytes;
-        this.trafficDownloadRate = 0;
-        this.trafficUploadRate = 0;
-        this.trafficSamples = [{ downloadBytesPerSecond: 0, uploadBytesPerSecond: 0 }];
-      }
-      return;
-    }
-    const elapsedMs: number = heartbeatMs - this.trafficLastHeartbeatMs;
-    if (elapsedMs <= 0) {
-      return;
-    }
-    const downloadDelta: number = downloadBytes >= this.trafficLastDownloadBytes ?
-      downloadBytes - this.trafficLastDownloadBytes : 0;
-    const uploadDelta: number = uploadBytes >= this.trafficLastUploadBytes ?
-      uploadBytes - this.trafficLastUploadBytes : 0;
-    this.trafficDownloadRate = Math.round(downloadDelta * 1000 / elapsedMs);
-    this.trafficUploadRate = Math.round(uploadDelta * 1000 / elapsedMs);
-    this.trafficDownloadBytes = downloadBytes;
-    this.trafficUploadBytes = uploadBytes;
-    this.trafficLastHeartbeatMs = heartbeatMs;
-    this.trafficLastDownloadBytes = downloadBytes;
-    this.trafficLastUploadBytes = uploadBytes;
-    const nextSamples: TrafficSample[] = this.trafficSamples.concat({
-      downloadBytesPerSecond: this.trafficDownloadRate,
-      uploadBytesPerSecond: this.trafficUploadRate
-    });
-    this.trafficSamples = nextSamples.length > 60 ? nextSamples.slice(nextSamples.length - 60) : nextSamples;
   }
 
   private formatTrafficBytes(value: number, perSecond: boolean = false): string {
@@ -2739,99 +2478,8 @@ export struct BridgeStatus {
     return this.formatTrafficBytes(this.cacheSizeBytes);
   }
 
-  private cacheDirectorySize(path: string): number {
-    if (!fileIo.accessSync(path)) {
-      return 0;
-    }
-    const stat: fileIo.Stat = fileIo.statSync(path);
-    if (stat.isFile()) {
-      return stat.size;
-    }
-    if (!stat.isDirectory()) {
-      return 0;
-    }
-    let size: number = 0;
-    fileIo.listFileSync(path).forEach((name: string) => {
-      size += this.cacheDirectorySize(`${path}/${name}`);
-    });
-    return size;
-  }
-
   private refreshNativeStorageSummary(): void {
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const receivedRoot: string = `${context.filesDir}/${TAILDROP_INBOX_DIR_NAME}`;
-      const previewRoot: string = `${context.filesDir}/${TAILDROP_HISTORY_MEDIA_DIR_NAME}`;
-      let appDataBytes: number = 0;
-      if (fileIo.accessSync(context.filesDir)) {
-        fileIo.listFileSync(context.filesDir).forEach((name: string) => {
-          if (name !== TAILDROP_INBOX_DIR_NAME && name !== TAILDROP_HISTORY_MEDIA_DIR_NAME) {
-            appDataBytes += this.cacheDirectorySize(`${context.filesDir}/${name}`);
-          }
-        });
-      }
-      this.nativeStorageAppDataBytes = appDataBytes;
-      this.nativeStorageReceivedBytes = this.cacheDirectorySize(receivedRoot) +
-        this.cacheDirectorySize(previewRoot);
-      this.nativeStorageTemporaryBytes = this.cacheDirectorySize(context.cacheDir);
-      this.storageSummaryBytes = this.nativeStorageAppDataBytes + this.nativeStorageReceivedBytes +
-        this.nativeStorageTemporaryBytes;
-    } catch (_error) {
-      this.nativeStorageAppDataBytes = 0;
-      this.nativeStorageReceivedBytes = 0;
-      this.nativeStorageTemporaryBytes = 0;
-      this.storageSummaryBytes = 0;
-    }
-  }
-
-  private appCacheRoots(context: common.UIAbilityContext): string[] {
-    return [
-      context.cacheDir,
-      `${context.filesDir}/${TAILDROP_INBOX_DIR_NAME}`,
-      `${context.filesDir}/${TAILDROP_HISTORY_MEDIA_DIR_NAME}`
-    ];
-  }
-
-  private cleanupExpiredCacheEntry(path: string, cutoffMs: number): boolean {
-    try {
-      const stat: fileIo.Stat = fileIo.statSync(path);
-      if (stat.isFile()) {
-        if (stat.mtime > 0 && stat.mtime <= cutoffMs) {
-          fileIo.unlinkSync(path);
-          return true;
-        }
-        return false;
-      }
-      if (!stat.isDirectory()) {
-        return false;
-      }
-      let changed: boolean = false;
-      fileIo.listFileSync(path).forEach((name: string) => {
-        if (this.cleanupExpiredCacheEntry(`${path}/${name}`, cutoffMs)) {
-          changed = true;
-        }
-      });
-      if (fileIo.listFileSync(path).length === 0 && stat.mtime > 0 && stat.mtime <= cutoffMs) {
-        fileIo.rmdirSync(path);
-        return true;
-      }
-      return changed;
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  private cleanupExpiredCacheDirectory(path: string, cutoffMs: number): boolean {
-    if (!fileIo.accessSync(path)) {
-      return false;
-    }
-    let changed: boolean = false;
-    fileIo.listFileSync(path).forEach((name: string) => {
-      if (this.cleanupExpiredCacheEntry(`${path}/${name}`, cutoffMs)) {
-        changed = true;
-      }
-    });
-    return changed;
+    this.refreshCacheSize(false);
   }
 
   private loadAnimationPreferences(context: common.UIAbilityContext): void {
@@ -2880,98 +2528,26 @@ export struct BridgeStatus {
     });
   }
 
-  private taildropPreviewCachePaths(): string[] {
-    const paths: string[] = this.taildropMediaPreviews
-      .map((preview: TaildropMediaPreview) => preview.thumbnailPath);
-    if (this.taildropReceiveThumbnailPath.length > 0) {
-      paths.push(this.taildropReceiveThumbnailPath);
-    }
-    const uniquePaths: string[] = [];
-    paths.forEach((path: string) => {
-      if (path.length > 0 && !uniquePaths.includes(path)) {
-        uniquePaths.push(path);
-      }
-    });
-    return uniquePaths;
-  }
-
-  private cleanupExpiredTaildropPreviewCache(cutoffMs: number): boolean {
-    if (this.taildropReceiveInProgress) {
-      return false;
-    }
-    let changed: boolean = false;
-    this.taildropPreviewCachePaths().forEach((path: string) => {
-      try {
-        if (!fileIo.accessSync(path)) {
-          return;
-        }
-        const stat: fileIo.Stat = fileIo.statSync(path);
-        if (stat.isFile() && stat.mtime > 0 && stat.mtime <= cutoffMs) {
-          fileIo.unlinkSync(path);
-          changed = true;
-        }
-      } catch (_error) {
-        // Cache expiration is best-effort and must not interrupt file transfer.
-      }
-    });
-    return changed;
-  }
-
   private maybeExpireTaildropCache(): void {
-    const nowMs: number = Date.now();
-    if (this.taildropCacheExpirationCheckedAtMs > 0 &&
-      nowMs - this.taildropCacheExpirationCheckedAtMs < TAILDROP_CACHE_EXPIRATION_CHECK_INTERVAL_MS) {
-      return;
-    }
-    this.taildropCacheExpirationCheckedAtMs = nowMs;
-    const cutoffMs: number = nowMs - TAILDROP_CACHE_RETENTION_MS;
-    let removedAny: boolean = false;
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      removedAny = this.cleanupExpiredCacheDirectory(context.cacheDir, cutoffMs) || removedAny;
-      // Received files are local user content. Keep them until the user chooses
-      // the explicit all-local-files cleanup action in Storage management.
-      removedAny = this.cleanupExpiredCacheDirectory(this.taildropHistoryMediaRoot(), cutoffMs) || removedAny;
-      removedAny = this.cleanupExpiredTaildropPreviewCache(cutoffMs) || removedAny;
-    } catch (_error) {
-      // Cache retention is best-effort and must not interrupt file transfer.
-    }
-
-    const validPreviews: TaildropMediaPreview[] = this.taildropMediaPreviews.filter(
-      (preview: TaildropMediaPreview) => this.validTaildropMediaPreview(preview));
-    const validCachedFiles: TaildropCachedFile[] = this.taildropCachedFiles.filter(
-      (cached: TaildropCachedFile) => this.validTaildropCachedFile(cached));
-    const metadataChanged: boolean = JSON.stringify(validPreviews) !==
-      JSON.stringify(this.taildropMediaPreviews) || JSON.stringify(validCachedFiles) !==
-      JSON.stringify(this.taildropCachedFiles);
-    if (metadataChanged) {
-      this.taildropMediaPreviews = validPreviews;
-      this.taildropCachedFiles = validCachedFiles;
-      this.persistTaildropInbox();
-      removedAny = true;
-    }
-    if (removedAny) {
-      this.notifyCacheContentsChanged();
-    }
+    this.taildropSessionController.maybeExpireTaildropCache();
   }
 
   private taildropWaitingFilesSize(): number {
-    let size: number = 0;
-    this.taildropWaitingFiles.forEach((file: TaildropWaitingFileSummary) => {
-      size += Math.max(0, file.size);
-    });
-    return size;
-  }
-
-  private taildropCacheClearInProgress(): boolean {
-    return this.taildropReceiveInProgress && this.taildropReceiveStrategy === 'clear';
+    return this.taildropSessionController.taildropWaitingFilesSize();
   }
 
   private cacheClearActive(): boolean {
-    return this.cacheClearInProgress || this.taildropCacheClearInProgress();
+    return this.taildropSessionController.cacheClearActive();
+  }
+
+  private refreshTaildropPreviewAvailabilityAsync(): void {
+    this.taildropSessionController.refreshTaildropPreviewAvailabilityAsync();
   }
 
   private notifyCacheContentsChanged(): void {
+    if (typeof this.refreshTaildropPreviewAvailabilityAsync === 'function') {
+      this.refreshTaildropPreviewAvailabilityAsync();
+    }
     if (this.activeNavigationId !== 'settings' || this.cacheClearInProgress || this.cacheRefreshScheduled) {
       return;
     }
@@ -2983,48 +2559,60 @@ export struct BridgeStatus {
   }
 
   private refreshCacheSize(showLoading: boolean = true): void {
-    if (this.cacheClearInProgress || this.cacheSizeRefreshInFlight) {
+    if (this.cacheClearInProgress) {
+      return;
+    }
+    if (typeof this.refreshTaildropPreviewAvailabilityAsync === 'function') {
+      this.refreshTaildropPreviewAvailabilityAsync();
+    }
+    if (this.cacheSizeRefreshInFlight) {
+      this.cacheSizeRefreshPending = true;
       return;
     }
     if (showLoading) {
       this.cacheSizeLoading = true;
     }
     this.cacheSizeRefreshInFlight = true;
-    const generation: number = this.lifecycleGeneration;
-    this.cacheSizeRefreshTimer = setTimeout(() => {
-      this.cacheSizeRefreshTimer = -1;
-      if (generation !== this.lifecycleGeneration) {
-        this.cacheSizeRefreshInFlight = false;
-        return;
-      }
+    if (!this.storageUsageReady) this.storageScanFailed = false;
+    this.storageScanPool.replace([this.lifecycleGeneration], async (generation: number,
+      isCurrent: () => boolean): Promise<void> => {
       try {
         const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-        let totalSize: number = 0;
-        this.appCacheRoots(context).forEach((path: string) => {
-          totalSize += this.cacheDirectorySize(path);
-        });
-        totalSize += this.taildropWaitingFilesSize();
-        if (this.cacheSizeBytes !== totalSize) {
-          this.cacheSizeBytes = totalSize;
-        }
-      } catch (_error) {
-        this.cacheSizeBytes = 0;
+        const usage: StorageUsage = await StorageUsageScanner.measure(context.filesDir, context.cacheDir,
+          [TAILDROP_INBOX_DIR_NAME, TAILDROP_HISTORY_MEDIA_DIR_NAME], isCurrent);
+        if (!isCurrent() || generation !== this.lifecycleGeneration) return;
+        this.nativeStorageAppDataBytes = usage.appData;
+        this.nativeStorageReceivedBytes = usage.received;
+        this.nativeStorageTemporaryBytes = usage.temporary;
+        this.storageUsageReady = true;
+        this.storageScanFailed = false;
+        this.startStorageRingAnimation();
+        this.cacheSizeBytes = usage.received + usage.temporary + this.taildropWaitingFilesSize();
+      } catch (error) {
+        if (isCurrent() && generation === this.lifecycleGeneration) this.storageScanFailed = true;
+        const failure: BusinessError = error as BusinessError;
+        hilog.warn(0x0000, 'MeshArcStorage', 'scan failed code=%{public}d', failure.code ?? -1);
+        // Keep the last complete result when storage is temporarily unavailable.
       } finally {
-        this.cacheSizeRefreshInFlight = false;
-        this.cacheSizeLoading = false;
+        if (isCurrent()) {
+          this.cacheSizeRefreshInFlight = false;
+          this.cacheSizeLoading = false;
+          if (this.cacheSizeRefreshPending) {
+            this.cacheSizeRefreshPending = false;
+            this.refreshCacheSize(false);
+          }
+        }
       }
-    }, 0);
+    });
   }
 
   private startCacheSizePolling(): void {
-    this.refreshNativeStorageSummary();
-    if (this.cacheSizePollTimer >= 0) {
-      this.refreshCacheSize(false);
+    if (!this.appShellReady || this.activeNavigationId !== 'settings' || this.cacheSizePollTimer >= 0) {
       return;
     }
     this.refreshCacheSize();
     this.cacheSizePollTimer = setInterval(() => {
-      if (this.activeNavigationId === 'settings') {
+      if (this.appShellReady && this.activeNavigationId === 'settings') {
         this.refreshCacheSize(false);
       }
     }, CACHE_SIZE_POLL_INTERVAL_MS);
@@ -3035,11 +2623,10 @@ export struct BridgeStatus {
       clearInterval(this.cacheSizePollTimer);
       this.cacheSizePollTimer = -1;
     }
-    if (this.cacheSizeRefreshTimer >= 0) {
-      clearTimeout(this.cacheSizeRefreshTimer);
-      this.cacheSizeRefreshTimer = -1;
-      this.cacheSizeRefreshInFlight = false;
-    }
+    this.storageScanPool.cancel();
+    this.cacheSizeRefreshInFlight = false;
+    this.cacheSizeRefreshPending = false;
+    this.cacheSizeLoading = false;
   }
 
   private updateCacheSizePolling(index: number): void {
@@ -3051,9 +2638,7 @@ export struct BridgeStatus {
   }
 
   private cacheClearBlocked(): boolean {
-    return this.cacheClearActive() || this.diagnosticReportInProgress ||
-      this.taildropPreparing || this.taildropReceiveInProgress ||
-      this.taildropTransfer.state === 'queued' || this.taildropTransfer.state === 'sending';
+    return this.taildropSessionController.cacheClearBlocked();
   }
 
   private cacheClearEnabled(): boolean {
@@ -3063,31 +2648,6 @@ export struct BridgeStatus {
   private storageAllLocalFilesClearEnabled(): boolean {
     return (this.nativeStorageReceivedBytes > 0 || this.nativeStorageTemporaryBytes > 0) &&
       !this.cacheClearBlocked();
-  }
-
-  private removeCacheEntry(path: string): boolean {
-    try {
-      const stat: fileIo.Stat = fileIo.statSync(path);
-      if (stat.isFile()) {
-        fileIo.unlinkSync(path);
-        return true;
-      }
-      if (!stat.isDirectory()) {
-        return false;
-      }
-      let succeeded: boolean = true;
-      fileIo.listFileSync(path).forEach((name: string) => {
-        if (!this.removeCacheEntry(`${path}/${name}`)) {
-          succeeded = false;
-        }
-      });
-      if (succeeded) {
-        fileIo.rmdirSync(path);
-      }
-      return succeeded;
-    } catch (_error) {
-      return false;
-    }
   }
 
   private confirmClearAppCache(): void {
@@ -3113,153 +2673,15 @@ export struct BridgeStatus {
   }
 
   private clearAppCache(): void {
-    if (this.cacheClearBlocked()) {
-      this.showToast($r('app.string.settings_clear_cache_busy'));
-      return;
-    }
-    this.cacheClearRequestedFromSettings = true;
-    this.cacheClearInProgress = true;
-    this.scheduleLifecycleTask(() => {
-      const succeeded: boolean = this.clearAppCacheEntries();
-      this.taildropMediaPreviews = [];
-      this.taildropCachedFiles = [];
-      this.taildropAutoPrefetchFailedKeys = [];
-      this.taildropAutoPrefetchKey = '';
-      this.taildropHistory = this.taildropHistory.map((record: TaildropTransferRecord) => {
-        record.previewPath = '';
-        return record;
-      });
-      this.persistTaildropHistory();
-      if (succeeded && this.taildropWaitingFiles.length > 0 && this.taildropState === 'ready') {
-        this.cacheClearRequestedFromSettings = true;
-        if (this.requestTaildropInboxCacheClear()) {
-          return;
-        }
-        this.finishSettingsCacheClear(false);
-        return;
-      } else if (succeeded && this.taildropState !== 'ready') {
-        this.queueTaildropPendingDeletes(this.taildropWaitingFiles);
-        this.clearTaildropInboxViewState();
-      }
-      this.finishSettingsCacheClear(succeeded);
-    }, 0);
-  }
-
-  private clearAppCacheEntries(): boolean {
-    let succeeded: boolean = true;
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      this.appCacheRoots(context).forEach((root: string) => {
-        if (!fileIo.accessSync(root)) {
-          return;
-        }
-        fileIo.listFileSync(root).forEach((name: string) => {
-          if (!this.removeCacheEntry(`${root}/${name}`)) {
-            succeeded = false;
-          }
-        });
-      });
-    } catch (_error) {
-      succeeded = false;
-    }
-    return succeeded;
-  }
-
-  private clearTaildropPreviewCacheEntries(): boolean {
-    let succeeded: boolean = true;
-    this.taildropPreviewCachePaths().forEach((path: string) => {
-      try {
-        if (fileIo.accessSync(path) && !this.removeCacheEntry(path)) {
-          succeeded = false;
-        }
-      } catch (_error) {
-        succeeded = false;
-      }
-    });
-    return succeeded;
+    this.taildropSessionController.clearAppCache();
   }
 
   private taildropPreviewCacheAvailable(): boolean {
-    let available: boolean = false;
-    this.taildropPreviewCachePaths().forEach((path: string) => {
-      if (available) {
-        return;
-      }
-      try {
-        available = fileIo.accessSync(path);
-      } catch (_error) {
-        // An inaccessible preview is not actionable from the cache button.
-      }
-    });
-    return available;
-  }
-
-  private clearTemporaryStorageEntries(): boolean {
-    let succeeded: boolean = true;
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      succeeded = this.clearTaildropPreviewCacheEntries() && succeeded;
-      [context.cacheDir, this.taildropHistoryMediaRoot()].forEach((root: string) => {
-        if (!fileIo.accessSync(root)) {
-          return;
-        }
-        fileIo.listFileSync(root).forEach((name: string) => {
-          if (!this.removeCacheEntry(`${root}/${name}`)) {
-            succeeded = false;
-          }
-        });
-      });
-    } catch (_error) {
-      succeeded = false;
-    }
-    return succeeded;
+    return this.taildropSessionController.taildropPreviewCacheAvailable();
   }
 
   private clearTemporaryStorage(): void {
-    if (this.cacheClearBlocked()) {
-      this.showToast($r('app.string.settings_clear_cache_busy'));
-      return;
-    }
-    this.cacheClearRequestedFromSettings = false;
-    this.cacheClearInProgress = true;
-    this.scheduleLifecycleTask(() => {
-      const succeeded: boolean = this.clearTemporaryStorageEntries();
-      this.taildropMediaPreviews = this.taildropMediaPreviews.map((preview: TaildropMediaPreview) => {
-        preview.thumbnailPath = '';
-        return preview;
-      });
-      this.taildropReceiveThumbnailPath = '';
-      this.taildropAutoPrefetchFailedKeys = [];
-      this.taildropAutoPrefetchKey = '';
-      this.taildropHistory = this.taildropHistory.map((record: TaildropTransferRecord) => {
-        record.previewPath = '';
-        return record;
-      });
-      this.persistTaildropHistory();
-      this.finishSettingsCacheClear(succeeded);
-      this.refreshNativeStorageSummary();
-    }, 0);
-  }
-
-  private clearTaildropInboxViewState(): void {
-    this.taildropMediaPreviews = [];
-    this.taildropCachedFiles = [];
-    this.taildropAutoPrefetchFailedKeys = [];
-    this.taildropAutoPrefetchKey = '';
-    this.taildropWaitingFiles = [];
-    this.taildropInboxReason = '';
-    this.persistTaildropInbox();
-  }
-
-  private finishSettingsCacheClear(succeeded: boolean): void {
-    const clearedAllLocalFiles: boolean = this.cacheClearRequestedFromSettings;
-    this.cacheClearRequestedFromSettings = false;
-    this.cacheClearInProgress = false;
-    this.refreshCacheSize(false);
-    this.showToast(succeeded ? (clearedAllLocalFiles ?
-      $r('app.string.settings_all_local_files_cleared') : $r('app.string.settings_cache_cleared')) :
-      (clearedAllLocalFiles ? $r('app.string.settings_all_local_files_clear_failed') :
-        $r('app.string.settings_clear_cache_failed')));
+    this.taildropSessionController.clearTemporaryStorage();
   }
 
   private trafficChartWidth(): number {
@@ -3295,286 +2717,15 @@ export struct BridgeStatus {
   }
 
   private refreshVpnProbeStatus(): boolean {
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const statusPath: string = `${context.filesDir}/vpn-probe-status.txt`;
-      if (!fileIo.accessSync(statusPath)) {
-        if (this.preserveConfirmedVpnStatus('', 0)) {
-          return true;
-        }
-        this.vpnStatus = 'HarmonyOS VPN Extension Stopped';
-        return false;
-      }
-      const persistedStatus: string = fileIo.readTextSync(statusPath).trim();
-      const heartbeatMatch: RegExpMatchArray | null = persistedStatus.match(/heartbeatMs=(\d+)/);
-      const heartbeatMs: number = heartbeatMatch === null ? 0 : Number(heartbeatMatch[1]);
-      const heartbeatAgeMs: number = Date.now() - heartbeatMs;
-      const heartbeatIsFresh: boolean = heartbeatMs > 0 && heartbeatAgeMs >= 0 &&
-        heartbeatAgeMs <= VPN_HEARTBEAT_FRESH_MS;
-      const visibleStatus: string = persistedStatus.replace(/\s*\|\s*heartbeatMs=\d+/, '');
-      this.processVpnBackendHandoffRequest(context.filesDir, visibleStatus);
-      let extensionIsLive: boolean = heartbeatIsFresh && !visibleStatus.includes('destroyed');
-      if (extensionIsLive && !this.vpnHeartbeatConfirmed) {
-        if (this.vpnHeartbeatBaselineMs <= 0) {
-          this.vpnHeartbeatBaselineMs = heartbeatMs;
-        }
-        const heartbeatAdvanced: boolean = heartbeatMs > this.vpnHeartbeatBaselineMs ||
-          heartbeatMs >= this.vpnHeartbeatObservationStartedAtMs;
-        if (heartbeatAdvanced) {
-          this.vpnHeartbeatConfirmed = true;
-        } else if (Date.now() - this.vpnHeartbeatObservationStartedAtMs <=
-          VPN_HEARTBEAT_CONFIRM_TIMEOUT_MS) {
-          // A recent persisted Running state is not proof that the Extension
-          // survived a process crash. Wait for one post-launch heartbeat
-          // advance before exposing it as connected.
-          this.vpnStatus = 'HarmonyOS VPN Extension starting verification';
-          return true;
-        } else {
-          extensionIsLive = false;
-        }
-      }
-      if (extensionIsLive && visibleStatus.includes('state=Running') &&
-        visibleStatus.includes('tun=true')) {
-        if (this.vpnStatusGraceActive) {
-          this.recordDiagnosticEvent('vpn_status_grace_recovered', 'heartbeat');
-          this.vpnStatusGraceActive = false;
-        }
-        this.lastConfirmedVpnStatus = visibleStatus;
-        this.lastConfirmedVpnHeartbeatMs = heartbeatMs;
-      } else if (this.preserveConfirmedVpnStatus(visibleStatus, heartbeatMs)) {
-        return true;
-      }
-      if (extensionIsLive) {
-        this.updateTrafficMetrics(visibleStatus, heartbeatMs);
-        this.checkTaildropReceiveTimeout();
-        this.processTaildropReceiveResponse();
-      } else {
-        this.resetTrafficMetrics();
-        this.resetTaildropSnapshot();
-        this.resetStreamingStatesForDisconnect();
-      }
-      const shouldPromptVpnConflict: boolean = extensionIsLive && this.connectInProgress &&
-        visibleStatus.includes(`code=2203002`);
-      const shouldRecoverFailedExtension: boolean = extensionIsLive && !shouldPromptVpnConflict &&
-        this.controlServerConfirmed && visibleStatus.startsWith('FAILED');
-      if (extensionIsLive && visibleStatus.includes('state=Running') && this.connectInProgress) {
-        const remainingMs: number = MIN_CONNECTION_LOADING_MS -
-          (Date.now() - this.connectionStartedAtMs);
-        if (remainingMs > 0) {
-          if (this.connectionCompletionTimer < 0) {
-            this.connectionCompletionTimer = setTimeout(() => {
-              this.commitConnectedStatus(visibleStatus);
-            }, remainingMs);
-          }
-          return extensionIsLive;
-        }
-        this.commitConnectedStatus(visibleStatus);
-        return extensionIsLive;
-      }
-      this.vpnStatus = !extensionIsLive && visibleStatus.includes('tun=true') ?
-        'HarmonyOS VPN Extension Stopped (previous session ended)' : visibleStatus;
-      this.syncHomeTitleCompact(this.connectedHomeLayoutActive());
-      if (!visibleStatus.includes('state=Running')) {
-        this.resetStreamingStatesForDisconnect();
-      }
-      if (extensionIsLive &&
-        (visibleStatus.includes('state=Running') || visibleStatus.startsWith('FAILED'))) {
-        this.clearConnectionCompletionTimer();
-        this.setConnectInProgress(false);
-      }
-      if (shouldPromptVpnConflict) {
-        this.showVpnConflictDialog();
-      } else if (shouldRecoverFailedExtension) {
-        this.recoverFailedVpnExtension(visibleStatus);
-      }
-      return extensionIsLive;
-    } catch (error) {
-      if (this.preserveConfirmedVpnStatus('', 0)) {
-        return true;
-      }
-      const businessError = error as BusinessError;
-      this.vpnStatus = `FAILED | VPN status file | code=${businessError.code}`;
-      return false;
-    }
-  }
-
-  private clearVpnBackendHandoffFiles(): void {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.vpnCommandGateway.writeCommandFile(context.filesDir, VPN_BACKEND_HANDOFF_REQUEST_FILE_NAME, '');
-    this.vpnCommandGateway.writeCommandFile(context.filesDir, VPN_BACKEND_HANDOFF_RESPONSE_FILE_NAME, '');
-  }
-
-  private processVpnBackendHandoffRequest(filesDir: string, visibleStatus: string): void {
-    const commandId: number = this.connectCommandId;
-    if (!this.connectInProgress || !this.vpnCommandStateMachine.isActive(commandId) ||
-      this.vpnBackendHandoffInFlight ||
-      !visibleStatus.includes('backend handoff pending')) {
-      return;
-    }
-    try {
-      const requestText = this.vpnCommandGateway.readCommandFile(filesDir,
-        VPN_BACKEND_HANDOFF_REQUEST_FILE_NAME);
-      if (requestText === undefined || requestText.trim().length === 0) {
-        return;
-      }
-      this.vpnCommandGateway.writeCommandFile(filesDir, VPN_BACKEND_HANDOFF_REQUEST_FILE_NAME, '');
-      const request: VpnBackendHandoffRequest = JSON.parse(requestText) as VpnBackendHandoffRequest;
-      if (request.requestId <= 0) {
-        return;
-      }
-      this.vpnBackendHandoffInFlight = true;
-      this.vpnCommandGateway.stopBackend()
-        .then((status: string) => {
-          if (!this.vpnCommandStateMachine.isActive(commandId)) {
-            return;
-          }
-          this.backendStatus = status;
-          this.recordDiagnosticEvent(status.startsWith('OK') ?
-            'vpn_backend_handoff_stopped' : 'vpn_backend_handoff_stop_failed', 'vpn_handoff');
-          const response: VpnBackendHandoffResponse = { requestId: request.requestId, status: status };
-          this.vpnCommandGateway.writeCommandFile(filesDir, VPN_BACKEND_HANDOFF_RESPONSE_FILE_NAME,
-            JSON.stringify(response));
-        })
-        .catch(() => {
-          if (!this.vpnCommandStateMachine.isActive(commandId)) {
-            return;
-          }
-          const response: VpnBackendHandoffResponse = {
-            requestId: request.requestId,
-            status: 'FAILED | backend handoff | stop unavailable'
-          };
-          this.vpnCommandGateway.writeCommandFile(filesDir, VPN_BACKEND_HANDOFF_RESPONSE_FILE_NAME,
-            JSON.stringify(response));
-          this.recordDiagnosticEvent('vpn_backend_handoff_stop_failed', 'vpn_handoff');
-        })
-        .finally(() => {
-          this.vpnBackendHandoffInFlight = false;
-        });
-    } catch (_error) {
-      this.vpnCommandGateway.writeCommandFile(filesDir, VPN_BACKEND_HANDOFF_REQUEST_FILE_NAME, '');
-    }
-  }
-
-  private recoverFailedVpnExtension(failedStatus: string): void {
-    if (this.vpnFailedExtensionRecoveryInFlight || this.disconnectInProgress ||
-      this.vpnConflictDialogVisible) {
-      return;
-    }
-    this.vpnFailedExtensionRecoveryInFlight = true;
-    this.clearVpnBackendHandoffFiles();
-    this.recordDiagnosticEvent('vpn_failed_extension_stop_requested', 'recovery');
-    const generation: number = this.vpnCommandStateMachine.currentLifecycleGeneration();
-    this.vpnCommandGateway.stopVpnExtension(this.vpnWant())
-      .then(() => {
-        if (generation !== this.vpnCommandStateMachine.currentLifecycleGeneration()) {
-          return;
-        }
-        this.recordDiagnosticEvent('vpn_failed_extension_stopped', 'recovery');
-        this.vpnStatus = failedStatus;
-        this.startBackend(false);
-        this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
-      })
-      .catch((error: BusinessError) => {
-        if (generation !== this.vpnCommandStateMachine.currentLifecycleGeneration()) {
-          return;
-        }
-        this.recordDiagnosticEvent('vpn_failed_extension_stop_failed', 'recovery', error.code);
-      })
-      .finally(() => {
-        this.vpnFailedExtensionRecoveryInFlight = false;
-      });
-  }
-
-  private preserveConfirmedVpnStatus(status: string, heartbeatMs: number): boolean {
-    if (this.disconnectInProgress || this.lastConfirmedVpnStatus.length === 0 ||
-      this.lastConfirmedVpnHeartbeatMs <= 0) {
-      return false;
-    }
-    const confirmedAgeMs: number = Date.now() - this.lastConfirmedVpnHeartbeatMs;
-    if (confirmedAgeMs < 0 || confirmedAgeMs > VPN_CONNECTED_GRACE_MS) {
-      if (this.vpnStatusGraceActive) {
-        this.recordDiagnosticEvent('vpn_status_grace_expired', 'heartbeat');
-        this.vpnStatusGraceActive = false;
-      }
-      return false;
-    }
-    const normalizedStatus: string = status.toLowerCase();
-    const explicitStop: boolean = normalizedStatus.includes('destroyed') ||
-      normalizedStatus.includes('disconnect') || normalizedStatus.includes('stopped') ||
-      normalizedStatus.startsWith('failed');
-    const heartbeatUnavailable: boolean = heartbeatMs <= 0 ||
-      Date.now() - heartbeatMs > VPN_HEARTBEAT_FRESH_MS;
-    const liveTunTransition: boolean = status.includes('backend starting') ||
-      (status.includes('tun=true') &&
-        (status.includes('state=NoState') || status.includes('state=Starting')));
-    if (explicitStop || (!heartbeatUnavailable && !liveTunTransition)) {
-      return false;
-    }
-    if (!this.vpnStatusGraceActive) {
-      this.vpnStatusGraceActive = true;
-      this.recordDiagnosticEvent('vpn_status_grace_started',
-        liveTunTransition ? 'tun_transition' : 'heartbeat');
-    }
-    this.vpnStatus = this.lastConfirmedVpnStatus;
-    return true;
-  }
-
-  private startConnectionPolling(): void {
-    this.stopConnectionPolling();
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const statusPath: string = `${context.filesDir}/vpn-probe-status.txt`;
-    try {
-      if (fileIo.accessSync(statusPath)) {
-        this.connectionStatusWatcher = fileIo.createWatcher(statusPath, FILE_WATCH_CLOSE_WRITE, () => {
-          this.handleConnectionStatusUpdate();
-        });
-        this.connectionStatusWatcher.start();
-      }
-    } catch (_error) {
-      this.connectionStatusWatcher = undefined;
-    }
-    this.connectionPollTimer = setInterval(() => {
-      this.handleConnectionStatusUpdate();
-    }, CONNECTION_POLL_INTERVAL_MS);
-  }
-
-  private handleConnectionStatusUpdate(): void {
-    this.refreshVpnProbeStatus();
-    if (this.vpnStatus.includes('state=Running') || this.vpnStatus.startsWith('FAILED')) {
-      this.stopConnectionPolling();
-    }
+    return this.vpnSessionController.refreshVpnProbeStatus();
   }
 
   private stopConnectionPolling(): void {
-    if (this.connectionPollTimer >= 0) {
-      clearInterval(this.connectionPollTimer);
-      this.connectionPollTimer = -1;
-    }
-    if (this.connectionStatusWatcher !== undefined) {
-      try {
-        this.connectionStatusWatcher.stop();
-      } catch (_error) {
-        // The watcher may already have stopped with the Extension process.
-      }
-      this.connectionStatusWatcher = undefined;
-    }
+    this.vpnSessionController.stopConnectionPolling();
   }
 
   private clearConnectionCompletionTimer(): void {
-    if (this.connectionCompletionTimer >= 0) {
-      clearTimeout(this.connectionCompletionTimer);
-      this.connectionCompletionTimer = -1;
-    }
-  }
-
-  private commitConnectedStatus(status: string): void {
-    this.clearConnectionCompletionTimer();
-    this.vpnStatus = status;
-    this.setConnectInProgress(false);
-    this.vpnCommandStateMachine.complete(this.connectCommandId, VpnCommandState.RUNNING);
-    this.homeTitleCompact = true;
-    this.scheduleLifecycleTask(() => this.autoProbeConnectedPeerServices(), 50);
-    this.stopConnectionPolling();
+    this.vpnSessionController.clearConnectionCompletionTimer();
   }
 
   private syncHomeTitleCompact(compact: boolean): void {
@@ -3584,366 +2735,50 @@ export struct BridgeStatus {
     this.homeTitleCompact = compact;
   }
 
-  private taildropSnapshotFilePath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${TAILDROP_TARGETS_FILE_NAME}`;
+  private clearCachedPeerDirectory(): void {
+    this.vpnSessionController.clearCachedPeerDirectory();
   }
 
-  private peerSnapshotFilePath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${VPN_PEERS_FILE_NAME}`;
-  }
-
-  private refreshPeerSnapshot(): void {
-    try {
-      const path: string = this.peerSnapshotFilePath();
-      if (!fileIo.accessSync(path)) {
-        return;
-      }
-      const snapshot: PersistedPeerSnapshot = JSON.parse(
-        fileIo.readTextSync(path)) as PersistedPeerSnapshot;
-      const ageMs: number = Date.now() - snapshot.updatedAtMs;
-      if (snapshot.updatedAtMs <= 0 || ageMs < 0 || ageMs > 5000) {
-        return;
-      }
-      const validPeers: PeerSummary[] = snapshot.peers.filter(
-        (peer: PeerSummary) => /^peer-[a-f0-9]{16}$/.test(peer.key) && peer.name.length > 0);
-      const receiver: MeshArcReceiverStatus = snapshot.meshArcReceiver ?? emptyMeshArcReceiverStatus();
-      const normalizedReceiver: MeshArcReceiverStatus = {
-        state: this.featureDiagnosticToken(receiver.state, 'unknown'),
-        protocol: this.featureDiagnosticToken(receiver.protocol ?? '', 'unknown'),
-        httpStatus: Number.isFinite(receiver.httpStatus) ? receiver.httpStatus : 0,
-        sent: this.featureDiagnosticCount(receiver.sent),
-        registered: this.featureDiagnosticCount(receiver.registered),
-        checkedAtMs: this.featureDiagnosticCount(receiver.checkedAtMs ?? 0)
-      };
-      const signature: string = `${JSON.stringify(validPeers)}|${JSON.stringify(normalizedReceiver)}`;
-      if (signature === this.peerSnapshotSignature) {
-        this.logServiceStatusIfChanged();
-        return;
-      }
-      this.peerSnapshotSignature = signature;
-      this.meshArcReceiver = normalizedReceiver;
-      this.applyPeers(validPeers);
-      this.syncOfflinePeerStatusRefreshPolling();
-      this.devicesLoading = false;
-      this.logServiceStatusIfChanged();
-    } catch (_error) {
-      // The Extension may be replacing the snapshot file. Retry on the next
-      // one-second health poll without discarding the last valid device list.
-    }
-  }
-
-  private hasCachedTaildropReceiveFile(): boolean {
-    const receive: TaildropReceiveResult = this.taildropReceive;
-    return this.taildropCachedFiles.some((cached: TaildropCachedFile) =>
-      cached.requestId === receive.requestId && cached.name === receive.name &&
-      cached.size === receive.size && cached.path === receive.path &&
-      this.validTaildropCachedFile(cached));
-  }
-
-  private canContinueTaildropReceiveOffline(): boolean {
-    if (!this.taildropReceiveInProgress) {
-      return false;
-    }
-    if (this.taildropReceiveStrategy === 'media' &&
-      (this.taildropReceive.state === 'awaiting_gallery_save' ||
-        this.taildropReceive.state === 'saving_gallery')) {
-      return true;
-    }
-    if ((this.taildropReceiveStrategy === 'text-preview' &&
-      (this.taildropReceive.state === 'awaiting_text_preview' ||
-        this.taildropReceive.state === 'copying_text')) ||
-      (this.taildropReceiveStrategy === 'file' &&
-        (this.taildropReceive.state === 'selecting_destination' ||
-          this.taildropReceive.state === 'exporting'))) {
-      return this.hasCachedTaildropReceiveFile();
-    }
-    return false;
+  private refreshPeerSnapshot(allowCachedDirectory: boolean = false): void {
+    this.vpnSessionController.refreshPeerSnapshot(allowCachedDirectory);
   }
 
   private resetTaildropSnapshot(): void {
-    this.taildropState = 'disconnected';
-    this.taildropReason = '';
-    this.taildropTargets = [];
-    this.taildropAutoPrefetchKey = '';
-    this.taildropPendingTextPreview = undefined;
-    this.taildropPendingMediaSave = undefined;
-    if (this.taildropReceiveInProgress && !this.canContinueTaildropReceiveOffline()) {
-      if (this.taildropReceive.state === 'awaiting_gallery_save' ||
-        this.taildropReceive.state === 'awaiting_text_preview') {
-        this.resetTaildropReceiveOperation();
-      } else {
-        this.failTaildropReceive('disconnected');
-      }
-    }
-    if (this.taildropTransfer.state === 'queued' || this.taildropTransfer.state === 'sending') {
-      this.applyTaildropTransfer(this.taildropTransferFailure(this.taildropTransfer, 'disconnected'));
-    }
-  }
-
-  private validTaildropTransfer(transfer: TaildropTransferSummary): boolean {
-    if (transfer.state !== 'idle' && transfer.state !== 'queued' && transfer.state !== 'sending' &&
-      transfer.state !== 'completed' && transfer.state !== 'failed') {
-      return false;
-    }
-    return transfer.requestId >= 0 && transfer.fileIndex >= 0 && transfer.fileCount >= 0 &&
-      transfer.fileBytes >= 0 && transfer.fileSize >= 0 && transfer.bytesSent >= 0 &&
-      transfer.totalBytes >= 0;
-  }
-
-  private taildropTransferFailure(
-    transfer: TaildropTransferSummary, reason: string
-  ): TaildropTransferSummary {
-    return {
-      requestId: transfer.requestId,
-      state: 'failed',
-      reason: reason,
-      targetKey: transfer.targetKey,
-      targetName: transfer.targetName,
-      fileName: transfer.fileName,
-      fileIndex: transfer.fileIndex,
-      fileCount: transfer.fileCount,
-      fileBytes: transfer.fileBytes,
-      fileSize: transfer.fileSize,
-      bytesSent: transfer.bytesSent,
-      totalBytes: transfer.totalBytes,
-      previewPath: transfer.previewPath,
-      completedAtMs: Date.now()
-    };
-  }
-
-  private taildropFailureMessage(reason: string): ResourceStr {
-    switch (reason) {
-      case 'target_unavailable':
-      case 'target_offline':
-        return $r('app.string.transfer_send_target_unavailable');
-      case 'admin_disabled':
-        return $r('app.string.transfer_admin_disabled_title');
-      case 'disconnected':
-        return $r('app.string.transfer_send_disconnected');
-      case 'cancelled':
-        return $r('app.string.transfer_send_cancelled');
-      case 'permission_denied':
-        return $r('app.string.transfer_send_permission_denied');
-      case 'no_space':
-        return $r('app.string.transfer_send_no_space');
-      case 'file_unavailable':
-        return $r('app.string.transfer_send_file_unavailable');
-      case 'file_changed':
-        return $r('app.string.transfer_send_file_changed');
-      case 'busy':
-        return $r('app.string.transfer_busy_message');
-      case 'backend_unavailable':
-      case 'extension_error':
-        return $r('app.string.transfer_send_backend_unavailable');
-      case 'timeout':
-      case 'network_interrupted':
-        return $r('app.string.transfer_send_interrupted');
-      default:
-        return $r('app.string.transfer_send_failed');
-    }
-  }
-
-  private applyTaildropTransfer(transfer: TaildropTransferSummary): void {
-    if (!this.validTaildropTransfer(transfer)) {
-      return;
-    }
-    if (transfer.state === 'idle' &&
-      (this.taildropTransfer.state === 'queued' || this.taildropTransfer.state === 'sending') &&
-      Date.now() - this.taildropRequestSubmittedAtMs < 5000) {
-      return;
-    }
-    if (transfer.state === 'idle' && this.taildropTransfer.state === 'queued' &&
-      Date.now() - this.taildropRequestSubmittedAtMs >= 5000) {
-      this.applyTaildropTransfer(this.taildropTransferFailure(
-        this.taildropTransfer, 'extension_error'));
-      return;
-    }
-    if (transfer.requestId === this.taildropTransfer.requestId) {
-      if (typeof transfer.previewPath !== 'string') {
-        transfer.previewPath = '';
-      }
-      if (transfer.targetName.length === 0) {
-        transfer.targetName = this.taildropTransfer.targetName;
-      }
-      if (transfer.fileName.length === 0) {
-        transfer.fileName = this.taildropTransfer.fileName;
-      }
-      if (transfer.previewPath.length === 0) {
-        transfer.previewPath = this.taildropTransfer.previewPath;
-      }
-    } else if (typeof transfer.previewPath !== 'string') {
-      transfer.previewPath = '';
-    }
-    this.updateTaildropProgressEstimate(transfer);
-    this.taildropTransfer = transfer;
-    if (transfer.state === 'completed' || transfer.state === 'failed' || transfer.state === 'idle') {
-      this.taildropCancelPending = false;
-    }
-    if ((transfer.state === 'completed' || transfer.state === 'failed') && transfer.requestId > 0 &&
-      transfer.requestId !== this.lastHandledTaildropRequestId) {
-      this.lastHandledTaildropRequestId = transfer.requestId;
-      const target: TaildropTargetSummary | undefined = this.displayedTaildropTargets().find(
-        (item: TaildropTargetSummary) => item.key === transfer.targetKey);
-      const targetName: string = transfer.targetName.length > 0 ? transfer.targetName :
-        (target === undefined ? 'Tailscale' : target.name);
-      const record: TaildropTransferRecord = {
-        requestId: transfer.requestId,
-        direction: 'send',
-        state: transfer.state,
-        reason: transfer.reason,
-        targetKey: transfer.targetKey,
-        targetName: targetName,
-        fileName: transfer.fileName,
-        fileCount: transfer.fileCount,
-        totalBytes: transfer.totalBytes,
-        previewPath: transfer.previewPath,
-        completedAtMs: transfer.completedAtMs > 0 ? transfer.completedAtMs : Date.now()
-      };
-      this.taildropHistory = [record].concat(this.taildropHistory).slice(0, TAILDROP_HISTORY_LIMIT);
-      this.persistTaildropHistory();
-      this.showToast(transfer.state === 'completed' ?
-        $r('app.string.transfer_send_completed') : this.taildropFailureMessage(transfer.reason));
-    }
-  }
-
-  private applyTaildropInboxSnapshot(
-    snapshot: TaildropSnapshot, connected: boolean, authoritativeInbox: boolean
-  ): void {
-    const validTargets: TaildropTargetSummary[] = snapshot.targets.filter(
-      (target: TaildropTargetSummary) => /^peer-[a-f0-9]{16}$/.test(target.key) && target.name.length > 0);
-    const snapshotReceivedAtMs: number = Date.now();
-    const validWaitingFiles: TaildropWaitingFileSummary[] = this.sortTaildropWaitingFiles(
-      snapshot.waitingFiles.filter((file: TaildropWaitingFileSummary) =>
-        this.isTaildropWaitingFileShapeValid(file)).map(
-        (file: TaildropWaitingFileSummary, index: number): TaildropWaitingFileSummary => {
-          const existing: TaildropWaitingFileSummary | undefined = this.taildropWaitingFiles.find(
-            (candidate: TaildropWaitingFileSummary) =>
-              candidate.name === file.name && candidate.size === file.size);
-          const receivedAtMs: number = existing !== undefined ? existing.receivedAtMs :
-            this.taildropWaitingFileTimestamp(file, snapshotReceivedAtMs - index);
-          return { name: file.name, size: file.size, receivedAtMs: receivedAtMs };
-        }));
-    this.taildropState = snapshot.state;
-    this.taildropReason = snapshot.reason;
-    if (JSON.stringify(this.taildropTargets) !== JSON.stringify(validTargets)) {
-      this.taildropTargets = validTargets;
-    }
-    const inboxIsAuthoritative: boolean = authoritativeInbox && snapshot.state === 'ready' &&
-      snapshot.inboxReason.length === 0;
-    if (inboxIsAuthoritative) {
-      const pendingDeletesChanged: boolean = this.reconcileTaildropPendingDeletes(validWaitingFiles);
-      const displayedWaitingFiles: TaildropWaitingFileSummary[] = validWaitingFiles.filter(
-        (file: TaildropWaitingFileSummary) => !this.isTaildropPendingDelete(file));
-      const waitingFilesChanged: boolean = JSON.stringify(this.taildropWaitingFiles) !==
-        JSON.stringify(displayedWaitingFiles);
-      if (waitingFilesChanged) {
-        this.taildropWaitingFiles = displayedWaitingFiles;
-        this.notifyCacheContentsChanged();
-      }
-      this.taildropInboxReason = '';
-      if (waitingFilesChanged || pendingDeletesChanged) {
-        this.persistTaildropInbox();
-      }
-    } else {
-      this.taildropInboxReason = snapshot.inboxReason;
-    }
-    this.applyTaildropTransfer(snapshot.transfer);
-    if (inboxIsAuthoritative) {
-      this.submitNextTaildropPendingDelete();
-      this.prefetchTaildropInboxFiles(this.taildropWaitingFiles, connected);
-    }
+    this.taildropSessionController.resetTaildropSnapshot();
   }
 
   private applyBackendTaildropSnapshot(snapshot: TaildropSnapshot): void {
-    if (this.isConnected() || snapshot === undefined ||
-      (snapshot.state !== 'ready' && snapshot.state !== 'disabled' && snapshot.state !== 'unavailable')) {
-      return;
-    }
-    this.applyTaildropInboxSnapshot(snapshot, false, true);
+    this.taildropSessionController.applyBackendTaildropSnapshot(snapshot);
   }
 
   private refreshTaildropSnapshot(connected: boolean = this.isConnected()): void {
-    try {
-      this.maybeExpireTaildropCache();
-      const path: string = this.taildropSnapshotFilePath();
-      if (!fileIo.accessSync(path)) {
-        this.taildropState = 'loading';
-        return;
-      }
-      const snapshot: TaildropSnapshot = JSON.parse(fileIo.readTextSync(path)) as TaildropSnapshot;
-      const updatedAtMs: number = snapshot.updatedAtMs === undefined ? 0 : snapshot.updatedAtMs;
-      const ageMs: number = Date.now() - updatedAtMs;
-      if (updatedAtMs <= 0 || ageMs < 0 || ageMs > 5000) {
-        this.taildropState = 'loading';
-        return;
-      }
-      if (snapshot.state !== 'ready' && snapshot.state !== 'disabled' &&
-        snapshot.state !== 'unavailable' && snapshot.state !== 'loading') {
-        this.taildropState = 'unavailable';
-        this.taildropReason = 'invalid_snapshot';
-        this.taildropTargets = [];
-        return;
-      }
-      this.applyTaildropInboxSnapshot(snapshot, connected, connected);
-    } catch (_error) {
-      // The Extension may be replacing the snapshot file. Keep the previous
-      // valid result and retry on the next one-second health poll.
-    }
+    this.taildropSessionController.refreshTaildropSnapshot(connected);
   }
 
   private startHealthPolling(): void {
-    this.stopHealthPolling();
-    this.scheduleHealthPoll(this.lifecycleGeneration);
-  }
-
-  private scheduleHealthPoll(generation: number): void {
-    this.healthPollTimer = setTimeout(() => {
-      if (generation !== this.lifecycleGeneration) {
-        return;
-      }
-      const vpnIsLive: boolean = this.refreshVpnProbeStatus();
-      const refresh: Promise<void> = vpnIsLive ? Promise.resolve() : this.refreshOrRecoverBackend(generation);
-      refresh.finally(() => {
-        if (generation === this.lifecycleGeneration) {
-          this.scheduleHealthPoll(generation);
-        }
-      });
-    }, this.taildropReceiveInProgress &&
-      this.taildropReceive.state !== 'awaiting_gallery_save' &&
-      this.taildropReceive.state !== 'awaiting_text_preview' ? 120 : 1000);
+    this.vpnSessionController.startHealthPolling();
   }
 
   private async refreshOrRecoverBackend(generation: number): Promise<void> {
-    // The UI backend is intentionally stopped immediately before launching the
-    // VPN extension. Do not mistake that short handoff window for a killed
-    // extension and start a second backend against the same state directory.
-    if (this.connectInProgress || this.disconnectInProgress || this.backendRestartDeferred ||
-      this.vpnFailedExtensionRecoveryInFlight) {
-      return;
-    }
-    await this.refreshBackendStatus();
-    if (generation !== this.lifecycleGeneration || !this.controlServerConfirmed ||
-      !this.backendStatus.startsWith('STOPPED')) {
-      return;
-    }
-    this.recordDiagnosticEvent('backend_recovery_requested', 'vpn_process_lost');
-    this.startBackend(false);
+    await this.vpnSessionController.refreshOrRecoverBackend(generation);
+  }
+
+  private cancelVpnAutoRecovery(): void {
+    this.vpnSessionController.cancelVpnAutoRecovery();
   }
 
   private stopHealthPolling(): void {
-    if (this.healthPollTimer >= 0) {
-      clearTimeout(this.healthPollTimer);
-      this.healthPollTimer = -1;
-    }
+    this.vpnSessionController.stopHealthPolling();
   }
 
   private startServiceRefreshPolling(): void {
     this.stopServiceRefreshPolling();
+    if (!this.appShellReady || !this.remoteStreamAppInForeground) {
+      return;
+    }
     this.refreshServiceSnapshots();
     this.serviceRefreshTimer = setInterval(() => {
-      if (!this.appShellReady) {
+      if (!this.appShellReady || !this.remoteStreamAppInForeground) {
         this.stopServiceRefreshPolling();
         return;
       }
@@ -3959,7 +2794,8 @@ export struct BridgeStatus {
   }
 
   private syncOfflinePeerStatusRefreshPolling(): void {
-    if (this.appShellReady && this.isConnected() && this.offlinePeers().length > 0) {
+    if (this.appShellReady && this.remoteStreamAppInForeground &&
+      this.isConnected() && this.offlinePeers().length > 0) {
       this.startOfflinePeerStatusRefreshPolling();
     } else {
       this.stopOfflinePeerStatusRefreshPolling();
@@ -3967,11 +2803,13 @@ export struct BridgeStatus {
   }
 
   private startOfflinePeerStatusRefreshPolling(): void {
-    if (this.offlinePeerStatusRefreshTimer >= 0) {
+    if (!this.appShellReady || !this.remoteStreamAppInForeground ||
+      this.offlinePeerStatusRefreshTimer >= 0) {
       return;
     }
     this.offlinePeerStatusRefreshTimer = setInterval(() => {
-      if (!this.appShellReady || !this.isConnected() || this.offlinePeers().length === 0) {
+      if (!this.appShellReady || !this.remoteStreamAppInForeground ||
+        !this.isConnected() || this.offlinePeers().length === 0) {
         this.stopOfflinePeerStatusRefreshPolling();
         return;
       }
@@ -3987,7 +2825,7 @@ export struct BridgeStatus {
   }
 
   private refreshServiceSnapshots(): void {
-    if (this.serviceRefreshInFlight) {
+    if (this.serviceRefreshInFlight || !this.remoteStreamAppInForeground) {
       return;
     }
     this.serviceRefreshInFlight = true;
@@ -3996,7 +2834,7 @@ export struct BridgeStatus {
     this.refreshTaildropSnapshot(this.isConnected());
     const localSendRefresh: Promise<void> = this.requestLocalSendRefresh();
     localSendRefresh.finally(() => {
-      if (generation === this.lifecycleGeneration && this.appShellReady) {
+      if (generation === this.lifecycleGeneration && this.appShellReady && this.remoteStreamAppInForeground) {
         this.autoProbeConnectedPeerServices(true);
         this.diagnosticServiceLastRefreshMs = Date.now();
         this.logServiceStatusIfChanged();
@@ -4006,7 +2844,7 @@ export struct BridgeStatus {
   }
 
   private syncHomeLatencyRefreshPolling(): void {
-    if (this.appShellReady && this.activeNavigationId === 'home') {
+    if (this.appShellReady && this.remoteStreamAppInForeground && this.activeNavigationId === 'home') {
       this.startHomeLatencyRefreshPolling();
     } else {
       this.stopHomeLatencyRefreshPolling();
@@ -4015,9 +2853,12 @@ export struct BridgeStatus {
 
   private startHomeLatencyRefreshPolling(): void {
     this.stopHomeLatencyRefreshPolling();
+    if (!this.appShellReady || !this.remoteStreamAppInForeground) {
+      return;
+    }
     this.refreshHomeLatency();
     this.homeLatencyRefreshTimer = setInterval(() => {
-      if (!this.appShellReady || this.activeNavigationId !== 'home') {
+      if (!this.appShellReady || !this.remoteStreamAppInForeground || this.activeNavigationId !== 'home') {
         this.stopHomeLatencyRefreshPolling();
         return;
       }
@@ -4033,36 +2874,11 @@ export struct BridgeStatus {
   }
 
   private refreshHomeLatency(): void {
-    this.refreshPeerSnapshot();
-    if (this.homeLatencyRefreshInFlight || !this.isConnected()) {
-      return;
-    }
-    this.ensureStreamingServices();
-    const onlinePeers: PeerSummary[] = this.peers.filter((peer: PeerSummary) =>
-      peer.online && peer.addresses.length > 0);
-    if (onlinePeers.length === 0) {
-      return;
-    }
-    this.homeLatencyRefreshInFlight = true;
-    const generation: number = this.lifecycleGeneration;
-    const session: number = this.trafficSession;
-    Promise.all(onlinePeers.map((peer: PeerSummary) =>
-      this.peerPathService!.probe(peer.key, true, true).then((path: PeerPathResult) => {
-        const currentPeer: PeerSummary | undefined = this.peers.find((item: PeerSummary) => item.key === peer.key);
-        if (!this.appShellReady || !this.isConnected() || generation !== this.lifecycleGeneration ||
-          session !== this.trafficSession || currentPeer === undefined || !currentPeer.online ||
-          path.errorMessage === 'cancelled') {
-          return;
-        }
-        this.updateStreamingState(peer.key,
-          this.copyStreamingState(this.streamingState(peer.key), undefined, path, false));
-      }))).finally(() => {
-        this.homeLatencyRefreshInFlight = false;
-      });
+    this.peerIntegrationController.refreshHomeLatency();
   }
 
   private syncTransferProtocolRefreshPolling(): void {
-    if (this.appShellReady && this.activeNavigationId === 'transfer') {
+    if (this.appShellReady && this.remoteStreamAppInForeground && this.activeNavigationId === 'transfer') {
       this.startTransferProtocolRefreshPolling();
     } else {
       this.stopTransferProtocolRefreshPolling();
@@ -4071,9 +2887,12 @@ export struct BridgeStatus {
 
   private startTransferProtocolRefreshPolling(): void {
     this.stopTransferProtocolRefreshPolling();
+    if (!this.appShellReady || !this.remoteStreamAppInForeground) {
+      return;
+    }
     this.refreshTransferProtocolStatus(false);
     this.transferProtocolRefreshTimer = setInterval(() => {
-      if (!this.appShellReady || this.activeNavigationId !== 'transfer') {
+      if (!this.appShellReady || !this.remoteStreamAppInForeground || this.activeNavigationId !== 'transfer') {
         this.stopTransferProtocolRefreshPolling();
         return;
       }
@@ -4089,122 +2908,31 @@ export struct BridgeStatus {
   }
 
   private refreshTransferProtocolStatus(manual: boolean = true): void {
-    if (!this.appShellReady) {
-      return;
-    }
-    if (this.transferProtocolRefreshInFlight) {
-      if (manual) {
-        this.transferProtocolManualRefreshQueued = true;
-        this.transferProtocolRefreshing = true;
-      }
-      return;
-    }
-    this.refreshPeerSnapshot();
-    this.transferProtocolRefreshInFlight = true;
-    if (manual) {
-      this.transferProtocolRefreshing = true;
-    }
-    const generation: number = this.lifecycleGeneration;
-    this.requestLocalSendRefresh().finally(() => {
-      if (generation === this.lifecycleGeneration && this.appShellReady) {
-        this.refreshPeerSnapshot();
-        if (!this.isConnected()) {
-          this.refreshBackendStatus();
-        }
-      }
-      this.transferProtocolRefreshInFlight = false;
-      if (this.transferProtocolManualRefreshQueued && generation === this.lifecycleGeneration &&
-        this.appShellReady) {
-        this.transferProtocolManualRefreshQueued = false;
-        this.refreshTransferProtocolStatus(true);
-        return;
-      }
-      if (manual) {
-        this.transferProtocolRefreshing = false;
-      }
-    });
+    this.peerIntegrationController.refreshTransferProtocolStatus(manual);
   }
 
   private handleTransferProtocolRefreshClick(): void {
-    if (!this.isConnected()) {
-      this.showToast($r('app.string.transfer_tailscale_network_not_connected'));
-      return;
-    }
-    this.refreshTransferProtocolStatus(true);
+    this.peerIntegrationController.handleTransferProtocolRefreshClick();
   }
 
   private async requestLocalSendRefresh(): Promise<void> {
-    if (this.localSendRefreshPromise !== undefined) {
-      await this.localSendRefreshPromise;
-      return;
-    }
-    const refresh: Promise<void> = this.performLocalSendRefresh();
-    this.localSendRefreshPromise = refresh;
-    try {
-      await refresh;
-    } finally {
-      if (this.localSendRefreshPromise === refresh) {
-        this.localSendRefreshPromise = undefined;
-      }
-    }
-  }
-
-  private async performLocalSendRefresh(): Promise<void> {
-    if (!this.isConnected()) {
-      await this.refreshBackendStatus();
-      return;
-    }
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const requestId: number = Math.max(Date.now(), this.localSendRefreshRequestId + 1);
-    this.localSendRefreshRequestId = requestId;
-    const requestPath: string = `${context.filesDir}/${LOCAL_SEND_REFRESH_REQUEST_FILE_NAME}`;
-    const responsePath: string = `${context.filesDir}/${LOCAL_SEND_REFRESH_RESPONSE_FILE_NAME}`;
-    this.vpnCommandGateway.writeCommandFile(context.filesDir, LOCAL_SEND_REFRESH_RESPONSE_FILE_NAME, '');
-    this.vpnCommandGateway.writeCommandFile(context.filesDir, LOCAL_SEND_REFRESH_REQUEST_FILE_NAME,
-      JSON.stringify({ requestId: requestId }));
-    const startedAt: number = Date.now();
-    while (Date.now() - startedAt < LOCAL_SEND_REFRESH_TIMEOUT_MS && this.appShellReady && this.isConnected()) {
-      await new Promise<void>((resolve: () => void) => setTimeout(resolve, 150));
-      try {
-        if (!fileIo.accessSync(responsePath)) {
-          continue;
-        }
-        const responseText: string = fileIo.readTextSync(responsePath).trim();
-        if (responseText.length === 0) {
-          continue;
-        }
-        const response: LocalSendRefreshResponse = JSON.parse(responseText) as LocalSendRefreshResponse;
-        if (response.requestId !== requestId) {
-          continue;
-        }
-        this.vpnCommandGateway.writeCommandFile(context.filesDir, LOCAL_SEND_REFRESH_RESPONSE_FILE_NAME, '');
-        this.refreshPeerSnapshot();
-        return;
-      } catch (_error) {
-        // The Extension may be replacing the response file. Retry briefly.
-      }
-    }
-    this.vpnCommandGateway.writeCommandFile(context.filesDir, LOCAL_SEND_REFRESH_REQUEST_FILE_NAME, '');
+    await this.peerIntegrationController.requestLocalSendRefresh();
   }
 
   private isConnected(): boolean {
-    return this.vpnStatus.includes('state=Running');
+    return this.vpnSessionController.isConnected();
   }
 
   private isConnecting(): boolean {
-    return this.connectInProgress ||
-      this.vpnStatus.includes('start requested') ||
-      this.vpnStatus.includes('authorization') ||
-      this.vpnStatus.includes('starting');
+    return this.vpnSessionController.isConnecting();
   }
 
   private needsLogin(): boolean {
-    return this.backendStatus.includes('NeedsLogin') ||
-      this.backendStatus.includes('loginURLReady=true');
+    return this.vpnSessionController.needsLogin();
   }
 
   private hasConnectionProblem(): boolean {
-    return this.vpnStatus.startsWith('FAILED') || this.backendStatus.startsWith('FAILED');
+    return this.vpnSessionController.hasConnectionProblem();
   }
 
   private isAuthenticated(): boolean {
@@ -4212,7 +2940,7 @@ export struct BridgeStatus {
   }
 
   private isBackendLoading(): boolean {
-    return this.backendInitializationVisible && !this.backendReady && !this.hasConnectionProblem();
+    return this.vpnSessionController.isBackendLoading();
   }
 
   private recordDiagnosticEvent(event: string, phase: string, code: number = 0): void {
@@ -4224,124 +2952,118 @@ export struct BridgeStatus {
     }
   }
 
-  private async generateDiagnosticReport(): Promise<void> {
-    if (this.diagnosticReportInProgress) {
+  @State feedbackEmailStatus: string = '';
+  private feedbackEmailGateway: FeedbackEmailGateway = new FeedbackEmailGateway();
+
+  private async generateDiagnosticReport(forEmail: boolean = false): Promise<void> {
+    if (this.diagnosticReportInProgress || !this.canUseStandaloneDiagnostics()) {
       return;
     }
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const requestGeneration: number = this.diagnosticReportRequestGuard.begin();
     this.diagnosticReportInProgress = true;
-    this.diagnosticReportStatus = context.resourceManager.getStringSync(
-      $r('app.string.diagnostic_report_generating').id);
-    this.recordDiagnosticEvent('diagnostic_report_requested', 'generate');
-    const input: DiagnosticReportInput = {
-      appVersion: this.appVersion,
-      tailscaleVersion: this.tailscaleVersion,
-      nativeStatus: this.nativeStatus,
-      engineStatus: this.engineStatus,
-      backendStatus: this.backendStatus,
-      vpnStatus: this.vpnStatus,
-      peerCount: this.peers.length,
-      onlinePeerCount: this.onlinePeerCount(),
-      exitNodeCount: this.exitNodes.length,
-      exitNodeSelected: this.exitNodes.some((choice: ExitNodeChoice) => choice.selected),
-      addressCount: this.accountSummary.addresses.length,
-      signedIn: this.isAuthenticated(),
-      routeAll: this.networkSettings.routeAll,
-      exitNodeAllowLANAccess: this.networkSettings.exitNodeAllowLANAccess,
-      quickTransferDiagnosticsEnabled: this.diagnosticQuickTransferEnabled,
-      serviceMonitoringDiagnosticsEnabled: this.diagnosticServiceMonitoringEnabled,
-      securityDiagnosticsEnabled: this.diagnosticSecurityEnabled,
-      appearanceDiagnosticsEnabled: this.diagnosticAppearanceEnabled,
-      localSendAvailableCount: this.localSendStateCount('available'),
-      localSendCheckingCount: this.localSendStateCount('checking'),
-      localSendUnavailableCount: this.localSendStateCount('unavailable') +
-        this.localSendStateCount('offline'),
-      meshArcReceiverState: this.meshArcReceiver.state,
-      meshArcReceiverProtocol: this.meshArcReceiver.protocol ?? 'unknown',
-      meshArcReceiverSentCount: this.meshArcReceiver.sent,
-      meshArcReceiverRegisteredCount: this.meshArcReceiver.registered,
-      mediaAvailablePeerCount: this.mediaAvailablePeerCount(),
-      mediaServiceCount: this.mediaServiceCount(),
-      hosPlayerSelfTestState: this.hosPlayerSelfTestState(),
-      serviceMonitoringActive: this.serviceRefreshTimer >= 0,
-      serviceRefreshInProgress: this.serviceRefreshInFlight || this.diagnosticFeatureRefreshInProgress,
-      serviceLastRefreshAgeSeconds: this.diagnosticServiceLastRefreshMs > 0 ?
-        Math.max(0, Math.floor((Date.now() - this.diagnosticServiceLastRefreshMs) / 1000)) : 0,
-      mediaCheckingPeerCount: this.mediaCheckingPeerCount(),
-      sunshineAvailablePeerCount: this.sunshineAvailablePeerCount(),
-      sunshineCheckingPeerCount: this.sunshineCheckingPeerCount(),
-      taildropState: this.taildropState,
-      appLockEnabled: this.appLockEnabled,
-      folderLockEnabled: this.folderLockEnabled,
-      lockedFolderCount: this.lockedFolderPaths.length,
-      appLockRequired: this.appLockRequired,
-      securityAuthenticationInProgress: this.appLockAuthenticating ||
-        this.securitySettingsAuthenticating || this.diagnosticSecuritySelfTestInProgress,
-      customBackgroundEnabled: this.nativeSettingsBackgroundUri.length > 0,
-      immersiveColorEnabled: this.immersiveColorBackgroundEnabled,
-      glowLevel: this.glowLevel,
-      homeLayoutMode: this.connectedHomeLayoutMode,
-      visibleNavigationTabCount: this.visibleNavigationTabs().length,
-      navigationBottomMargin: this.navigationBottomMargin
-    };
+    if (forEmail) this.feedbackEmailStatus = 'preparing';
     try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      this.diagnosticReportStatus = context.resourceManager.getStringSync(
+        $r('app.string.diagnostic_report_generating').id);
+      this.recordDiagnosticEvent('diagnostic_report_requested', 'generate');
+      if (this.isConnected()) { await PathDiagnosticService.request(context.filesDir, 'snapshot'); }
+      if (!this.diagnosticReportRequestGuard.isCurrent(requestGeneration) ||
+        !this.canUseStandaloneDiagnostics()) return;
+      const input: DiagnosticReportInput = {
+        appVersion: this.appVersion,
+        appVersionCode: this.appVersionCode,
+        tailscaleVersion: this.tailscaleVersion,
+        nativeStatus: this.nativeStatus,
+        engineStatus: this.engineStatus,
+        backendStatus: this.backendStatus,
+        vpnStatus: this.vpnStatus,
+        peerCount: this.peers.length,
+        onlinePeerCount: this.onlinePeerCount(),
+        exitNodeCount: this.exitNodes.length,
+        exitNodeSelected: this.exitNodes.some((choice: ExitNodeChoice) => choice.selected),
+        addressCount: this.accountSummary.addresses.length,
+        signedIn: this.isAuthenticated(),
+        routeAll: this.networkSettings.routeAll,
+        exitNodeAllowLANAccess: this.networkSettings.exitNodeAllowLANAccess,
+        quickTransferDiagnosticsEnabled: this.diagnosticQuickTransferEnabled,
+        serviceMonitoringDiagnosticsEnabled: this.diagnosticServiceMonitoringEnabled,
+        securityDiagnosticsEnabled: this.diagnosticSecurityEnabled,
+        appearanceDiagnosticsEnabled: this.diagnosticAppearanceEnabled,
+        localSendAvailableCount: this.localSendStateCount('available'),
+        localSendCheckingCount: this.localSendStateCount('checking'),
+        localSendUnavailableCount: this.localSendStateCount('unavailable') +
+          this.localSendStateCount('offline'),
+        meshArcReceiverState: this.meshArcReceiver.state,
+        meshArcReceiverProtocol: this.meshArcReceiver.protocol ?? 'unknown',
+        meshArcReceiverSentCount: this.meshArcReceiver.sent,
+        meshArcReceiverRegisteredCount: this.meshArcReceiver.registered,
+        mediaAvailablePeerCount: this.mediaAvailablePeerCount(),
+        mediaServiceCount: this.mediaServiceCount(),
+        hosPlayerSelfTestState: this.hosPlayerSelfTestState(),
+        serviceMonitoringActive: this.serviceRefreshTimer >= 0,
+        serviceRefreshInProgress: this.serviceRefreshInFlight || this.diagnosticFeatureRefreshInProgress,
+        serviceLastRefreshAgeSeconds: this.diagnosticServiceLastRefreshMs > 0 ?
+          Math.max(0, Math.floor((Date.now() - this.diagnosticServiceLastRefreshMs) / 1000)) : 0,
+        mediaCheckingPeerCount: this.mediaCheckingPeerCount(),
+        sunshineAvailablePeerCount: this.sunshineAvailablePeerCount(),
+        sunshineCheckingPeerCount: this.sunshineCheckingPeerCount(),
+        taildropState: this.taildropState,
+        appLockEnabled: this.appLockEnabled,
+        folderLockEnabled: this.folderLockEnabled,
+        lockedFolderCount: this.lockedFolderPaths.length,
+        appLockRequired: this.appLockRequired,
+        securityAuthenticationInProgress: this.appLockAuthenticating ||
+          this.securitySettingsAuthenticating || this.diagnosticSecuritySelfTestInProgress,
+        customBackgroundEnabled: this.nativeSettingsBackgroundUri.length > 0,
+        immersiveColorEnabled: this.immersiveColorBackgroundEnabled,
+        glowLevel: this.glowLevel,
+        homeLayoutMode: this.connectedHomeLayoutMode,
+        visibleNavigationTabCount: this.visibleNavigationTabs().length,
+        navigationBottomMargin: this.navigationBottomMargin
+      };
       const result: DiagnosticReportResult = await this.accountDiagnosticsGateway.generateReport(context, input);
       if (!this.diagnosticReportRequestGuard.isCurrent(requestGeneration)) {
         return;
       }
+      if (!this.canUseStandaloneDiagnostics()) return;
       const sizeKb: number = Math.max(1, Math.ceil(result.size / 1024));
       this.diagnosticReportStatus = `${result.fileName} (${sizeKb} KB)`;
       this.recordDiagnosticEvent('diagnostic_report_generated', 'share');
-      await this.accountDiagnosticsGateway.shareReport(context, result);
-      if (!this.diagnosticReportRequestGuard.isCurrent(requestGeneration)) {
-        return;
+      if (forEmail) {
+        this.recordDiagnosticEvent('feedback_email_handoff', 'template');
+        const subject: string = context.resourceManager.getStringSync(
+          $r('app.string.feedback_email_subject').id, this.appVersion, this.appVersionCode);
+        const body: string = FeedbackEmailTemplate.render(
+          context.resourceManager.getStringSync($r('app.string.feedback_email_body').id), result.feedbackContext,
+          context.resourceManager.getStringSync($r('app.string.feedback_email_yes').id),
+          context.resourceManager.getStringSync($r('app.string.feedback_email_no').id),
+          context.resourceManager.getStringSync($r('app.string.feedback_email_unknown').id));
+        await this.feedbackEmailGateway.open(context, result, FEEDBACK_EMAIL, subject, body,
+          (code: number): void => this.feedbackEmailFailed(requestGeneration, code),
+          (stage: string): void => this.recordDiagnosticEvent('feedback_email_handoff', stage));
+        if (!this.diagnosticReportRequestGuard.isCurrent(requestGeneration)) return;
+        if (this.feedbackEmailStatus !== 'failed') this.feedbackEmailStatus = 'opened';
+        this.recordDiagnosticEvent('feedback_email_compose_requested', 'attachment');
+      } else {
+        await this.accountDiagnosticsGateway.shareReport(context, result);
+        if (!this.diagnosticReportRequestGuard.isCurrent(requestGeneration)) return;
+        this.recordDiagnosticEvent('diagnostic_share_opened', 'system');
       }
-      this.recordDiagnosticEvent('diagnostic_share_opened', 'system');
     } catch (error) {
       if (!this.diagnosticReportRequestGuard.isCurrent(requestGeneration)) {
         return;
       }
       const businessError = error as BusinessError;
-      this.recordDiagnosticEvent('diagnostic_report_failed', 'generate', businessError.code ?? -1);
-      this.diagnosticReportStatus = context.resourceManager.getStringSync(
-        $r('app.string.diagnostic_report_failed').id);
+      if (forEmail) this.feedbackEmailFailed(requestGeneration, businessError?.code ?? -1);
+      this.recordDiagnosticEvent('diagnostic_report_failed', 'generate', businessError?.code ?? -1);
+      this.diagnosticReportStatus = 'Diagnostic report unavailable';
     } finally {
       if (this.diagnosticReportRequestGuard.isCurrent(requestGeneration)) {
         this.diagnosticReportInProgress = false;
+        if (forEmail && this.feedbackEmailStatus === 'preparing') this.feedbackEmailStatus = '';
       }
     }
-  }
-
-  private showVpnConflictDialog(): void {
-    if (this.vpnConflictDialogVisible) {
-      return;
-    }
-    this.vpnConflictDialogVisible = true;
-    this.recordDiagnosticEvent('vpn_conflict_detected', 'connect', 2203002);
-    this.clearConnectionCompletionTimer();
-    this.stopConnectionPolling();
-    this.setConnectInProgress(false);
-    // The conflict cancels this attempt so a later user retry can begin a new command.
-    this.vpnCommandStateMachine.complete(this.connectCommandId, VpnCommandState.STOPPED);
-    this.clearVpnBackendHandoffFiles();
-    this.vpnStatus = 'Stopping this app VPN after system VPN conflict';
-    this.recordDiagnosticEvent('vpn_conflict_self_disconnect_requested', 'cleanup');
-    this.vpnCommandGateway.stopVpnExtension(this.vpnWant())
-      .then(() => this.finishVpnConflictCleanup())
-      .catch((error: BusinessError) => {
-        this.recordDiagnosticEvent('vpn_conflict_self_disconnect_failed', 'cleanup', error.code);
-        this.finishVpnConflictCleanup();
-      });
-  }
-
-  private finishVpnConflictCleanup(): void {
-    if (!this.vpnConflictDialogVisible) {
-      return;
-    }
-    this.vpnStatus = 'HarmonyOS VPN Extension stopped';
-    this.recordDiagnosticEvent('vpn_conflict_self_disconnect_completed', 'cleanup');
-    this.scheduleLifecycleTask(() => this.openVpnConflictDialog(), 300);
   }
 
   private openVpnConflictDialog(): void {
@@ -4355,47 +3077,15 @@ export struct BridgeStatus {
         autoCancel: false,
         primaryButton: {
           value: $r('app.string.vpn_conflict_confirm_action'),
-          action: () => this.acknowledgeVpnConflict()
+          action: () => this.vpnSessionController.acknowledgeVpnConflict()
         }
       });
     } catch (_error) {
       this.vpnConflictDialogVisible = false;
-      this.finishVpnConflictCancellation(!this.vpnBackendWasRunningBeforeConnect);
+      this.vpnSessionController.finishVpnConflictCancellation(
+        !this.vpnSessionController.vpnBackendWasRunningBeforeConnect
+      );
     }
-  }
-
-  private acknowledgeVpnConflict(): void {
-    const restoreBackend: boolean = !this.vpnBackendWasRunningBeforeConnect;
-    this.vpnConflictDialogVisible = false;
-    this.vpnStatus = 'HarmonyOS VPN Extension stopped';
-    this.recordDiagnosticEvent('vpn_conflict_acknowledged', 'dialog');
-    this.stopConnectionPolling();
-    this.recordDiagnosticEvent('vpn_conflict_confirm_disconnect_requested', 'cleanup');
-    this.vpnCommandGateway.stopVpnExtension(this.vpnWant())
-      .then(() => {
-        this.recordDiagnosticEvent('vpn_conflict_confirm_disconnect_completed', 'cleanup');
-        this.finishVpnConflictCancellation(restoreBackend);
-      })
-      .catch((error: BusinessError) => {
-        this.recordDiagnosticEvent('vpn_conflict_confirm_disconnect_failed', 'cleanup', error.code);
-        this.finishVpnConflictCancellation(restoreBackend);
-      });
-  }
-
-  private finishVpnConflictCancellation(restoreBackend: boolean): void {
-    if (!restoreBackend) {
-      this.refreshBackendStatus();
-      return;
-    }
-    this.startBackend(false);
-    this.scheduleLifecycleTask(() => this.refreshBackendStatus(), 1500);
-  }
-
-  private setConnectInProgress(inProgress: boolean): void {
-    // Loading state must enter the component tree synchronously. Animating the
-    // surrounding panel is handled by its modifier; delaying this assignment
-    // can otherwise let a fast native failure skip the progress frame.
-    this.connectInProgress = inProgress;
   }
 
   private onlinePeerCount(): number {
@@ -4552,16 +3242,49 @@ export struct BridgeStatus {
     return peer.key;
   }
 
+  private deviceDetailPeer(peerKey: string): PeerSummary | undefined {
+    return this.peers.find((peer: PeerSummary) => peer.key === peerKey);
+  }
+
+  private deviceDetailAddress(peerKey: string): string {
+    const peer: PeerSummary | undefined = this.deviceDetailPeer(peerKey);
+    return peer === undefined ? '' : this.primaryTailscaleAddress(peer.addresses);
+  }
+
+  private deviceDetailExitNodeCapable(peerKey: string): boolean {
+    return this.deviceDetailPeer(peerKey)?.exitNode === true;
+  }
+
+  private deviceDetailSunshineCandidate(peerKey: string): boolean {
+    const peer: PeerSummary | undefined = this.deviceDetailPeer(peerKey);
+    return peer !== undefined && this.isSunshineCandidate(peer);
+  }
+
+  private withCurrentDeviceDetailPeer(peerKey: string, action: (peer: PeerSummary) => void): void {
+    if (!this.appShellReady || !this.deviceDetailVisible || this.selectedPeerKey !== peerKey ||
+      this.appLockRequired || this.appLockAuthenticating) return;
+    const peer: PeerSummary | undefined = this.deviceDetailPeer(peerKey);
+    if (peer !== undefined) action(peer);
+  }
+
+  private copyDeviceDetailAddress(peerKey: string): void {
+    this.withCurrentDeviceDetailPeer(peerKey, (peer: PeerSummary): void => {
+      const address: string = this.primaryTailscaleAddress(peer.addresses);
+      if (address.length > 0) this.copyDeviceValue(address, $r('app.string.peer_ip_copied'));
+    });
+  }
+
   private transferTargetRenderKey(target: TaildropTargetSummary): string {
     const peer: PeerSummary | undefined = this.peerForFileTransferKey(target.key);
-    return `${target.key}|taildrop=${target.online ? 'online' : 'offline'}|device=` +
+    return `${target.key}|taildrop=${this.taildropProtocolState(target)}|device=` +
       `${this.transferTargetDeviceOffline(target) ? 'offline' : 'online'}|localsend=` +
-      `${this.localSendProtocolState(peer)}`;
+      `${this.localSendProtocolState(peer)}|choices=${this.taildropFileChoicesVisible(target, peer) ? 'media' : 'file'}`;
   }
 
   private localSendOnlyTargetRenderKey(peer: PeerSummary): string {
-    return `${peer.key}|device=${this.peerEffectivelyOnline(peer) ? 'online' : 'offline'}|localsend=` +
-      `${this.localSendProtocolState(peer)}`;
+    const current: PeerSummary = this.peerForFileTransferKey(peer.key) ?? peer;
+    return `${current.key}|device=${this.isConnected() && this.peerEffectivelyOnline(current) ? 'online' : 'offline'}` +
+      `|localsend=${this.localSendProtocolState(current)}`;
   }
 
   private localSendAvailablePeers(): PeerSummary[] {
@@ -4689,21 +3412,11 @@ export struct BridgeStatus {
   }
 
   private localSendPortOverrideForPeer(peerKey: string): number | undefined {
-    return this.localSendPortOverrides.find((item: LocalSendPortOverride) =>
-      item.peerKey === peerKey)?.port;
+    return this.peerIntegrationController.localSendPortOverrideForPeer(peerKey);
   }
 
   private localSendPortForPeer(peer: PeerSummary): number {
-    const override: number | undefined = this.localSendPortOverrideForPeer(peer.key);
-    if (override !== undefined) {
-      return override;
-    }
-    const reportedPort: number | undefined = peer.localSend?.port;
-    if (reportedPort !== undefined && Number.isInteger(reportedPort) &&
-      reportedPort >= 1 && reportedPort <= 65535) {
-      return reportedPort;
-    }
-    return DEFAULT_LOCAL_SEND_PORT;
+    return this.peerIntegrationController.localSendPortForPeer(peer);
   }
 
   private remoteCachedPeerDescription(peer: PeerSummary): ResourceStr {
@@ -4745,22 +3458,7 @@ export struct BridgeStatus {
   }
 
   private saveRemotePortOverride(): void {
-    const port: number = Number(this.remotePortInput.trim());
-    const peer: PeerSummary | undefined = this.remotePortEditorPeer();
-    if (peer === undefined || !Number.isInteger(port) || port < 1 || port > 65535) {
-      this.showToast($r('app.string.transfer_remote_port_invalid'));
-      return;
-    }
-    const nextOverrides: LocalSendPortOverride[] = this.localSendPortOverrides
-      .filter((item: LocalSendPortOverride) => item.peerKey !== peer.key);
-    nextOverrides.push({ peerKey: peer.key, port: port });
-    this.localSendPortOverrides = nextOverrides;
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    FileTransferPreferences.saveLocalSendPortOverride(context, peer.key, port).catch(() => {
-      // The in-memory value still applies for this session when persistence fails.
-    });
-    this.remotePortEditorVisible = false;
-    this.showToast($r('app.string.transfer_remote_port_saved'));
+    this.peerIntegrationController.saveRemotePortOverride();
   }
 
   private openRemoteCachedPeer(peer: PeerSummary): void {
@@ -4787,20 +3485,19 @@ export struct BridgeStatus {
   }
 
   private primaryTailscaleAddress(addresses: string[]): string {
-    const ipv4Address: string | undefined = addresses.find((address: string) =>
-      !address.includes(':'));
-    if (ipv4Address !== undefined) {
-      return ipv4Address;
-    }
-    return addresses.length > 0 ? addresses[0] : '';
+    return selectPrimaryTailscaleAddress(addresses);
   }
 
   private peerDisplayName(name: string): string {
-    if (!name.toLowerCase().endsWith('.ts.net')) {
-      return name;
-    }
-    const firstDot: number = name.indexOf('.');
-    return firstDot > 0 ? name.substring(0, firstDot) : name;
+    return formatPeerDisplayName(name);
+  }
+
+  private deviceDetailMagicDnsName(peerKey: string): string {
+    if (!this.tailnetDnsEnabled) return '';
+    const peer: PeerSummary | undefined = this.peers.find((item: PeerSummary) => item.key === peerKey);
+    const name: string = (peer?.name ?? '').replace(/\.$/, '');
+    return name.includes('.') && DnsSettingsStore.isValidSearchDomain(name) &&
+      !DnsSettingsStore.isValidAddress(name) ? name : '';
   }
 
   private deviceNeedsApproval(): boolean {
@@ -4908,11 +3605,6 @@ export struct BridgeStatus {
     return $r('app.color.status_neutral');
   }
 
-  private glowFilePath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/ui-glow-level-v2`;
-  }
-
   private resetDiagnosticsMode(): void {
     this.diagnosticsUnlocked = false;
     this.diagnosticsExpanded = false;
@@ -4930,7 +3622,10 @@ export struct BridgeStatus {
 
   private showToast(message: ResourceStr): void {
     try {
-      this.getUIContext().getPromptAction().showToast({ message });
+      this.getUIContext().getPromptAction().showToast({
+        message: message,
+        systemMaterial: LightAppearance.toast(this.glowLevel)
+      });
     } catch (_error) {
       // Toast is immediate feedback only; failure must not block the gesture.
     }
@@ -4957,7 +3652,7 @@ export struct BridgeStatus {
       return;
     }
     const remainingCount: number = 5 - this.diagnosticsTapCount;
-    this.showToast(`再点击${remainingCount}次即可进入工程诊断`);
+    this.showToast($r('app.string.diagnostics_unlock_countdown_toast', remainingCount));
   }
 
   private openUpdateChangelogFromSettings(): void {
@@ -4971,14 +3666,8 @@ export struct BridgeStatus {
 
   private loadGlowLevel(): void {
     try {
-      const path: string = this.glowFilePath();
-      if (!fileIo.accessSync(path)) {
-        return;
-      }
-      const level: number = Number(fileIo.readTextSync(path));
-      if (level >= 0 && level <= 3) {
-        this.glowLevel = level;
-      }
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      this.glowLevel = this.settingsPreferencesGateway.loadGlowLevel(context.filesDir, 3);
     } catch (_error) {
       this.glowLevel = 3;
     }
@@ -4991,17 +3680,15 @@ export struct BridgeStatus {
     this.glowLevel = level;
     this.recordFeatureDiagnosticEvent('appearance_glow_changed', 'level', level);
     try {
-      const file = fileIo.openSync(this.glowFilePath(),
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, level.toString());
-      fileIo.closeSync(file);
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      this.settingsPreferencesGateway.saveGlowLevel(context.filesDir, level);
     } catch (_error) {
       // Visual preferences are best-effort and never affect VPN behavior.
     }
   }
 
   private glowRadius(): number {
-    return this.glowLevel === 0 ? 28 : (this.glowLevel === 1 ? 18 : 10);
+    return LightAppearance.backgroundRadius(this.glowLevel);
   }
 
   private glowColor(): ResourceColor {
@@ -5013,48 +3700,23 @@ export struct BridgeStatus {
   }
 
   private glowLightColor(): ResourceColor {
-    return $r('app.color.emphasize');
+    return Color.White;
   }
 
   private glowSaturation(): number {
-    return this.glowLevel === 0 ? 1.38 : (this.glowLevel === 1 ? 1.2 : 1.05);
+    return LightAppearance.backgroundSaturation(this.glowLevel);
   }
 
   private glowBrightness(): number {
-    return this.glowLevel === 0 ? 1.12 : (this.glowLevel === 1 ? 1.07 : 1.02);
+    return LightAppearance.backgroundBrightness(this.glowLevel);
   }
 
   private glowMaterialLevel(): hdsMaterial.MaterialLevel {
-    if (this.glowLevel === 0) {
-      return hdsMaterial.MaterialLevel.EXQUISITE;
-    }
-    if (this.glowLevel === 1) {
-      return hdsMaterial.MaterialLevel.GENTLE;
-    }
-    if (this.glowLevel === 2) {
-      return hdsMaterial.MaterialLevel.SMOOTH;
-    }
-    return hdsMaterial.MaterialLevel.ADAPTIVE;
+    return LightAppearance.hdsLevel(this.glowLevel);
   }
 
   private glowMaterialType(): hdsMaterial.MaterialType {
-    return hdsMaterial.MaterialType.IMMERSIVE;
-  }
-
-  private immersivePressEffect(): VisualEffect {
-    return new hdsEffect.HdsEffectBuilder()
-      .pointLight({
-        sourceType: hdsEffect.PointLightSourceType.SOFT,
-        illuminatedType: hdsEffect.PointLightIlluminatedType.DEFAULT_FEATHERING_BORDER,
-        options: {
-          color: this.glowLightColor(),
-          intensity: 0.42,
-          height: 48,
-          bloom: 0.16
-        }
-      })
-      .pressShadow(hdsEffect.PressShadowType.BLEND_GRADIENT)
-      .buildEffect();
+    return LightAppearance.hdsType(this.glowLevel);
   }
 
   private glowLevelLabel(): ResourceStr {
@@ -5396,56 +4058,113 @@ export struct BridgeStatus {
 
   private backgroundImageFilePath(): string {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/ui-background-image-uri-v1`;
+    return this.settingsPreferencesGateway.backgroundImageFilePath(context.filesDir);
   }
 
   private immersiveColorFilePath(): string {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/ui-immersive-color-v1`;
+    return this.settingsPreferencesGateway.immersiveColorFilePath(context.filesDir);
   }
 
   private loadAppearancePreferences(): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const settings = PersonalizationPreferences.load(context.filesDir);
+    this.personalizationColorMode = settings.colorMode;
+    this.backgroundBrightnessValue = settings.backgroundBrightness;
+    this.backgroundUnavailable = false;
+    const overlay: AppearanceOverlaySettings =
+      this.settingsPreferencesGateway.loadAppearanceOverlay(context.filesDir);
+    this.nativeSettingsBackgroundUri = overlay.backgroundUri;
+    this.immersiveColorBackgroundEnabled = overlay.immersiveColorEnabled;
+  }
+
+  private saveAppearanceValue(path: string, value: string): boolean {
+    return this.settingsPreferencesGateway.writeAppearanceFile(path, value);
+  }
+
+  private queuePersonalizationSave(): void {
+    this.personalizationSavePending = true;
+    if (this.personalizationSaveTimer >= 0) clearTimeout(this.personalizationSaveTimer);
+    this.personalizationSaveTimer = setTimeout(() => this.flushPersonalizationPreferences(), 180);
+  }
+
+  private flushPersonalizationPreferences(): void {
+    if (this.personalizationSaveTimer >= 0) {
+      clearTimeout(this.personalizationSaveTimer);
+      this.personalizationSaveTimer = -1;
+    }
+    if (!this.personalizationSavePending) return;
+    this.personalizationSavePending = false;
     try {
-      const backgroundPath: string = this.backgroundImageFilePath();
-      if (fileIo.accessSync(backgroundPath)) {
-        this.nativeSettingsBackgroundUri = fileIo.readTextSync(backgroundPath).trim();
-      }
-      const immersivePath: string = this.immersiveColorFilePath();
-      if (fileIo.accessSync(immersivePath)) {
-        this.immersiveColorBackgroundEnabled = fileIo.readTextSync(immersivePath).trim() === '1';
-      }
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (PersonalizationPreferences.save(context.filesDir, {
+        colorMode: this.personalizationColorMode, backgroundBrightness: this.backgroundBrightnessValue
+      })) return;
     } catch (_error) {
-      this.nativeSettingsBackgroundUri = '';
-      this.immersiveColorBackgroundEnabled = false;
+      // A window can disappear while an appearance save is being flushed.
+    }
+    // Keep the latest live choice available for a later explicit/lifecycle retry.
+    this.personalizationSavePending = true;
+    if (this.appShellReady) this.showToast($r('app.string.personalization_save_failed'));
+  }
+
+  private setPersonalizationColorMode(index: number): void {
+    const mode: AppColorMode = PersonalizationPreferences.colorModeAtIndex(index);
+    if (mode === this.personalizationColorMode) {
+      this.flushPersonalizationPreferences();
+      return;
+    }
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      PersonalizationPreferences.applyColorMode(context, mode);
+      this.personalizationColorMode = mode;
+      this.queuePersonalizationSave();
+      this.flushPersonalizationPreferences();
+    } catch (_error) {
+      this.showToast($r('app.string.personalization_apply_failed'));
     }
   }
 
-  private saveAppearanceValue(path: string, value: string): void {
-    try {
-      const file = fileIo.openSync(path,
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, value);
-      fileIo.closeSync(file);
-    } catch (_error) {
-      // Appearance persistence is best-effort and never affects VPN behavior.
-    }
+  private setBackgroundBrightness(value: number, mode: SliderChangeMode): void {
+    if (!Number.isFinite(value)) return;
+    this.backgroundBrightnessValue = Math.min(100, Math.max(0, Math.round(value)));
+    this.queuePersonalizationSave();
+    if (mode === SliderChangeMode.End) this.flushPersonalizationPreferences();
   }
 
   private setImmersiveColorBackground(enabled: boolean): void {
     this.immersiveColorBackgroundEnabled = enabled;
-    this.saveAppearanceValue(this.immersiveColorFilePath(), enabled ? '1' : '0');
+    if (!this.saveAppearanceValue(this.immersiveColorFilePath(), enabled ? '1' : '0')) {
+      this.showToast($r('app.string.personalization_save_failed'));
+    }
     this.recordFeatureDiagnosticEvent('appearance_immersive_color_changed', enabled ? 'enabled' : 'disabled');
   }
 
   private clearNativeSettingsBackground(): void {
+    // A clear action also withdraws any earlier picker/import still awaiting a result.
+    this.backgroundSelectionGeneration++;
+    this.nativeSettingsBackgroundPickerInProgress = false;
+    if (!this.saveAppearanceValue(this.backgroundImageFilePath(), '')) {
+      this.showToast($r('app.string.personalization_save_failed'));
+      return;
+    }
+    const previous: string = this.nativeSettingsBackgroundUri;
     this.nativeSettingsBackgroundUri = '';
-    this.saveAppearanceValue(this.backgroundImageFilePath(), '');
+    this.backgroundUnavailable = false;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    BackgroundImageStore.removeManaged(context.filesDir, previous);
     this.recordFeatureDiagnosticEvent('appearance_background_changed', 'cleared');
   }
 
+  private onBackgroundImageLoadError(uri: string): void {
+    if (!this.appShellReady || uri !== this.nativeSettingsBackgroundUri || this.backgroundUnavailable) return;
+    // Retain the saved choice so a temporary read error never deletes the original.
+    this.backgroundUnavailable = true;
+    this.showToast($r('app.string.personalization_background_unavailable'));
+  }
+
   private pageCanvasBackground(): ResourceColor {
-    return this.nativeSettingsBackgroundUri.length > 0 || this.immersiveColorBackgroundEnabled ?
-      Color.Transparent : $r('sys.color.background_secondary');
+    return this.appBackgroundActive() ? Color.Transparent : $r('sys.color.background_secondary');
   }
 
   private settingsDetailCanvasBackground(): ResourceColor {
@@ -5455,20 +4174,21 @@ export struct BridgeStatus {
   }
 
   private appBackgroundActive(): boolean {
-    return this.nativeSettingsBackgroundUri.length > 0 || this.immersiveColorBackgroundEnabled;
+    return (this.nativeSettingsBackgroundUri.length > 0 && !this.backgroundUnavailable) ||
+      this.immersiveColorBackgroundEnabled;
   }
 
   private immersiveColorTint(): ResourceColor {
     if (this.taildropSendActive() || this.taildropReceiveInProgress) {
-      return '#426F45E8';
+      return $r('app.color.immersive_tint_transfer');
     }
     if (this.isConnecting() || this.connectInProgress || this.disconnectInProgress) {
-      return '#38F59E0B';
+      return $r('app.color.immersive_tint_transition');
     }
     if (this.isConnected()) {
-      return '#3437B77A';
+      return $r('app.color.immersive_tint_connected');
     }
-    return '#30415FEB';
+    return $r('app.color.immersive_tint_idle');
   }
 
   private setConnectedHomeLayoutMode(mode: ConnectedHomeLayoutMode): void {
@@ -5484,8 +4204,7 @@ export struct BridgeStatus {
   }
 
   private connectedHomeLayoutActive(): boolean {
-    return this.isConnected() || this.disconnectInProgress ||
-      (this.isConnecting() && this.trafficSession > 0);
+    return this.vpnSessionController.connectedHomeLayoutActive();
   }
 
   private selectedExitNodeName(): string {
@@ -5494,22 +4213,32 @@ export struct BridgeStatus {
     return selected === undefined ? '' : selected.name;
   }
 
+  private resolveResourceString(resource: Resource, ...args: (string | number)[]): string {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      return context.resourceManager.getStringSync(resource.id, ...args);
+    } catch (_error) {
+      return '';
+    }
+  }
+
   private connectedDurationLabel(): string {
-    if (this.connectionStartedAtMs <= 0) {
-      return '\u521A\u521A\u8FDE\u63A5';
+    const startedAtMs: number = this.vpnSessionController.connectionStartedAtMs;
+    if (startedAtMs <= 0) {
+      return this.resolveResourceString($r('app.string.connection_duration_just_now'));
     }
     const nowMs: number = this.connectionDurationNowMs > 0 ? this.connectionDurationNowMs : Date.now();
-    const elapsedSeconds: number = Math.max(0, Math.floor((nowMs - this.connectionStartedAtMs) / 1000));
+    const elapsedSeconds: number = Math.max(0, Math.floor((nowMs - startedAtMs) / 1000));
     const hours: number = Math.floor(elapsedSeconds / 3600);
     const minutes: number = Math.floor((elapsedSeconds % 3600) / 60);
     const seconds: number = elapsedSeconds % 60;
     if (hours > 0) {
-      return `${hours} \u5C0F\u65F6 ${minutes} \u5206\u949F`;
+      return this.resolveResourceString($r('app.string.connection_duration_hours_minutes'), hours, minutes);
     }
     if (minutes > 0) {
-      return `${minutes} \u5206\u949F ${seconds} \u79D2`;
+      return this.resolveResourceString($r('app.string.connection_duration_minutes_seconds'), minutes, seconds);
     }
-    return `${seconds} 秒`;
+    return this.resolveResourceString($r('app.string.connection_duration_seconds'), seconds);
   }
 
   private openConnectionDetails(): void {
@@ -5569,6 +4298,9 @@ export struct BridgeStatus {
 
   private startDeviceDetailRefreshPolling(): void {
     this.stopDeviceDetailRefreshPolling();
+    if (!this.appShellReady || !this.remoteStreamAppInForeground) {
+      return;
+    }
     // Probe services once when the sheet opens. The fast detail timer below is
     // only for peer/path snapshots; forcing network service probes every four
     // seconds keeps the media queue permanently busy and can starve a manual
@@ -5579,15 +4311,29 @@ export struct BridgeStatus {
         this.stopDeviceDetailRefreshPolling();
         return;
       }
+      if (!this.remoteStreamAppInForeground) {
+        if (this.deviceDetailRefreshTimer >= 0) {
+          clearInterval(this.deviceDetailRefreshTimer);
+          this.deviceDetailRefreshTimer = -1;
+        }
+        return;
+      }
       this.refreshSelectedPeerDetails(false);
     }, FAST_REFRESH_INTERVAL_MS);
   }
 
   private stopDeviceDetailRefreshPolling(): void {
+    this.deviceDetailPresentationId++;
+    this.invalidateRemoteStreamLaunch();
+    this.invalidateDeviceDetailServiceRefresh();
     if (this.deviceDetailRefreshTimer >= 0) {
       clearInterval(this.deviceDetailRefreshTimer);
       this.deviceDetailRefreshTimer = -1;
     }
+  }
+
+  private invalidateDeviceDetailServiceRefresh(): void {
+    this.peerIntegrationController.invalidateDeviceDetailServiceRefresh();
   }
 
   private refreshSelectedPeerDetails(refreshServices: boolean = false): void {
@@ -5604,92 +4350,68 @@ export struct BridgeStatus {
     }
   }
 
-  private async waitForPeerServiceRefresh(peerKey: string, timeoutMs: number = 6000): Promise<void> {
-    const startedAt: number = Date.now();
-    while (this.peerServiceRefreshInFlight.has(peerKey) && this.appShellReady &&
-      Date.now() - startedAt < timeoutMs) {
-      await new Promise<void>((resolve: () => void) => setTimeout(resolve, 100));
-    }
-  }
-
-  private async refreshSelectedPeerServicesManually(): Promise<void> {
-    if (this.deviceDetailServiceRefreshInFlight || !this.appShellReady || !this.deviceDetailVisible) {
-      return;
-    }
-    const peerKey: string = this.selectedPeerKey;
-    const initialPeer: PeerSummary | undefined = this.peers.find((peer: PeerSummary) =>
-      peer.key === peerKey);
-    if (initialPeer === undefined || !this.isConnected() || !this.peerEffectivelyOnline(initialPeer)) {
-      return;
-    }
-    const generation: number = this.lifecycleGeneration;
-    const startedAt: number = Date.now();
-    this.deviceDetailServiceRefreshInFlight = true;
-    try {
-      // Snapshot IO can throw while the extension replaces its file. It must
-      // neither bypass this transaction's finally block nor prevent the other
-      // service probes from running.
-      try {
-        this.refreshTaildropSnapshot(true);
-      } catch (_error) {}
-      // Reuse a probe that was started as the sheet opened. No background
-      // timer is allowed to enqueue another service probe while this explicit
-      // transaction is waiting for it.
-      if (!this.peerServiceRefreshInFlight.has(peerKey)) {
-        this.refreshPeerServices(initialPeer, true);
-      }
-      await Promise.all([
-        this.waitForPeerServiceRefresh(peerKey),
-        this.requestLocalSendRefresh()
-      ]).then((): void => {});
-      if (generation === this.lifecycleGeneration && this.appShellReady) {
-        this.refreshPeerSnapshot();
-        this.refreshTaildropSnapshot(true);
-      }
-    } finally {
-      // Preserve at least one visible loading frame even when every probe is
-      // served from a warm cache or fails immediately.
-      const remainingMs: number = 220 - (Date.now() - startedAt);
-      if (remainingMs > 0) {
-        await new Promise<void>((resolve: () => void) => setTimeout(resolve, remainingMs));
-      }
-      // This is a shared AppStorage flag. Always release it, including when a
-      // lifecycle generation changes while the sheet is open; otherwise the
-      // next render can inherit a permanently refreshing state.
-      this.deviceDetailServiceRefreshInFlight = false;
-    }
+  private async refreshSelectedPeerServicesManually(peerKey: string): Promise<void> {
+    await this.peerIntegrationController.refreshSelectedPeerServicesManually(peerKey);
   }
 
   private async selectNativeSettingsBackground(): Promise<void> {
-    if (this.nativeSettingsBackgroundPickerInProgress) {
-      return;
-    }
+    if (this.nativeSettingsBackgroundPickerInProgress) return;
+    const request: number = ++this.backgroundSelectionGeneration;
+    const lifecycle: number = this.lifecycleGeneration;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.nativeSettingsBackgroundPickerInProgress = true;
-    const mediaPicker = new photoAccessHelper.PhotoViewPicker();
-    const options = new photoAccessHelper.PhotoSelectOptions();
-    options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
-    options.maxSelectNumber = 1;
     try {
+      const mediaPicker = new photoAccessHelper.PhotoViewPicker();
+      const options = new photoAccessHelper.PhotoSelectOptions();
+      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 1;
       const result: photoAccessHelper.PhotoSelectResult = await mediaPicker.select(options);
-      if (result.photoUris.length > 0) {
-        this.nativeSettingsBackgroundUri = result.photoUris[0];
-        this.saveAppearanceValue(this.backgroundImageFilePath(), this.nativeSettingsBackgroundUri);
-        this.recordFeatureDiagnosticEvent('appearance_background_changed', 'selected');
+      if (request !== this.backgroundSelectionGeneration || lifecycle !== this.lifecycleGeneration ||
+        !this.appShellReady || result.photoUris.length === 0) return;
+      const candidate: string = await BackgroundImageStore.importImage(context.filesDir, result.photoUris[0]);
+      if (request !== this.backgroundSelectionGeneration || lifecycle !== this.lifecycleGeneration ||
+        !this.appShellReady) {
+        BackgroundImageStore.removeManaged(context.filesDir, candidate);
+        return;
       }
+      if (!this.saveAppearanceValue(this.backgroundImageFilePath(), candidate)) {
+        BackgroundImageStore.removeManaged(context.filesDir, candidate);
+        this.showToast($r('app.string.personalization_save_failed'));
+        return;
+      }
+      const previous: string = this.nativeSettingsBackgroundUri;
+      this.nativeSettingsBackgroundUri = candidate;
+      this.backgroundUnavailable = false;
+      BackgroundImageStore.removeManaged(context.filesDir, previous);
+      this.recordFeatureDiagnosticEvent('appearance_background_changed', 'selected');
     } catch (error) {
-      const businessError: BusinessError = error as BusinessError;
-      this.recordFeatureDiagnosticEvent('appearance_background_failed', 'picker', businessError.code ?? -1);
-      this.showToast($r('app.string.transfer_file_selection_failed'));
+      if (request !== this.backgroundSelectionGeneration || lifecycle !== this.lifecycleGeneration ||
+        !this.appShellReady) return;
+      const businessError = error as BusinessError;
+      this.recordFeatureDiagnosticEvent('appearance_background_failed', 'selection', businessError.code ?? -1);
+      this.showToast($r('app.string.personalization_background_failed'));
     } finally {
-      this.nativeSettingsBackgroundPickerInProgress = false;
+      if (request === this.backgroundSelectionGeneration) this.nativeSettingsBackgroundPickerInProgress = false;
     }
   }
 
   private openRemoteFilesFromDevice(peer: PeerSummary): void {
-    this.taildriveTargetMachineName = peer.name;
-    this.taildriveTargetRequestId = Date.now();
+    if (!this.appShellReady) return;
+    const peerKey: string = peer.key;
+    const requestId: number = Math.max(Date.now(), this.remoteFilesNavigationRequestId + 1,
+      this.taildriveTargetRequestId + 1);
+    this.remoteFilesNavigationRequestId = requestId;
+    const navigationRevision: number = this.navigationRevision;
     this.deviceDetailVisible = false;
-    this.scheduleLifecycleTask(() => this.navigateToTab(2), 120);
+    this.scheduleLifecycleTask(() => {
+      if (!this.appShellReady || this.remoteFilesNavigationRequestId !== requestId ||
+        this.navigationRevision !== navigationRevision || this.deviceDetailVisible || this.selectedPeerKey !== peerKey) return;
+      const current: PeerSummary | undefined = this.deviceDetailPeer(peerKey);
+      if (current === undefined) return;
+      this.taildriveTargetMachineName = current.name;
+      this.taildriveTargetRequestId = requestId;
+      this.navigateToTab(2);
+    }, 120);
   }
 
   private openFileTransferFromDevice(peer: PeerSummary): void {
@@ -5784,757 +4506,137 @@ export struct BridgeStatus {
   }
 
   private openLocalSendFromDevice(peer: PeerSummary): void {
-    this.taildropFocusedTargetKey = peer.key;
-    this.deviceDetailVisible = false;
-    this.scheduleLifecycleTask(() => {
-      this.launchLocalSendApp();
-      this.scheduleLifecycleTask(() => {
-        if (this.taildropFocusedTargetKey === peer.key) {
-          this.taildropFocusedTargetKey = '';
-        }
-      }, 2600);
-    }, 120);
+    this.peerIntegrationController.openLocalSendFromDevice(peer);
   }
 
   private async launchLocalSendApp(): Promise<void> {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const target: LocalSendAppTarget = LOCAL_SEND_APP_TARGETS[0];
-    const want: Want = {
-      bundleName: target.bundleName,
-      moduleName: target.moduleName,
-      abilityName: target.abilityName
-    };
-    this.recordFeatureDiagnosticEvent('localsend_launch_attempt', 'explicit_want');
-    try {
-      // Do not call bundleManager.getBundleInfo() here. HarmonyOS restricts
-      // cross-application bundle queries for this app, while an explicit Want
-      // is still allowed to launch the installed LocalSend ability.
-      await context.startAbility(want);
-      this.recordFeatureDiagnosticEvent('localsend_launch_success', 'explicit_want');
-      return;
-    } catch (error) {
-      const businessError: BusinessError = error as BusinessError;
-      this.recordFeatureDiagnosticEvent('localsend_launch_failed', 'explicit_want',
-        businessError.code ?? -1);
-      // Keep the user-facing failure message for devices without LocalSend or
-      // devices that reject the explicit ability handoff.
-    }
-    this.showToast($r('app.string.transfer_localsend_open_failed'));
+    await this.peerIntegrationController.launchLocalSendApp();
   }
 
   private refreshPeerServices(peer: PeerSummary, manual: boolean = true): void {
-    const previousStreaming: DeviceStreamingState = this.streamingState(peer.key);
-    const previousMedia: DeviceMediaState = this.mediaState(peer.key);
-    if (this.peerServiceRefreshInFlight.has(peer.key)) {
-      return;
-    }
-    if (!this.isConnected() || !this.peerEffectivelyOnline(peer) || peer.addresses.length === 0) {
-      if (!manual) {
-        return;
-      }
-      this.showToast('请先连接 MeshArc，并确认目标设备在线');
-      return;
-    }
-    this.ensureStreamingServices();
-    this.ensureMediaServices();
-    const requestId: number = Date.now();
-    const sunshineCandidate: boolean = this.isSunshineCandidate(peer);
-    this.peerServiceRefreshInFlight.add(peer.key);
-    this.streamingRequestIds.set(peer.key, requestId);
-    this.mediaRequestIds.set(peer.key, requestId);
-    if (manual) {
-      this.updateStreamingState(peer.key, this.copyStreamingState(previousStreaming,
-        previousStreaming.sunshine,
-        previousStreaming.path, true));
-      this.updateMediaState(peer.key, {
-        peerKey: peer.key,
-        result: {
-          state: 'checking',
-          checkedAt: requestId,
-          services: previousMedia.result.services
-        },
-        checking: true,
-        launching: previousMedia.launching
-      });
-    }
-    const sunshineProbe: Promise<SunshineProbeResult> = sunshineCandidate ?
-      this.sunshineProbeService!.probe(peer.key, this.primaryTailscaleAddress(peer.addresses), true, true) :
-      Promise.resolve(previousStreaming.sunshine);
-    Promise.all([
-      sunshineProbe,
-      this.mediaServiceProbeService!.probe(peer.key, true, true),
-      this.peerPathService!.probe(peer.key, true, true)
-    ]).then((results: [SunshineProbeResult, MediaProbeResult, PeerPathResult]) => {
-      const currentPeer: PeerSummary | undefined = this.peers.find(
-        (item: PeerSummary) => item.key === peer.key && item.online);
-      if (this.streamingRequestIds.get(peer.key) !== requestId ||
-        this.mediaRequestIds.get(peer.key) !== requestId || currentPeer === undefined || !this.isConnected()) {
-        return;
-      }
-      const sunshine: SunshineProbeResult = results[0];
-      const media: MediaProbeResult = results[1];
-      const path: PeerPathResult = results[2];
-      let visibleSunshine: SunshineProbeResult = sunshine;
-      let visibleMedia: MediaProbeResult = media;
-      if (!manual) {
-        if (sunshine.state === 'available') {
-          this.autoSunshineFailureCounts.delete(peer.key);
-        } else if (previousStreaming.sunshine.state === 'available') {
-          const failureCount: number = (this.autoSunshineFailureCounts.get(peer.key) ?? 0) + 1;
-          this.autoSunshineFailureCounts.set(peer.key, failureCount);
-          if (failureCount < 3) {
-            visibleSunshine = previousStreaming.sunshine;
-          }
-        }
-        if (media.services.length > 0) {
-          this.autoMediaFailureCounts.delete(peer.key);
-        } else if (previousMedia.result.services.length > 0) {
-          const failureCount: number = (this.autoMediaFailureCounts.get(peer.key) ?? 0) + 1;
-          this.autoMediaFailureCounts.set(peer.key, failureCount);
-          if (failureCount < 3) {
-            visibleMedia = previousMedia.result;
-          }
-        }
-      } else {
-        this.autoSunshineFailureCounts.delete(peer.key);
-        this.autoMediaFailureCounts.delete(peer.key);
-      }
-      this.updateStreamingState(peer.key,
-        this.copyStreamingState(this.streamingState(peer.key), visibleSunshine, path, false));
-      this.updateMediaState(peer.key, {
-        peerKey: peer.key,
-        result: visibleMedia,
-        checking: false,
-        launching: false
-      });
-      this.recordDiagnosticEvent('peer_path_result', path.type);
-      this.recordDiagnosticEvent(sunshine.state === 'available' ? 'sunshine_probe_success' :
-        sunshine.state === 'timeout' ? 'sunshine_probe_timeout' : 'sunshine_probe_failed', sunshine.state);
-      this.recordDiagnosticEvent(media.services.length > 0 ?
-        'media_probe_success' : 'media_probe_no_service', path.type);
-    }).catch(() => {
-      if (this.streamingRequestIds.get(peer.key) !== requestId ||
-        this.mediaRequestIds.get(peer.key) !== requestId) {
-        return;
-      }
-      if (manual) {
-        this.updateStreamingState(peer.key, this.copyStreamingState(this.streamingState(peer.key),
-          sunshineCandidate ? { state: 'error', checkedAt: Date.now(), errorMessage: 'probe_failed' } :
-            previousStreaming.sunshine,
-          { type: 'unknown', checkedAt: Date.now(), errorMessage: 'probe_failed' }, false));
-        this.updateMediaState(peer.key, {
-          peerKey: peer.key,
-          result: {
-            state: 'error',
-            checkedAt: Date.now(),
-            services: [],
-            errorMessage: 'probe_failed'
-          },
-          checking: false,
-          launching: false
-        });
-      }
-      this.recordDiagnosticEvent('peer_service_refresh_failed', 'exception');
-    }).finally(() => {
-      if (manual && this.streamingRequestIds.get(peer.key) === requestId &&
-        this.mediaRequestIds.get(peer.key) === requestId) {
-        const currentStreaming: DeviceStreamingState = this.streamingState(peer.key);
-        const currentMedia: DeviceMediaState = this.mediaState(peer.key);
-        if (currentStreaming.checking) {
-          this.updateStreamingState(peer.key, this.copyStreamingState(currentStreaming,
-            undefined, undefined, false));
-        }
-        if (currentMedia.checking) {
-          this.updateMediaState(peer.key, {
-            peerKey: peer.key,
-            result: currentMedia.result,
-            checking: false,
-            launching: currentMedia.launching
-          });
-        }
-      }
-      this.peerServiceRefreshInFlight.delete(peer.key);
-    });
-    this.recordDiagnosticEvent('peer_service_refresh_start', 'requested');
+    this.peerIntegrationController.refreshPeerServices(peer, manual);
   }
 
   private autoProbeConnectedPeerServices(force: boolean = false): void {
-    if (!this.isConnected()) {
-      return;
-    }
-    const session: number = Math.max(1, this.trafficSession);
-    this.peers.filter((peer: PeerSummary) => peer.online && peer.addresses.length > 0)
-      .forEach((peer: PeerSummary) => {
-        if (this.peerServiceRefreshInFlight.has(peer.key)) {
-          return;
-        }
-        if (!force && this.autoProbedPeerSessions.get(peer.key) === session) {
-          return;
-        }
-        this.autoProbedPeerSessions.set(peer.key, session);
-        this.refreshPeerServices(peer, false);
-      });
+    this.peerIntegrationController.autoProbeConnectedPeerServices(force);
   }
 
   private isSunshineCandidate(peer: PeerSummary): boolean {
-    if (!peer.online || peer.addresses.length === 0) {
-      return false;
-    }
-    const os: string = peer.os.toLowerCase();
-    return os.includes('windows') || os.includes('linux') || os.includes('macos') || os.includes('darwin');
+    return isPeerSunshineCandidate(peer);
   }
 
   private streamingState(peerKey: string): DeviceStreamingState {
-    const existing: DeviceStreamingState | undefined = this.streamingStates.find(
-      (state: DeviceStreamingState) => state.peerKey === peerKey);
-    if (existing !== undefined) {
-      return existing;
-    }
-    return {
-      peerKey: peerKey,
-      sunshine: { state: 'unknown', checkedAt: 0 },
-      path: { type: 'unknown', checkedAt: 0 },
-      checking: false,
-      launching: false
-    };
-  }
-
-  private copyStreamingState(state: DeviceStreamingState, sunshine?: SunshineProbeResult,
-    path?: PeerPathResult, checking?: boolean, launching?: boolean): DeviceStreamingState {
-    return {
-      peerKey: state.peerKey,
-      sunshine: sunshine === undefined ? state.sunshine : sunshine,
-      path: path === undefined ? state.path : path,
-      checking: checking === undefined ? state.checking : checking,
-      launching: launching === undefined ? state.launching : launching
-    };
-  }
-
-  private updateStreamingState(peerKey: string, update: DeviceStreamingState): void {
-    const index: number = this.streamingStates.findIndex(
-      (state: DeviceStreamingState) => state.peerKey === peerKey);
-    if (index < 0) {
-      this.streamingStates = this.streamingStates.concat(update);
-      this.logServiceStatusIfChanged();
-      return;
-    }
-    const next: DeviceStreamingState[] = this.streamingStates.slice();
-    // Service discovery may finish after a newer home path probe. Preserve
-    // that newer path while still accepting the completed service result.
-    next[index] = update.path.checkedAt < next[index].path.checkedAt
-      ? this.copyStreamingState(update, undefined, next[index].path)
-      : update;
-    this.streamingStates = next;
-    this.logServiceStatusIfChanged();
+    return this.peerIntegrationController.streamingState(peerKey);
   }
 
   private resetStreamingStatesForDisconnect(): void {
-    this.streamingRequestIds.clear();
-    this.mediaRequestIds.clear();
-    this.peerServiceRefreshInFlight.clear();
-    this.autoSunshineFailureCounts.clear();
-    this.autoMediaFailureCounts.clear();
-    this.autoProbedPeerSessions.clear();
-    this.sunshineProbeService?.clearCache();
-    this.peerPathService?.clearCache();
-    this.mediaServiceProbeService?.clearCache();
-    this.streamingStates = this.streamingStates.map((state: DeviceStreamingState) =>
-      this.copyStreamingState(state,
-        { state: 'unknown', checkedAt: Date.now(), errorMessage: 'mesh_disconnected' },
-        { type: 'unknown', checkedAt: Date.now(), errorMessage: 'mesh_disconnected' }, false, false));
-    this.mediaStates = this.mediaStates.map((state: DeviceMediaState): DeviceMediaState => {
-      const result: MediaProbeResult = {
-        state: 'unknown',
-        checkedAt: Date.now(),
-        services: [],
-        errorMessage: 'mesh_disconnected'
-      };
-      const updated: DeviceMediaState = {
-        peerKey: state.peerKey,
-        result: result,
-        checking: false,
-        launching: false
-      };
-      return updated;
-    });
-  }
-
-  private ensureStreamingServices(): void {
-    if (this.sunshineProbeService !== undefined && this.peerPathService !== undefined &&
-      this.moonlightLauncher !== undefined) {
-      return;
-    }
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.sunshineProbeService = new SunshineProbeService(context);
-    this.peerPathService = new PeerPathService(context);
-    this.moonlightLauncher = new MoonlightLauncher(context);
-  }
-
-  private ensureMediaServices(): void {
-    if (this.mediaServiceProbeService !== undefined && this.hosPlayerLauncher !== undefined) {
-      return;
-    }
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.mediaServiceProbeService = new MediaServiceProbeService(context);
-    this.hosPlayerLauncher = new HosPlayerLauncher(context);
+    this.peerIntegrationController.resetStreamingStatesForDisconnect();
   }
 
   private mediaState(peerKey: string): DeviceMediaState {
-    if (this.fakeMediaServiceOnline) {
-      const peer: PeerSummary | undefined = this.peers.find((item: PeerSummary) => item.key === peerKey);
-      const host: string = peer === undefined ? '100.64.0.1' :
-        this.primaryTailscaleAddress(peer.addresses);
-      return {
-        peerKey: peerKey,
-        result: {
-          state: 'available',
-          checkedAt: Date.now(),
-          services: [{
-            type: 'jellyfin',
-            name: 'Jellyfin（工程伪装）',
-            url: `http://${host.length > 0 ? host : '100.64.0.1'}:8096`,
-            latencyMs: 1
-          }]
-        },
-        checking: false,
-        launching: false
-      };
-    }
-    const existing: DeviceMediaState | undefined = this.mediaStates.find(
-      (state: DeviceMediaState) => state.peerKey === peerKey);
-    if (existing !== undefined) {
-      return existing;
-    }
-    return {
-      peerKey: peerKey,
-      result: { state: 'unknown', checkedAt: 0, services: [] },
-      checking: false,
-      launching: false
-    };
+    return this.peerIntegrationController.mediaState(peerKey);
   }
 
   private mediaServiceNames(peerKey: string): string {
-    return this.mediaState(peerKey).result.services.map((service: DiscoveredMediaService) => {
-      if (service.type === 'jellyfin') return 'Jellyfin';
-      if (service.type === 'emby') return 'Emby';
-      if (service.type === 'plex') return 'Plex';
-      if (service.type === 'webdav') return 'WebDAV';
-      return 'SMB';
-    }).join(' · ');
+    return this.peerIntegrationController.mediaServiceNames(peerKey);
   }
 
   private peerServiceBadgesVisible(peer: PeerSummary): boolean {
-    const sunshineState: string = this.streamingState(peer.key).sunshine.state;
-    return sunshineState === 'checking' || sunshineState === 'available' ||
-      this.mediaState(peer.key).checking || this.mediaServiceNames(peer.key).length > 0;
-  }
-
-  private updateMediaState(peerKey: string, update: DeviceMediaState): void {
-    const index: number = this.mediaStates.findIndex(
-      (state: DeviceMediaState) => state.peerKey === peerKey);
-    if (index < 0) {
-      this.mediaStates = this.mediaStates.concat(update);
-      this.logServiceStatusIfChanged();
-      return;
-    }
-    const next: DeviceMediaState[] = this.mediaStates.slice();
-    next[index] = update;
-    this.mediaStates = next;
-    this.logServiceStatusIfChanged();
+    return this.peerIntegrationController.peerServiceBadgesVisible(peer);
   }
 
   private detectMediaForPeer(peer: PeerSummary, force: boolean): void {
-    if (!this.peerEffectivelyOnline(peer) || peer.addresses.length === 0 || !this.isConnected()) {
-      this.showToast('请先连接 MeshArc，并确认目标设备在线');
-      return;
-    }
-    this.ensureMediaServices();
-    this.ensureStreamingServices();
-    const requestId: number = Date.now();
-    this.mediaRequestIds.set(peer.key, requestId);
-    const previous: DeviceMediaState = this.mediaState(peer.key);
-    this.updateMediaState(peer.key, {
-      peerKey: peer.key,
-      result: {
-        state: 'checking',
-        checkedAt: Date.now(),
-        services: previous.result.services
-      },
-      checking: true,
-      launching: previous.launching
-    });
-    this.recordDiagnosticEvent('media_probe_start', 'requested');
-    Promise.all([
-      this.mediaServiceProbeService!.probe(peer.key, true, force),
-      this.peerPathService!.probe(peer.key, true, force)
-    ]).then((results: [MediaProbeResult, PeerPathResult]) => {
-      if (this.mediaRequestIds.get(peer.key) !== requestId || !this.isConnected()) {
-        return;
-      }
-      const currentPeer: PeerSummary | undefined = this.peers.find(
-        (item: PeerSummary) => item.key === peer.key && item.online);
-      if (currentPeer === undefined) {
-        return;
-      }
-      const mediaResult: MediaProbeResult = results[0];
-      const path: PeerPathResult = results[1];
-      const streamState: DeviceStreamingState = this.streamingState(peer.key);
-      this.updateStreamingState(peer.key,
-        this.copyStreamingState(streamState, undefined, path, false, false));
-      this.updateMediaState(peer.key, {
-        peerKey: peer.key,
-        result: mediaResult,
-        checking: false,
-        launching: false
-      });
-      this.recordDiagnosticEvent(mediaResult.services.length > 0 ?
-        'media_probe_success' : 'media_probe_no_service', path.type);
-      mediaResult.services.forEach((service: DiscoveredMediaService) => {
-        this.recordDiagnosticEvent('media_service_detected', service.type);
-      });
-    }).catch(() => {
-      if (this.mediaRequestIds.get(peer.key) !== requestId) {
-        return;
-      }
-      this.updateMediaState(peer.key, {
-        peerKey: peer.key,
-        result: {
-          state: 'error',
-          checkedAt: Date.now(),
-          services: [],
-          errorMessage: 'probe_failed'
-        },
-        checking: false,
-        launching: false
-      });
-      this.recordDiagnosticEvent('media_probe_failed', 'exception');
-    });
-  }
-
-  private detectStreamingForPeer(peer: PeerSummary, force: boolean): void {
-    if (!this.isSunshineCandidate(peer) || !this.isConnected()) {
-      return;
-    }
-    this.ensureStreamingServices();
-    const requestId: number = Date.now();
-    this.streamingRequestIds.set(peer.key, requestId);
-    const previous: DeviceStreamingState = this.streamingState(peer.key);
-    const checkingPath: PeerPathResult = {
-      type: previous.path.type,
-      latencyMs: previous.path.latencyMs,
-      relayRegion: previous.path.relayRegion,
-      checkedAt: Date.now(),
-      errorMessage: previous.path.errorMessage
-    };
-    this.updateStreamingState(peer.key, this.copyStreamingState(previous,
-      { state: 'checking', checkedAt: Date.now() }, checkingPath, true));
-    const host: string = this.primaryTailscaleAddress(peer.addresses);
-    Promise.all([
-      this.sunshineProbeService!.probe(peer.key, host, true, force),
-      this.peerPathService!.probe(peer.key, true, force)
-    ]).then((results: [SunshineProbeResult, PeerPathResult]) => {
-      const sunshine: SunshineProbeResult = results[0];
-      const path: PeerPathResult = results[1];
-      const currentPeer: PeerSummary | undefined = this.peers.find((item: PeerSummary) => item.key === peer.key);
-      if (this.streamingRequestIds.get(peer.key) !== requestId || currentPeer === undefined || !currentPeer.online ||
-        !this.isConnected()) {
-        return;
-      }
-      const current: DeviceStreamingState = this.streamingState(peer.key);
-      this.updateStreamingState(peer.key, this.copyStreamingState(current, sunshine, path, false));
-      this.recordDiagnosticEvent(sunshine.state === 'available' ? 'sunshine_probe_success' :
-        sunshine.state === 'timeout' ? 'sunshine_probe_timeout' : 'sunshine_probe_failed', sunshine.state);
-      this.recordDiagnosticEvent('peer_path_result', path.type);
-    }).catch(() => {
-      if (this.streamingRequestIds.get(peer.key) !== requestId) {
-        return;
-      }
-      const current: DeviceStreamingState = this.streamingState(peer.key);
-      this.updateStreamingState(peer.key, this.copyStreamingState(current,
-        { state: 'error', checkedAt: Date.now(), errorMessage: 'probe_failed' },
-        { type: 'unknown', checkedAt: Date.now(), errorMessage: 'probe_failed' }, false));
-      this.recordDiagnosticEvent('sunshine_probe_failed', 'exception');
-    });
-    this.recordDiagnosticEvent('sunshine_probe_start', 'requested');
-    this.recordDiagnosticEvent('peer_path_probe_start', 'requested');
+    this.peerIntegrationController.detectMediaForPeer(peer, force);
   }
 
   private streamReachable(state: DeviceStreamingState): boolean {
-    return state.path.type !== 'unreachable';
+    return this.peerIntegrationController.streamReachable(state);
+  }
+
+  private invalidateRemoteStreamLaunch(): void {
+    this.peerIntegrationController.invalidateRemoteStreamLaunch();
+  }
+
+  private handleRemoteStreamAppBackground(): void {
+    this.peerIntegrationController.handleRemoteStreamAppBackground();
   }
 
   private launchRemoteStream(peer: PeerSummary): void {
-    if (!this.isConnected()) {
-      this.showToast('请先连接 MeshArc，再使用远程串流');
-      return;
-    }
-    if (!this.peerEffectivelyOnline(peer)) {
-      this.showToast('目标设备当前离线');
-      return;
-    }
-    const state: DeviceStreamingState = this.streamingState(peer.key);
-    if (state.launching) {
-      return;
-    }
-    this.updateStreamingState(peer.key, this.copyStreamingState(state, undefined, undefined, undefined, true));
-    this.detectStreamingForPeer(peer, true);
-    const probeRequestId: number = this.streamingRequestIds.get(peer.key) ?? 0;
-    const launchStartedAt: number = Date.now();
-    const generation: number = this.lifecycleGeneration;
-    const waitForProbe = (): void => {
-      if (generation !== this.lifecycleGeneration || !this.isConnected() ||
-        this.streamingRequestIds.get(peer.key) !== probeRequestId) {
-        return;
-      }
-      const latest: DeviceStreamingState = this.streamingState(peer.key);
-      if (latest.checking) {
-        if (!this.isConnected() || Date.now() - launchStartedAt > 5000) {
-          this.updateStreamingState(peer.key, this.copyStreamingState(latest, undefined, undefined, false, false));
-          this.showToast('Sunshine 检测超时，请检查目标电脑防火墙或网络状态');
-          return;
-        }
-        setTimeout(waitForProbe, 120);
-        return;
-      }
-      this.completeStreamLaunch(peer, latest);
-    };
-    setTimeout(waitForProbe, 0);
+    this.peerIntegrationController.launchRemoteStream(peer);
   }
 
-  private completeStreamLaunch(peer: PeerSummary, state: DeviceStreamingState): void {
-    if (state.sunshine.state !== 'available') {
-      this.updateStreamingState(peer.key, this.copyStreamingState(state, undefined, undefined, undefined, false));
-      this.showToast(state.sunshine.state === 'timeout' ? 'Sunshine 检测超时，请检查目标电脑防火墙或网络状态' :
-        '未检测到可用的 Sunshine 服务，请确认电脑已启动 Sunshine');
-      return;
-    }
-    if (!this.streamReachable(state)) {
-      this.updateStreamingState(peer.key, this.copyStreamingState(state, undefined, undefined, undefined, false));
-      this.showToast('当前无法访问目标设备');
-      return;
-    }
-    if (state.path.type === 'derp') {
-      this.showDerpStreamConfirmation(peer, state);
-      return;
-    }
-    this.openMoonlight(peer, state, false);
-  }
-
-  private showDerpStreamConfirmation(peer: PeerSummary, state: DeviceStreamingState): void {
+  private showDerpStreamConfirmation(peer: PeerSummary, state: DeviceStreamingState,
+    intent: RemoteStreamLaunchIntent): void {
     this.getUIContext().showAlertDialog({
-      title: '当前通过 DERP 中继连接',
-      message: '中继连接可能导致延迟升高或画面卡顿，MeshArc 将建议 MoonlightOH 使用较低码率',
+      title: $r('app.string.stream_derp_confirm_title'),
+      message: $r('app.string.stream_derp_confirm_message'),
       autoCancel: true,
-      primaryButton: { value: '使用兼容配置', action: () => this.openMoonlight(peer, state, false) },
-      secondaryButton: { value: '使用原有配置', action: () => this.openMoonlight(peer, state, true) }
+      onWillDismiss: (action: DismissDialogAction): void => {
+        this.peerIntegrationController.finishRemoteStreamLaunch(intent);
+        action.dismiss();
+      },
+      primaryButton: {
+        value: $r('app.string.stream_derp_use_compatible_profile'),
+        action: () => this.peerIntegrationController.openMoonlight(peer, state, false, intent)
+      },
+      secondaryButton: {
+        value: $r('app.string.stream_derp_use_original_profile'),
+        action: () => this.peerIntegrationController.openMoonlight(peer, state, true, intent)
+      }
     });
   }
 
-  private openMoonlight(peer: PeerSummary, state: DeviceStreamingState, useOriginalProfile: boolean): void {
-    this.ensureStreamingServices();
-    const host: string = this.primaryTailscaleAddress(peer.addresses);
-    this.recordDiagnosticEvent('moonlight_launch_attempt', state.path.type);
-    this.moonlightLauncher!.isAvailable().then((available: boolean) => {
-      if (!available) {
-        this.updateStreamingState(peer.key, this.copyStreamingState(this.streamingState(peer.key),
-          undefined, undefined, undefined, false));
-        this.getUIContext().showAlertDialog({
-          title: '需要 MoonlightOH',
-          message: 'MeshArc 使用 MoonlightOH 连接 Sunshine 串流服务',
-          autoCancel: true,
-          primaryButton: { value: '取消', action: () => {} },
-          secondaryButton: { value: '复制主机地址', action: () => this.copyDeviceValue(host, $r('app.string.peer_ip_copied')) }
-        });
-        return;
+  private showMoonlightRequiredAlertDialog(host: string): void {
+    this.getUIContext().showAlertDialog({
+      title: $r('app.string.stream_moonlight_required_title'),
+      message: $r('app.string.stream_moonlight_required_message'),
+      autoCancel: true,
+      primaryButton: { value: $r('app.string.stream_dialog_cancel_action'), action: () => {} },
+      secondaryButton: {
+        value: $r('app.string.stream_copy_host_address_action'),
+        action: () => this.copyDeviceValue(host, $r('app.string.peer_ip_copied'))
       }
-      const originalProfile: StreamLaunchProfile = { profileName: 'default', allowUserOverride: true };
-      const profile = useOriginalProfile ? originalProfile : buildStreamProfile(state.path);
-      return this.moonlightLauncher!.launch({
-        protocolVersion: 1,
-        action: 'openHost',
-        source: 'MeshArc',
-        host: host,
-        displayName: peer.name,
-        dnsName: peer.name,
-        pathType: state.path.type,
-        relayRegion: state.path.relayRegion,
-        latencyMs: state.path.latencyMs,
-        streamProfile: profile
-      }).then(() => {
-        this.updateStreamingState(peer.key, this.copyStreamingState(this.streamingState(peer.key),
-          undefined, undefined, undefined, false));
-        this.recordDiagnosticEvent('moonlight_launch_success', state.path.type);
-      });
-    }).catch(() => {
-      this.updateStreamingState(peer.key, this.copyStreamingState(this.streamingState(peer.key),
-        undefined, undefined, undefined, false));
-      this.recordDiagnosticEvent('moonlight_launch_failed', state.path.type);
-      this.showToast('无法打开 MoonlightOH，请稍后重试');
     });
   }
 
   private launchMediaForPeer(peer: PeerSummary): void {
-    const state: DeviceMediaState = this.mediaState(peer.key);
-    if (state.checking || state.launching) {
-      return;
-    }
-    if (state.result.services.length === 0) {
-      this.detectMediaForPeer(peer, true);
-      return;
-    }
-    const service: DiscoveredMediaService = state.result.services[0];
-    this.openHosPlayer(peer, service);
-  }
-
-  private hosPlayerServerName(peer: PeerSummary, service: DiscoveredMediaService): string {
-    const peerName: string = this.peerDisplayName(peer.name).trim();
-    const serviceName: string = service.name.trim();
-    if (serviceName.length === 0 || peerName.toLowerCase() === serviceName.toLowerCase()) {
-      return peerName;
-    }
-    if (peerName.length === 0) {
-      return serviceName;
-    }
-    return `${peerName} · ${serviceName}`;
+    this.peerIntegrationController.launchMediaForPeer(peer);
   }
 
   private openHosPlayer(peer: PeerSummary, service: DiscoveredMediaService): void {
-    this.ensureMediaServices();
-    const state: DeviceMediaState = this.mediaState(peer.key);
-    this.updateMediaState(peer.key, {
-      peerKey: peer.key,
-      result: state.result,
-      checking: false,
-      launching: true
-    });
-    this.recordFeatureDiagnosticEvent('hosplayer_launch_attempt', service.type);
-    try {
-      const request: HosPlayerLaunchRequest = {
-        protocolVersion: 1,
-        type: service.type,
-        endpoint: service.url,
-        name: this.hosPlayerServerName(peer, service)
-      };
-      this.hosPlayerLauncher!.launch(request).then(() => {
-        this.updateMediaState(peer.key, {
-          peerKey: peer.key,
-          result: this.mediaState(peer.key).result,
-          checking: false,
-          launching: false
-        });
-        this.recordFeatureDiagnosticEvent('hosplayer_launch_success', service.type);
-      }).catch(() => {
-        this.updateMediaState(peer.key, {
-          peerKey: peer.key,
-          result: this.mediaState(peer.key).result,
-          checking: false,
-          launching: false
-        });
-      this.recordFeatureDiagnosticEvent('hosplayer_launch_failed', service.type);
-        this.showToast('无法打开 HosPlayer，请稍后重试');
-      });
-    } catch (_error) {
-      this.updateMediaState(peer.key, {
-        peerKey: peer.key,
-        result: state.result,
-        checking: false,
-        launching: false
-      });
-      this.recordFeatureDiagnosticEvent('hosplayer_contract_rejected', service.type);
-      this.showToast('服务器地址不符合安全传参规则');
-    }
+    this.peerIntegrationController.openHosPlayer(peer, service);
   }
 
-  private copyPlainText(value: string, successMessage: string): void {
-    const data: pasteboard.PasteData = pasteboard.createData(
-      pasteboard.MIMETYPE_TEXT_PLAIN, value);
+  private copyPlainText(value: string, successMessage: ResourceStr): void {
+    if (typeof this.isSecurityCoverActive === 'function' && this.isSecurityCoverActive()) {
+      return;
+    }
+    const data: pasteboard.PasteData = createLocalTextPasteData(value);
     pasteboard.getSystemPasteboard().setData(data)
       .then(() => this.showToast(successMessage))
       .catch(() => this.showToast($r('app.string.device_copy_failed')));
   }
 
   private runMediaIntegrationSelfTest(): void {
-    if (this.mediaSelfTestInProgress) {
-      return;
-    }
-    this.ensureMediaServices();
-    this.mediaSelfTestInProgress = true;
-    this.mediaSelfTestStatus = '正在运行离线测试…';
-    this.recordFeatureDiagnosticEvent('media_self_test_started', 'offline');
-    const requestGeneration: number = this.diagnosticMediaRequestGuard.begin();
-    this.accountDiagnosticsGateway.runMediaProbeSelfTest().then((resultText: string) => {
-      if (!this.diagnosticMediaRequestGuard.isCurrent(requestGeneration)) {
-        return;
-      }
-      const nativeResult: MediaProbeSelfTestResult =
-        JSON.parse(resultText) as MediaProbeSelfTestResult;
-      const contractResult: string = this.hosPlayerLauncher!.runOfflineSelfTest();
-      const passed: boolean = nativeResult.state === 'passed' &&
-        nativeResult.cases === 4 && contractResult.startsWith('PASS');
-      this.mediaSelfTestStatus = passed ?
-        'PASS · 媒体服务识别 4/4 · HosPlayer 参数协议通过' :
-        'FAILED · 请导出诊断报告并检查媒体联动日志';
-      this.recordFeatureDiagnosticEvent(passed ? 'media_self_test_passed' :
-        'media_self_test_failed', 'offline');
-    }).catch(() => {
-      if (!this.diagnosticMediaRequestGuard.isCurrent(requestGeneration)) {
-        return;
-      }
-      this.mediaSelfTestStatus = 'FAILED · 无法运行媒体服务离线测试';
-      this.recordFeatureDiagnosticEvent('media_self_test_failed', 'native_bridge');
-    }).finally(() => {
-      if (this.diagnosticMediaRequestGuard.isCurrent(requestGeneration)) {
-        this.mediaSelfTestInProgress = false;
-      }
-    });
+    this.peerIntegrationController.runMediaIntegrationSelfTest();
   }
 
   private copyHosPlayerPrototype(): void {
-    this.ensureMediaServices();
-    try {
-      const result: string = this.hosPlayerLauncher!.runOfflineSelfTest();
-      const separator: number = result.indexOf(' | ');
-      if (separator < 0) {
-        throw new Error('prototype_unavailable');
-      }
-      this.copyPlainText(result.substring(separator + 3), 'HosPlayer 导入链接已复制');
-      this.recordFeatureDiagnosticEvent('hosplayer_contract_copied', 'offline');
-    } catch (_error) {
-      this.showToast('无法生成 HosPlayer 导入链接');
-      this.recordFeatureDiagnosticEvent('hosplayer_contract_failed', 'offline');
-    }
+    this.peerIntegrationController.copyHosPlayerPrototype();
   }
 
   private copyDeviceValue(value: string, successMessage: ResourceStr): void {
+    if (typeof this.isSecurityCoverActive === 'function' && this.isSecurityCoverActive()) {
+      return;
+    }
     if (value.length === 0) {
       this.showToast($r('app.string.device_copy_unavailable'));
       return;
     }
-    const data: pasteboard.PasteData = pasteboard.createData(
-      pasteboard.MIMETYPE_TEXT_PLAIN, value);
+    const data: pasteboard.PasteData = createLocalTextPasteData(value);
     pasteboard.getSystemPasteboard().setData(data)
       .then(() => this.showToast(successMessage))
       .catch(() => this.showToast($r('app.string.device_copy_failed')));
-  }
-
-  private writePrivateTextFile(path: string, content: string): boolean {
-    let file: fileIo.File | undefined = undefined;
-    try {
-      file = fileIo.openSync(path,
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, content);
-      return true;
-    } catch (_error) {
-      return false;
-    } finally {
-      if (file !== undefined) {
-        try {
-          fileIo.closeSync(file);
-        } catch (_error) {
-          // The descriptor may already be closed after a platform write failure.
-        }
-      }
-    }
   }
 
   private taildropTransferProgress(): number {
@@ -6545,66 +4647,8 @@ export struct BridgeStatus {
       Math.round(this.taildropTransfer.bytesSent * 100 / this.taildropTransfer.totalBytes)));
   }
 
-  private resetTaildropProgressEstimate(): void {
-    this.taildropTransferRate = 0;
-    this.taildropTransferEtaSeconds = 0;
-    this.taildropProgressSampleRequestId = 0;
-    this.taildropProgressSampleBytes = 0;
-    this.taildropProgressSampleMs = 0;
-  }
-
-  private updateTaildropProgressEstimate(transfer: TaildropTransferSummary): void {
-    const active: boolean = transfer.state === 'queued' || transfer.state === 'sending';
-    if (!active || transfer.requestId <= 0 || transfer.totalBytes <= 0) {
-      this.resetTaildropProgressEstimate();
-      return;
-    }
-    const nowMs: number = Date.now();
-    if (transfer.requestId !== this.taildropProgressSampleRequestId ||
-      transfer.bytesSent < this.taildropProgressSampleBytes || this.taildropProgressSampleMs <= 0) {
-      this.taildropProgressSampleRequestId = transfer.requestId;
-      this.taildropProgressSampleBytes = transfer.bytesSent;
-      this.taildropProgressSampleMs = nowMs;
-      this.taildropTransferRate = 0;
-      this.taildropTransferEtaSeconds = 0;
-      return;
-    }
-    const elapsedMs: number = nowMs - this.taildropProgressSampleMs;
-    if (elapsedMs < 500) {
-      return;
-    }
-    const byteDelta: number = transfer.bytesSent - this.taildropProgressSampleBytes;
-    if (byteDelta <= 0) {
-      if (elapsedMs >= 3000) {
-        this.taildropTransferRate = 0;
-        this.taildropTransferEtaSeconds = 0;
-        this.taildropProgressSampleMs = nowMs;
-      }
-      return;
-    }
-    const measuredRate: number = Math.round(byteDelta * 1000 / elapsedMs);
-    this.taildropTransferRate = this.taildropTransferRate > 0 ?
-      Math.round(this.taildropTransferRate * 0.55 + measuredRate * 0.45) : measuredRate;
-    const remainingBytes: number = Math.max(0, transfer.totalBytes - transfer.bytesSent);
-    this.taildropTransferEtaSeconds = this.taildropTransferRate > 0 ?
-      Math.ceil(remainingBytes / this.taildropTransferRate) : 0;
-    this.taildropProgressSampleBytes = transfer.bytesSent;
-    this.taildropProgressSampleMs = nowMs;
-  }
-
   private formatTransferDuration(seconds: number): string {
-    const safeSeconds: number = Math.max(0, Math.round(seconds));
-    if (safeSeconds < 60) {
-      return `${safeSeconds}s`;
-    }
-    const minutes: number = Math.floor(safeSeconds / 60);
-    const remainingSeconds: number = safeSeconds % 60;
-    if (minutes < 60) {
-      return `${minutes}m ${remainingSeconds.toString().padStart(2, '0')}s`;
-    }
-    const hours: number = Math.floor(minutes / 60);
-    const remainingMinutes: number = minutes % 60;
-    return `${hours}h ${remainingMinutes.toString().padStart(2, '0')}m`;
+    return formatTaildropTransferDuration(seconds);
   }
 
   private taildropTransferSpeedText(): ResourceStr {
@@ -6619,44 +4663,8 @@ export struct BridgeStatus {
       this.formatTransferDuration(this.taildropTransferEtaSeconds));
   }
 
-  private taildropFileExtension(name: string): string {
-    const dotIndex: number = name.lastIndexOf('.');
-    if (dotIndex < 0 || dotIndex === name.length - 1) {
-      return '';
-    }
-    return name.substring(dotIndex + 1).toLowerCase();
-  }
-
-  private taildropFileTitle(name: string): string {
-    const dotIndex: number = name.lastIndexOf('.');
-    return dotIndex > 0 ? name.substring(0, dotIndex) : name;
-  }
-
-  private taildropGalleryAssetTitle(name: string): string {
-    let title: string = this.taildropFileTitle(this.sanitizeTaildropFileName(name, 0))
-      .replace(/[\\/:*?"'`<>|{}\[\]]/g, '_').trim();
-    if (title.length === 0 || title === '.' || title === '..') {
-      title = 'received_image';
-    }
-    return title.length > 180 ? title.substring(0, 180) : title;
-  }
-
   private taildropContentKind(file: TaildropWaitingFileSummary): string {
-    const extension: string = this.taildropFileExtension(file.name);
-    if (TAILDROP_IMAGE_EXTENSIONS.includes(extension)) {
-      return 'image';
-    }
-    if (TAILDROP_VIDEO_EXTENSIONS.includes(extension)) {
-      return 'video';
-    }
-    if (file.size <= TAILDROP_TEXT_CLIPBOARD_MAX_BYTES && TAILDROP_TEXT_EXTENSIONS.includes(extension)) {
-      return 'text';
-    }
-    return 'file';
-  }
-
-  private taildropInboxKey(file: TaildropWaitingFileSummary): string {
-    return `${file.name}\n${file.size}`;
+    return this.taildropSessionController.taildropContentKind(file);
   }
 
   private taildropContentKindText(file: TaildropWaitingFileSummary): ResourceStr {
@@ -6674,117 +4682,7 @@ export struct BridgeStatus {
   }
 
   private taildropFileIcon(name: string): Resource {
-    const extension: string = this.taildropFileExtension(name);
-    switch (extension) {
-      case '7z': return $r('app.media.ic_light_7z');
-      case 'amr': return $r('app.media.ic_light_amr');
-      case 'ape': return $r('app.media.ic_light_ape');
-      case 'app': return $r('app.media.ic_light_app');
-      case 'caj': return $r('app.media.ic_light_caj');
-      case 'ics':
-      case 'ical':
-      case 'calendar': return $r('app.media.ic_light_calendar');
-      case 'chm': return $r('app.media.ic_light_chm');
-      case 'connect':
-      case 'connection': return $r('app.media.ic_light_connect');
-      case 'crdownload':
-      case 'download':
-      case 'part':
-      case 'partial': return $r('app.media.ic_light_download');
-      case 'dwg': return $r('app.media.ic_light_dwg');
-      case 'dxf': return $r('app.media.ic_light_dxf');
-      case 'eddx': return $r('app.media.ic_light_eddx');
-      case 'eml':
-      case 'emlx':
-      case 'msg': return $r('app.media.ic_light_eml');
-      case 'emmx': return $r('app.media.ic_light_emmx');
-      case 'xls':
-      case 'xlsx':
-      case 'xlsm':
-      case 'xlsb':
-      case 'csv':
-      case 'et':
-      case 'ett':
-      case 'ods': return $r('app.media.ic_light_excel');
-      case 'exe':
-      case 'msi':
-      case 'com': return $r('app.media.ic_light_exe');
-      case 'flac': return $r('app.media.ic_light_flac');
-      case 'gz':
-      case 'gzip': return $r('app.media.ic_light_gz');
-      case 'hdoc': return $r('app.media.ic_light_hdoc');
-      case 'hinote': return $r('app.media.ic_light_hinote');
-      case 'htm': return $r('app.media.ic_light_htm');
-      case 'html':
-      case 'xhtml':
-      case 'mht':
-      case 'mhtml': return $r('app.media.ic_light_html');
-      case 'kdh': return $r('app.media.ic_light_kdh');
-      case 'log': return $r('app.media.ic_light_log');
-      case 'm4a': return $r('app.media.ic_light_m4a');
-      case 'mp3': return $r('app.media.ic_light_mp3');
-      case 'aac':
-      case 'midi':
-      case 'mid':
-      case 'ogg':
-      case 'opus': return $r('app.media.ic_light_music');
-      case 'nh': return $r('app.media.ic_light_nh');
-      case 'pdf': return $r('app.media.ic_light_pdf');
-      case 'ppt':
-      case 'pptx':
-      case 'pptm':
-      case 'pps':
-      case 'ppsx':
-      case 'dps':
-      case 'dpt':
-      case 'odp': return $r('app.media.ic_light_ppt');
-      case 'rar': return $r('app.media.ic_light_rar');
-      case 'tar': return $r('app.media.ic_light_tar');
-      case 'teb': return $r('app.media.ic_light_teb');
-      case 'txt': return $r('app.media.ic_light_txt');
-      case 'wav': return $r('app.media.ic_light_wav');
-      case 'wma': return $r('app.media.ic_light_wma');
-      case 'doc':
-      case 'docx':
-      case 'docm':
-      case 'dot':
-      case 'dotx':
-      case 'wps':
-      case 'wpt':
-      case 'odt':
-      case 'rtf': return $r('app.media.ic_light_word');
-      case 'xml':
-      case 'xsl':
-      case 'xslt': return $r('app.media.ic_light_xml');
-      case 'zip': return $r('app.media.ic_light_zip');
-      case 'bz2':
-      case 'xz':
-      case 'zst':
-      case 'lz':
-      case 'lz4':
-      case 'cab':
-      case 'iso':
-      case 'dmg': return $r('app.media.ic_light_zip_1');
-      case 'hap':
-      case 'hsp':
-      case 'har':
-      case 'apk':
-      case 'aab':
-      case 'ipa': return $r('app.media.ic_light_other_app');
-    }
-    if (TAILDROP_IMAGE_EXTENSIONS.includes(extension)) {
-      return $r('app.media.ic_light_picture');
-    }
-    if (TAILDROP_VIDEO_EXTENSIONS.includes(extension)) {
-      return $r('app.media.ic_light_video');
-    }
-    if (TAILDROP_TEXT_EXTENSIONS.includes(extension) ||
-      ['markdown', 'json', 'jsonl', 'yaml', 'yml', 'ini', 'conf', 'cfg', 'properties', 'sql', 'ets',
-        'ts', 'tsx', 'js', 'jsx', 'java', 'kt', 'c', 'cc', 'cpp', 'h', 'hpp', 'go', 'rs', 'py', 'sh',
-        'bat', 'cmd', 'ps1'].includes(extension)) {
-      return $r('app.media.ic_light_text');
-    }
-    return extension.length === 0 ? $r('app.media.ic_light_unknow') : $r('app.media.ic_light_other');
+    return resolveFileIconResource(name);
   }
 
   @Builder
@@ -6796,129 +4694,41 @@ export struct BridgeStatus {
   }
 
   private taildropFileIconColor(name: string): ResourceColor {
-    const extension: string = this.taildropFileExtension(name);
-    if (extension === 'pdf' || ['mp3', 'm4a', 'wav', 'flac', 'aac', 'ogg', 'opus'].includes(extension) ||
-      TAILDROP_IMAGE_EXTENSIONS.includes(extension) || TAILDROP_VIDEO_EXTENSIONS.includes(extension)) {
-      return $r('app.color.transfer_file_icon_red');
-    }
-    if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(extension)) {
-      return $r('app.color.transfer_file_icon_yellow');
-    }
-    if (extension === 'hap' || extension === 'hsp' || extension === 'har' ||
-      extension === 'app' || extension === 'apk') {
-      return $r('app.color.transfer_file_icon_neutral');
-    }
-    return $r('app.color.transfer_file_icon_blue');
+    return resolveFileIconColorResource(name);
+  }
+
+  private resolveTaildropMediaType(name: string): photoAccessHelper.PhotoType | undefined {
+    return this.taildropSessionController.resolveTaildropMediaType(name);
   }
 
   private taildropReceiveMatches(file: TaildropWaitingFileSummary): boolean {
-    return this.taildropReceiveInProgress && this.taildropReceive.name === file.name;
+    return this.taildropSessionController.taildropReceiveMatches(file);
   }
 
   private taildropReceiveRowLoading(file: TaildropWaitingFileSummary): boolean {
-    if (!this.taildropReceiveMatches(file)) {
-      return false;
-    }
-    if (this.taildropReceiveStrategy === 'media-prefetch') {
-      return false;
-    }
-    return this.taildropMediaSaveInProgress ||
-      (this.taildropReceive.state !== 'awaiting_gallery_save' &&
-        this.taildropReceive.state !== 'awaiting_text_preview');
+    return this.taildropSessionController.taildropReceiveRowLoading(file);
   }
 
   private taildropPreparedMediaSaveEnabled(file: TaildropWaitingFileSummary): boolean {
-    if (this.findTaildropMediaPreview(file) === undefined || this.taildropSendActive() ||
-      (this.taildropReceiveMatches(file) && this.taildropMediaSaveInProgress)) {
-      return false;
-    }
-    if (!this.taildropReceiveInProgress || this.taildropReceiveStrategy === 'media-prefetch' ||
-      this.taildropReceiveStrategy === 'file-prefetch' ||
-      this.taildropReceive.state === 'awaiting_text_preview') {
-      return true;
-    }
-    return this.taildropReceiveMatches(file) &&
-      this.taildropReceive.state === 'awaiting_gallery_save';
+    return this.taildropSessionController.taildropPreparedMediaSaveEnabled(file);
   }
 
   private taildropTextPreviewLoading(file: TaildropWaitingFileSummary): boolean {
-    return this.taildropReceiveMatches(file) &&
-      this.taildropReceiveStrategy === 'text-preview' &&
-      this.taildropReceive.state !== 'awaiting_text_preview';
-  }
-
-  private findTaildropMediaPreview(
-    file: TaildropWaitingFileSummary
-  ): TaildropMediaPreview | undefined {
-    return this.taildropMediaPreviews.find((preview: TaildropMediaPreview) =>
-      preview.name === file.name && preview.size === file.size);
+    return this.taildropSessionController.taildropTextPreviewLoading(file);
   }
 
   private findTaildropCachedFile(
     file: TaildropWaitingFileSummary
   ): TaildropCachedFile | undefined {
-    return this.taildropCachedFiles.find((cached: TaildropCachedFile) =>
-      cached.name === file.name && cached.size === file.size &&
-      this.validTaildropCachedFile(cached));
-  }
-
-  private validTaildropMediaPreview(preview: TaildropMediaPreview): boolean {
-    const mediaType: photoAccessHelper.PhotoType | undefined =
-      this.resolveTaildropMediaType(preview.name);
-    if (mediaType === undefined || preview.mediaType !== mediaType || preview.path.length === 0) {
-      return false;
-    }
-    try {
-      const stat: fileIo.Stat = fileIo.statSync(preview.path);
-      if (!stat.isFile() || stat.size !== preview.size) {
-        return false;
-      }
-    } catch (_error) {
-      return false;
-    }
-    const hasValidThumbnail: boolean = preview.thumbnailPath.length > 0 &&
-      this.taildropPreviewUri(preview.thumbnailPath).length > 0;
-    // Keep a locally staged image usable when its derived JPEG thumbnail was
-    // lost during an offline transition or cache cleanup. The source file is
-    // still a valid preview fallback and, more importantly, is the bytes used
-    // by the offline save action.
-    return mediaType === photoAccessHelper.PhotoType.IMAGE ||
-      mediaType === photoAccessHelper.PhotoType.VIDEO || hasValidThumbnail;
-  }
-
-  private validTaildropCachedFile(cached: TaildropCachedFile): boolean {
-    if (cached.path.length === 0) {
-      return false;
-    }
-    try {
-      const stat: fileIo.Stat = fileIo.statSync(cached.path);
-      return stat.isFile() && stat.size === cached.size;
-    } catch (_error) {
-      return false;
-    }
+    return this.taildropSessionController.findTaildropCachedFile(file);
   }
 
   private taildropWaitingFilePreviewUri(file: TaildropWaitingFileSummary): string {
-    if (this.resolveTaildropMediaType(file.name) === undefined) {
-      return '';
-    }
-    const preview: TaildropMediaPreview | undefined = this.findTaildropMediaPreview(file);
-    if (preview === undefined) {
-      return '';
-    }
-    const thumbnailUri: string = this.taildropPreviewUri(preview.thumbnailPath);
-    if (thumbnailUri.length > 0) {
-      return thumbnailUri;
-    }
-    return preview.mediaType === photoAccessHelper.PhotoType.IMAGE ?
-      this.taildropPreviewUri(preview.path) : '';
+    return this.taildropSessionController.taildropWaitingFilePreviewUri(file);
   }
 
   private taildropHistoryPreviewUri(record: TaildropTransferRecord): string {
-    if (record.fileCount !== 1) {
-      return '';
-    }
-    return this.taildropPreviewUri(record.previewPath);
+    return this.taildropSessionController.taildropHistoryPreviewUri(record);
   }
 
   private taildropTransferStatusText(record: TaildropTransferRecord): ResourceStr {
@@ -6939,1383 +4749,84 @@ export struct BridgeStatus {
     return $r('sys.color.icon_emphasize');
   }
 
+  private sanitizeTaildropDisplayText(value: string): string {
+    return sanitizeTaildropDisplayText(value);
+  }
+
   private taildropTransferRecordTitle(record: TaildropTransferRecord): string {
-    const fileName: string = record.fileName.trim();
-    if (fileName.length > 0) {
-      return record.fileCount > 1 ? fileName + ' (' + record.fileCount + ' files)' : fileName;
-    }
-    return record.direction === 'send' ? record.targetName : 'Received file';
+    return formatTaildropRecordTitle(record);
   }
 
   private taildropTransferRecordDescription(record: TaildropTransferRecord): string {
-    const size: string = this.formatTrafficBytes(record.totalBytes);
-    if (record.direction === 'send' && record.fileCount <= 1 && record.targetName.length > 0) {
-      return `${size} · ${record.targetName}`;
-    }
-    return record.fileCount > 1 ? record.fileCount + ' files · ' + size + ' · ' + record.targetName :
-      size + (record.direction === 'send' && record.targetName.length > 0 ? ' · ' + record.targetName : '');
-  }
-
-  private taildropHistoryPath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${TAILDROP_HISTORY_FILE_NAME}`;
-  }
-
-  private taildropInboxSnapshotPath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${TAILDROP_INBOX_SNAPSHOT_FILE_NAME}`;
-  }
-
-  private taildropHistoryMediaRoot(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${TAILDROP_HISTORY_MEDIA_DIR_NAME}`;
-  }
-
-  private taildropPreviewUri(path: string): string {
-    return this.taildropContentGateway.previewUri(path,
-      (candidate: string): boolean => fileIo.accessSync(candidate),
-      (candidate: string): string => fileUri.getUriFromPath(candidate));
-  }
-
-  private taildropWaitingFileKey(file: TaildropWaitingFileSummary): string {
-    return `${file.name}:${file.size}`;
-  }
-
-  private isTaildropWaitingFileShapeValid(file: TaildropWaitingFileSummary): boolean {
-    return file.name.length > 0 && file.name.length <= 255 && file.name !== '.' && file.name !== '..' &&
-      !file.name.includes('/') && !file.name.includes('\\') && file.size >= 0;
-  }
-
-  private taildropWaitingFileTimestamp(file: TaildropWaitingFileSummary, fallbackMs: number): number {
-    return Number.isFinite(file.receivedAtMs) && file.receivedAtMs > 0 ?
-      Math.floor(file.receivedAtMs) : Math.max(1, fallbackMs);
-  }
-
-  private sortTaildropWaitingFiles(files: TaildropWaitingFileSummary[]): TaildropWaitingFileSummary[] {
-    return files.slice().sort((left: TaildropWaitingFileSummary, right: TaildropWaitingFileSummary) => {
-      if (left.receivedAtMs !== right.receivedAtMs) {
-        return right.receivedAtMs - left.receivedAtMs;
-      }
-      return left.name.toLowerCase() < right.name.toLowerCase() ? -1 :
-        left.name.toLowerCase() > right.name.toLowerCase() ? 1 : left.size - right.size;
-    });
-  }
-
-  private isValidTaildropWaitingFile(file: TaildropWaitingFileSummary): boolean {
-    return this.isTaildropWaitingFileShapeValid(file) && Number.isFinite(file.receivedAtMs) &&
-      file.receivedAtMs > 0;
-  }
-
-  private isTaildropPendingDelete(file: TaildropWaitingFileSummary): boolean {
-    return this.taildropPendingDeletes.some((pending: TaildropWaitingFileSummary) =>
-      pending.name === file.name && pending.size === file.size);
-  }
-
-  private queueTaildropPendingDelete(file: TaildropWaitingFileSummary): void {
-    if (!this.isValidTaildropWaitingFile(file)) {
-      return;
-    }
-    const remaining: TaildropWaitingFileSummary[] = this.taildropPendingDeletes.filter(
-      (pending: TaildropWaitingFileSummary) => pending.name !== file.name);
-    this.taildropPendingDeletes = remaining.concat([{
-      name: file.name, size: file.size, receivedAtMs: file.receivedAtMs
-    }]);
-    this.taildropPendingDeleteRetryAtMs = 0;
-  }
-
-  private queueTaildropPendingDeletes(files: TaildropWaitingFileSummary[]): void {
-    files.forEach((file: TaildropWaitingFileSummary) => this.queueTaildropPendingDelete(file));
-  }
-
-  private reconcileTaildropPendingDeletes(files: TaildropWaitingFileSummary[]): boolean {
-    const reconciled: TaildropWaitingFileSummary[] = this.taildropPendingDeletes.filter(
-      (pending: TaildropWaitingFileSummary) => files.some((file: TaildropWaitingFileSummary) =>
-        file.name === pending.name && file.size === pending.size));
-    const changed: boolean = JSON.stringify(reconciled) !== JSON.stringify(this.taildropPendingDeletes);
-    if (changed) {
-      this.taildropPendingDeletes = reconciled;
-      if (reconciled.length === 0) {
-        this.taildropPendingDeleteRetryAtMs = 0;
-      }
-    }
-    return changed;
-  }
-
-  private removeTaildropMediaPreview(name: string, size: number, deleteFile: boolean): void {
-    const removed: TaildropMediaPreview[] = this.taildropMediaPreviews.filter(
-      (preview: TaildropMediaPreview) => preview.name === name && preview.size === size);
-    if (deleteFile) {
-      removed.forEach((preview: TaildropMediaPreview) => {
-        [preview.path, preview.thumbnailPath].forEach((path: string) => {
-          if (path.length === 0) {
-            return;
-          }
-          try {
-            if (fileIo.accessSync(path)) {
-              fileIo.unlinkSync(path);
-            }
-          } catch (_error) {
-            // Cache cleanup is retried when the whole inbox cache is cleared.
-          }
-        });
-      });
-    }
-    this.taildropMediaPreviews = this.taildropMediaPreviews.filter(
-      (preview: TaildropMediaPreview) => preview.name !== name || preview.size !== size);
-    if (deleteFile && removed.length > 0) {
-      this.notifyCacheContentsChanged();
-    }
-  }
-
-  private removeTaildropCachedFile(name: string, size: number, deleteFile: boolean): void {
-    const removed: TaildropCachedFile[] = this.taildropCachedFiles.filter(
-      (cached: TaildropCachedFile) => cached.name === name && cached.size === size);
-    if (deleteFile) {
-      removed.forEach((cached: TaildropCachedFile) => {
-        try {
-          if (fileIo.accessSync(cached.path)) {
-            fileIo.unlinkSync(cached.path);
-          }
-        } catch (_error) {
-          // A later full inbox-cache cleanup can retry an inaccessible file.
-        }
-      });
-    }
-    this.taildropCachedFiles = this.taildropCachedFiles.filter(
-      (cached: TaildropCachedFile) => cached.name !== name || cached.size !== size);
-    if (deleteFile && removed.length > 0) {
-      this.notifyCacheContentsChanged();
-    }
-  }
-
-  private reconcileTaildropMediaPreviews(files: TaildropWaitingFileSummary[]): void {
-    const stale: TaildropMediaPreview[] = this.taildropMediaPreviews.filter(
-      (preview: TaildropMediaPreview) => !files.some((file: TaildropWaitingFileSummary) =>
-        file.name === preview.name && file.size === preview.size));
-    stale.forEach((preview: TaildropMediaPreview) => {
-      [preview.path, preview.thumbnailPath].forEach((path: string) => {
-        if (path.length === 0) {
-          return;
-        }
-        try {
-          if (fileIo.accessSync(path)) {
-            fileIo.unlinkSync(path);
-          }
-        } catch (_error) {
-          // The next inbox-cache cleanup can remove an inaccessible stale file.
-        }
-      });
-    });
-    const validPreviews: TaildropMediaPreview[] = this.taildropMediaPreviews.filter(
-      (preview: TaildropMediaPreview) => files.some((file: TaildropWaitingFileSummary) =>
-        file.name === preview.name && file.size === preview.size) &&
-        this.validTaildropMediaPreview(preview));
-    const previewsChanged: boolean =
-      JSON.stringify(this.taildropMediaPreviews) !== JSON.stringify(validPreviews);
-    if (previewsChanged) {
-      this.taildropMediaPreviews = validPreviews;
-    }
-    const staleCachedFiles: TaildropCachedFile[] = this.taildropCachedFiles.filter(
-      (cached: TaildropCachedFile) => !files.some((file: TaildropWaitingFileSummary) =>
-        file.name === cached.name && file.size === cached.size));
-    staleCachedFiles.forEach((cached: TaildropCachedFile) => {
-      try {
-        if (fileIo.accessSync(cached.path)) {
-          fileIo.unlinkSync(cached.path);
-        }
-      } catch (_error) {
-        // A later full inbox-cache cleanup can retry an inaccessible file.
-      }
-    });
-    const validCachedFiles: TaildropCachedFile[] = this.taildropCachedFiles.filter(
-      (cached: TaildropCachedFile) => files.some((file: TaildropWaitingFileSummary) =>
-        file.name === cached.name && file.size === cached.size) &&
-      this.validTaildropCachedFile(cached));
-    const cachedFilesChanged: boolean =
-      JSON.stringify(this.taildropCachedFiles) !== JSON.stringify(validCachedFiles);
-    if (cachedFilesChanged) {
-      this.taildropCachedFiles = validCachedFiles;
-    }
-    if (stale.length > 0 || staleCachedFiles.length > 0) {
-      this.notifyCacheContentsChanged();
-    }
-    if (previewsChanged || cachedFilesChanged || stale.length > 0 || staleCachedFiles.length > 0) {
-      this.persistTaildropInbox();
-    }
-    this.taildropAutoPrefetchFailedKeys = this.taildropAutoPrefetchFailedKeys.filter(
-      (key: string) => files.some((file: TaildropWaitingFileSummary) =>
-        this.taildropWaitingFileKey(file) === key));
-  }
-
-  private prefetchTaildropInboxFiles(files: TaildropWaitingFileSummary[], connected: boolean = this.isConnected()): void {
-    // Only a ready snapshot with an empty inbox error is authoritative. An
-    // unavailable/disconnected snapshot can contain no files even though the
-    // local staged media is still valid and must remain saveable offline.
-    if (connected && this.taildropState === 'ready' && this.taildropInboxReason.length === 0) {
-      this.reconcileTaildropMediaPreviews(files);
-    }
-    if (this.taildropAutoPrefetchKey.length > 0 &&
-      !files.some((file: TaildropWaitingFileSummary) =>
-        this.taildropWaitingFileKey(file) === this.taildropAutoPrefetchKey)) {
-      this.taildropAutoPrefetchKey = '';
-    }
-    if ((!connected && !this.backendStatus.includes('state=Running')) ||
-      this.taildropState !== 'ready' || this.taildropReceiveInProgress ||
-      this.taildropPickerOpen || this.taildropPreparing || this.taildropTransfer.state === 'queued' ||
-      this.taildropTransfer.state === 'sending' || this.taildropAutoPrefetchKey.length > 0) {
-      return;
-    }
-    const mediaFile: TaildropWaitingFileSummary | undefined = files.find(
-      (file: TaildropWaitingFileSummary) =>
-        this.resolveTaildropMediaType(file.name) !== undefined &&
-        this.findTaildropMediaPreview(file) === undefined &&
-        !this.taildropAutoPrefetchFailedKeys.includes(this.taildropWaitingFileKey(file)));
-    if (mediaFile !== undefined) {
-      const mediaType: photoAccessHelper.PhotoType | undefined =
-        this.resolveTaildropMediaType(mediaFile.name);
-      if (mediaType !== undefined) {
-        this.taildropAutoPrefetchKey = this.taildropWaitingFileKey(mediaFile);
-        try {
-          this.submitTaildropReceiveStage(mediaFile, mediaType, 'media-prefetch', '');
-        } catch (_error) {
-          this.failTaildropMediaPrefetch('extension_error');
-        }
-        return;
-      }
-    }
-    const uncachedFile: TaildropWaitingFileSummary | undefined = files.find(
-      (file: TaildropWaitingFileSummary) =>
-        this.resolveTaildropMediaType(file.name) === undefined &&
-        this.findTaildropCachedFile(file) === undefined &&
-        !this.taildropAutoPrefetchFailedKeys.includes(this.taildropWaitingFileKey(file)));
-    if (uncachedFile === undefined) {
-      return;
-    }
-    this.taildropAutoPrefetchKey = this.taildropWaitingFileKey(uncachedFile);
-    try {
-      this.submitTaildropReceiveStage(uncachedFile, undefined, 'file-prefetch', '');
-    } catch (_error) {
-      this.failTaildropMediaPrefetch('extension_error');
-    }
-  }
-
-  private async createTaildropHistoryPreview(
-    sourcePath: string, name: string, requestId: number
-  ): Promise<string> {
-    const mediaType: photoAccessHelper.PhotoType | undefined = this.resolveTaildropMediaType(name);
-    if (mediaType === undefined || sourcePath.length === 0) {
-      return '';
-    }
-    const root: string = this.taildropHistoryMediaRoot();
-    const destination: string = `${root}/receive-${requestId}-thumb.jpg`;
-    return this.createTaildropMediaThumbnail(mediaType, sourcePath, destination);
-  }
-
-  private async createTaildropMediaThumbnail(
-    mediaType: photoAccessHelper.PhotoType,
-    sourcePath: string,
-    destination: string
-  ): Promise<string> {
-    return mediaType === photoAccessHelper.PhotoType.IMAGE ?
-      this.createTaildropThumbnail(sourcePath, destination) :
-      this.createTaildropVideoThumbnail(sourcePath, destination);
-  }
-
-  private prepareTaildropThumbnailDestination(destination: string): void {
-    const separator: number = destination.lastIndexOf('/');
-    if (separator > 0) {
-      const parent: string = destination.substring(0, separator);
-      if (!fileIo.accessSync(parent)) {
-        try {
-          fileIo.mkdirSync(parent, true);
-        } catch (error) {
-          const businessError: BusinessError = error as BusinessError;
-          if (businessError.code !== 13900015) {
-            throw new Error(businessError.message);
-          }
-        }
-      }
-    }
-    if (fileIo.accessSync(destination)) {
-      fileIo.unlinkSync(destination);
-    }
-  }
-
-  private async writeTaildropThumbnail(
-    pixelMap: image.PixelMap,
-    destination: string
-  ): Promise<string> {
-    let imagePacker: image.ImagePacker | undefined = undefined;
-    let destinationFile: fileIo.File | undefined = undefined;
-    try {
-      this.prepareTaildropThumbnailDestination(destination);
-      imagePacker = image.createImagePacker();
-      const packed: ArrayBuffer = await imagePacker.packToData(pixelMap, {
-        format: 'image/jpeg',
-        quality: TAILDROP_THUMBNAIL_JPEG_QUALITY
-      });
-      if (packed.byteLength <= 0) {
-        return '';
-      }
-      destinationFile = fileIo.openSync(destination,
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      const written: number = fileIo.writeSync(destinationFile.fd, packed);
-      fileIo.closeSync(destinationFile);
-      destinationFile = undefined;
-      const stat: fileIo.Stat = fileIo.statSync(destination);
-      if (!stat.isFile() || stat.size !== written || written !== packed.byteLength) {
-        fileIo.unlinkSync(destination);
-        return '';
-      }
-      this.notifyCacheContentsChanged();
-      return destination;
-    } catch (error) {
-      try {
-        if (fileIo.accessSync(destination)) {
-          fileIo.unlinkSync(destination);
-        }
-      } catch (_cleanupError) {
-      }
-      throw new Error((error as BusinessError).message);
-    } finally {
-      if (destinationFile !== undefined) {
-        try {
-          fileIo.closeSync(destinationFile);
-        } catch (_error) {
-        }
-      }
-      if (imagePacker !== undefined) {
-        try {
-          await imagePacker.release();
-        } catch (_error) {
-        }
-      }
-    }
-  }
-
-  private async createTaildropThumbnail(sourcePath: string, destination: string): Promise<string> {
-    let sourceFile: fileIo.File | undefined = undefined;
-    let imageSource: image.ImageSource | undefined = undefined;
-    let pixelMap: image.PixelMap | undefined = undefined;
-    try {
-      sourceFile = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
-      imageSource = image.createImageSource(sourceFile.fd);
-      const imageInfo: image.ImageInfo = await imageSource.getImageInfo();
-      if (imageInfo.size.width <= 0 || imageInfo.size.height <= 0) {
-        return '';
-      }
-      let width: number = TAILDROP_THUMBNAIL_EDGE_PX;
-      let height: number = TAILDROP_THUMBNAIL_EDGE_PX;
-      if (imageInfo.size.width >= imageInfo.size.height) {
-        height = Math.max(1, Math.round(
-          TAILDROP_THUMBNAIL_EDGE_PX * imageInfo.size.height / imageInfo.size.width));
-      } else {
-        width = Math.max(1, Math.round(
-          TAILDROP_THUMBNAIL_EDGE_PX * imageInfo.size.width / imageInfo.size.height));
-      }
-      pixelMap = await imageSource.createPixelMap({
-        index: 0,
-        desiredSize: { width: width, height: height }
-      });
-      return await this.writeTaildropThumbnail(pixelMap, destination);
-    } catch (error) {
-      const businessError: BusinessError = error as BusinessError;
-      this.recordDiagnosticEvent(
-        'taildrop_thumbnail_failed', 'imagekit', businessError.code ?? -1);
-      try {
-        if (fileIo.accessSync(destination)) {
-          fileIo.unlinkSync(destination);
-        }
-      } catch (_cleanupError) {
-      }
-      return '';
-    } finally {
-      if (pixelMap !== undefined) {
-        try {
-          await pixelMap.release();
-        } catch (_error) {
-        }
-      }
-      if (imageSource !== undefined) {
-        try {
-          await imageSource.release();
-        } catch (_error) {
-        }
-      }
-      if (sourceFile !== undefined) {
-        try {
-          fileIo.closeSync(sourceFile);
-        } catch (_error) {
-        }
-      }
-    }
-  }
-
-  private async createTaildropVideoThumbnail(
-    sourcePath: string,
-    destination: string
-  ): Promise<string> {
-    let sourceFile: fileIo.File | undefined = undefined;
-    let extractor: media.AVMetadataExtractor | undefined = undefined;
-    let pixelMap: image.PixelMap | undefined = undefined;
-    try {
-      sourceFile = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
-      const stat: fileIo.Stat = fileIo.statSync(sourceFile.fd);
-      extractor = await media.createAVMetadataExtractor();
-      extractor.fdSrc = { fd: sourceFile.fd, offset: 0, length: stat.size };
-      const metadata: media.AVMetadata = await extractor.fetchMetadata();
-      const sourceWidth: number = metadata.videoWidth === undefined ? 0 : Number(metadata.videoWidth);
-      const sourceHeight: number = metadata.videoHeight === undefined ? 0 : Number(metadata.videoHeight);
-      let width: number = TAILDROP_THUMBNAIL_EDGE_PX;
-      let height: number = TAILDROP_THUMBNAIL_EDGE_PX;
-      if (sourceWidth > 0 && sourceHeight > 0 && Number.isFinite(sourceWidth) && Number.isFinite(sourceHeight)) {
-        if (sourceWidth >= sourceHeight) {
-          height = Math.max(1, Math.round(TAILDROP_THUMBNAIL_EDGE_PX * sourceHeight / sourceWidth));
-        } else {
-          width = Math.max(1, Math.round(TAILDROP_THUMBNAIL_EDGE_PX * sourceWidth / sourceHeight));
-        }
-      }
-      const durationMs: number = metadata.duration === undefined ? 0 : Number(metadata.duration);
-      const frameTimeUs: number = Number.isFinite(durationMs) && durationMs > 0 ?
-        Math.min(1000000, Math.round(durationMs * 250)) : 0;
-      pixelMap = await extractor.fetchFrameByTime(
-        frameTimeUs,
-        media.AVImageQueryOptions.AV_IMAGE_QUERY_CLOSEST_SYNC,
-        { width: width, height: height });
-      return await this.writeTaildropThumbnail(pixelMap, destination);
-    } catch (error) {
-      const businessError: BusinessError = error as BusinessError;
-      this.recordDiagnosticEvent(
-        'taildrop_thumbnail_failed', 'video', businessError.code ?? -1);
-      try {
-        if (fileIo.accessSync(destination)) {
-          fileIo.unlinkSync(destination);
-        }
-      } catch (_cleanupError) {
-      }
-      return '';
-    } finally {
-      if (pixelMap !== undefined) {
-        try {
-          await pixelMap.release();
-        } catch (_error) {
-        }
-      }
-      if (extractor !== undefined) {
-        try {
-          await extractor.release();
-        } catch (_error) {
-        }
-      }
-      if (sourceFile !== undefined) {
-        try {
-          fileIo.closeSync(sourceFile);
-        } catch (_error) {
-        }
-      }
-    }
-  }
-
-  private hydrateTaildropVideoPreview(preview: TaildropMediaPreview): void {
-    const destination: string = `${this.taildropInboxRoot()}/${preview.requestId}-thumb.jpg`;
-    this.createTaildropVideoThumbnail(preview.path, destination).then((thumbnailPath: string) => {
-      if (thumbnailPath.length === 0) {
-        return;
-      }
-      const stillWaiting: boolean = this.taildropWaitingFiles.some(
-        (file: TaildropWaitingFileSummary) => file.name === preview.name && file.size === preview.size);
-      if (!stillWaiting) {
-        try {
-          if (fileIo.accessSync(thumbnailPath)) {
-            fileIo.unlinkSync(thumbnailPath);
-          }
-        } catch (_error) {
-        }
-        return;
-      }
-      const hydrated: TaildropMediaPreview = {
-        requestId: preview.requestId,
-        name: preview.name,
-        size: preview.size,
-        path: preview.path,
-        thumbnailPath: thumbnailPath,
-        mediaType: photoAccessHelper.PhotoType.VIDEO
-      };
-      if (!this.validTaildropMediaPreview(hydrated)) {
-        return;
-      }
-      this.taildropMediaPreviews = this.taildropMediaPreviews.filter(
-        (candidate: TaildropMediaPreview) =>
-          candidate.name !== hydrated.name || candidate.size !== hydrated.size).concat([hydrated]);
-      this.taildropCachedFiles = this.taildropCachedFiles.filter(
-        (cached: TaildropCachedFile) => cached.name !== hydrated.name || cached.size !== hydrated.size);
-      this.persistTaildropInbox();
-      this.notifyCacheContentsChanged();
-    }).catch(() => {
-      // The normal media prefetch path retries thumbnail generation when connected.
-    });
-  }
-
-  private cleanupTaildropHistoryMedia(): void {
-    const root: string = this.taildropHistoryMediaRoot();
-    try {
-      if (!fileIo.accessSync(root)) {
-        return;
-      }
-      const referenced: Set<string> = new Set<string>(this.taildropHistory
-        .map((record: TaildropTransferRecord) => record.previewPath)
-        .filter((path: string) => path.length > 0));
-      let removedAny: boolean = false;
-      fileIo.listFileSync(root).forEach((name: string) => {
-        const path: string = `${root}/${name}`;
-        if (!referenced.has(path)) {
-          try {
-            fileIo.unlinkSync(path);
-            removedAny = true;
-          } catch (_error) {
-            // A later history write retries stale preview cleanup.
-          }
-        }
-      });
-      if (removedAny) {
-        this.notifyCacheContentsChanged();
-      }
-    } catch (_error) {
-      // Preview cleanup is best effort and must not affect transfer history.
-    }
-  }
-
-  private validTaildropHistoryRecord(record: TaildropTransferRecord): boolean {
-    return record.requestId > 0 && (record.direction === 'send' || record.direction === 'receive') &&
-      (record.state === 'completed' || record.state === 'failed') && record.fileCount > 0 &&
-      record.totalBytes >= 0 && record.completedAtMs > 0 && record.fileName.length <= 255;
-  }
-
-  private loadTaildropHistory(): void {
-    try {
-      const path: string = this.taildropHistoryPath();
-      if (!fileIo.accessSync(path)) {
-        return;
-      }
-      const records: TaildropTransferRecord[] | undefined = this.taildropContentGateway.loadHistory(
-        fileIo.readTextSync(path), TAILDROP_HISTORY_LIMIT,
-        (record: TaildropTransferRecord): boolean => this.validTaildropHistoryRecord(record));
-      if (records === undefined) {
-        throw new Error('Taildrop history is invalid.');
-      }
-      this.taildropHistory = records;
-      this.cleanupTaildropHistoryMedia();
-      records.forEach((record: TaildropTransferRecord) => {
-        if (record.direction === 'send') {
-          this.lastHandledTaildropRequestId = Math.max(this.lastHandledTaildropRequestId, record.requestId);
-        }
-      });
-    } catch (_error) {
-      this.taildropHistory = [];
-    }
-  }
-
-  private persistTaildropHistory(): void {
-    const path: string = this.taildropHistoryPath();
-    const temporaryPath: string = `${path}.tmp`;
-    const persisted: PersistedTaildropHistory = {
-      records: this.taildropHistory.slice(0, TAILDROP_HISTORY_LIMIT)
-    };
-    if (!this.writePrivateTextFile(temporaryPath, JSON.stringify(persisted))) {
-      return;
-    }
-    try {
-      fileIo.renameSync(temporaryPath, path);
-      this.cleanupTaildropHistoryMedia();
-    } catch (_error) {
-      try {
-        if (fileIo.accessSync(temporaryPath)) {
-          fileIo.unlinkSync(temporaryPath);
-        }
-      } catch (_cleanupError) {
-        // History persistence is retried after the next completed transfer.
-      }
-    }
+    return formatTaildropRecordDescription(record, this.formatTrafficBytes(record.totalBytes));
   }
 
   private clearTaildropHistory(): void {
-    this.taildropHistory = [];
-    const path: string = this.taildropHistoryPath();
-    try {
-      if (fileIo.accessSync(path)) {
-        fileIo.unlinkSync(path);
-      }
-    } catch (_error) {
-      this.writePrivateTextFile(path, JSON.stringify({ records: [] } as PersistedTaildropHistory));
-    }
-    this.cleanupTaildropHistoryMedia();
-    this.showToast($r('app.string.transfer_history_cleared'));
-  }
-
-  private writeAtomicTaildropRequest(path: string, requestId: number, content: string): boolean {
-    const temporaryPath: string = `${path}.${requestId}.tmp`;
-    if (!this.writePrivateTextFile(temporaryPath, content)) {
-      return false;
-    }
-    try {
-      fileIo.renameSync(temporaryPath, path);
-      return true;
-    } catch (_error) {
-      try {
-        if (fileIo.accessSync(temporaryPath)) {
-          fileIo.unlinkSync(temporaryPath);
-        }
-      } catch (_cleanupError) {
-        // Extension startup cleanup removes any remaining temporary file.
-      }
-      return false;
-    }
-  }
-
-  private writeAtomicPrivateTextFile(path: string, content: string): boolean {
-    const temporaryPath: string = `${path}.tmp`;
-    if (!this.writePrivateTextFile(temporaryPath, content)) {
-      return false;
-    }
-    try {
-      fileIo.renameSync(temporaryPath, path);
-      return true;
-    } catch (_error) {
-      try {
-        if (fileIo.accessSync(temporaryPath)) {
-          fileIo.unlinkSync(temporaryPath);
-        }
-      } catch (_cleanupError) {
-        // A later persistence update replaces the temporary snapshot.
-      }
-      return false;
-    }
-  }
-
-  private taildropOutboxRoot(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return RecoverableCachePaths.taildropOutboxRoot(context);
-  }
-
-  private taildropSendRequestPath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${TAILDROP_SEND_REQUEST_FILE_NAME}`;
-  }
-
-  private taildropCancelRequestPath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${TAILDROP_CANCEL_REQUEST_FILE_NAME}`;
-  }
-
-  private taildropInboxRoot(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${TAILDROP_INBOX_DIR_NAME}`;
-  }
-
-  private taildropReceiveRequestPath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${TAILDROP_RECEIVE_REQUEST_FILE_NAME}`;
-  }
-
-  private taildropReceiveResponsePath(): string {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    return `${context.filesDir}/${TAILDROP_RECEIVE_RESPONSE_FILE_NAME}`;
+    this.taildropSessionController.clearTaildropHistory();
   }
 
   private taildropSendActive(): boolean {
-    return this.taildropPickerOpen || this.taildropPreparing || this.taildropTransfer.state === 'queued' ||
-      this.taildropTransfer.state === 'sending';
+    return this.taildropSessionController.taildropSendActive();
   }
 
   private taildropContentChoiceEnabled(): boolean {
-    return !this.taildropPreparing && this.taildropTransfer.state !== 'queued' &&
-      this.taildropTransfer.state !== 'sending' &&
-      (!this.taildropPickerOpen || this.taildropTextEditorVisible);
+    return this.taildropSessionController.taildropContentChoiceEnabled();
   }
 
   private taildropTextEditorMatches(target: TaildropTargetSummary): boolean {
-    return this.taildropTextEditorVisible && this.taildropTextTarget !== undefined &&
-      this.taildropTextTarget.key === target.key;
+    return this.taildropSessionController.taildropTextEditorMatches(target);
   }
 
   private closeTaildropTextEditor(): void {
-    this.taildropTextEditorVisible = false;
-    this.taildropPickerOpen = false;
-    this.taildropTextTarget = undefined;
-  }
-
-  private interruptTaildropPrefetch(): void {
-    if (this.taildropReceiveInProgress &&
-      (this.taildropReceiveStrategy === 'media-prefetch' ||
-        this.taildropReceiveStrategy === 'file-prefetch')) {
-      this.taildropAutoPrefetchKey = '';
-      this.resetTaildropReceiveOperation();
-    }
-  }
-
-  private loadPersistedTaildropInbox(): void {
-    const recoveryGeneration: number = this.taildropContentGateway.beginRecovery();
-    try {
-      const path: string = this.taildropInboxSnapshotPath();
-      if (!fileIo.accessSync(path)) {
-        return;
-      }
-      const persisted: PersistedTaildropInbox | undefined = this.taildropContentGateway.parseSnapshot(
-        fileIo.readTextSync(path));
-      if (persisted === undefined || !this.taildropContentGateway.isCurrentRecovery(recoveryGeneration)) {
-        return;
-      }
-      const pendingDeletes: TaildropWaitingFileSummary[] = persisted.pendingDeletes === undefined ?
-        [] : persisted.pendingDeletes;
-      const persistedAtMs: number = Date.now();
-      this.taildropPendingDeletes = pendingDeletes.filter(
-        (file: TaildropWaitingFileSummary) => this.isTaildropWaitingFileShapeValid(file))
-        .map((file: TaildropWaitingFileSummary, index: number): TaildropWaitingFileSummary => ({
-          name: file.name,
-          size: file.size,
-          receivedAtMs: this.taildropWaitingFileTimestamp(file, persistedAtMs - index)
-        }))
-        .filter((file: TaildropWaitingFileSummary, index: number, files: TaildropWaitingFileSummary[]) =>
-          files.findIndex((candidate: TaildropWaitingFileSummary) => candidate.name === file.name) === index);
-      this.taildropWaitingFiles = this.sortTaildropWaitingFiles(persisted.files.filter(
-        (file: TaildropWaitingFileSummary) => this.isTaildropWaitingFileShapeValid(file))
-        .map((file: TaildropWaitingFileSummary, index: number): TaildropWaitingFileSummary => ({
-          name: file.name,
-          size: file.size,
-          receivedAtMs: this.taildropWaitingFileTimestamp(file, persistedAtMs - index)
-        }))
-        .filter((file: TaildropWaitingFileSummary) => !this.isTaildropPendingDelete(file)));
-      this.taildropInboxReason = persisted.inboxReason;
-      const mediaPreviews: TaildropMediaPreview[] =
-        persisted.mediaPreviews === undefined ? [] : persisted.mediaPreviews;
-      const normalizedMediaPreviews: TaildropMediaPreview[] = [];
-      const videoPreviewsToHydrate: TaildropMediaPreview[] = [];
-      mediaPreviews.forEach((preview: TaildropMediaPreview) => {
-        const normalizedPath: string | undefined = this.normalizeTaildropMediaPath(
-          preview.name, preview.size, preview.path);
-        if (normalizedPath === undefined) {
-          return;
-        }
-        const normalizedPreview: TaildropMediaPreview = {
-          requestId: preview.requestId,
-          name: preview.name,
-          size: preview.size,
-          path: normalizedPath,
-          thumbnailPath: preview.thumbnailPath,
-          mediaType: preview.mediaType
-        };
-        const stillWaiting: boolean = this.taildropWaitingFiles.some(
-          (file: TaildropWaitingFileSummary) =>
-            file.name === normalizedPreview.name && file.size === normalizedPreview.size);
-        if (stillWaiting && this.validTaildropMediaPreview(normalizedPreview)) {
-          normalizedMediaPreviews.push(normalizedPreview);
-          if (normalizedPreview.mediaType === photoAccessHelper.PhotoType.VIDEO &&
-            this.taildropPreviewUri(normalizedPreview.thumbnailPath).length === 0) {
-            videoPreviewsToHydrate.push(normalizedPreview);
-          }
-        } else if (normalizedPreview.mediaType === photoAccessHelper.PhotoType.VIDEO && stillWaiting) {
-          videoPreviewsToHydrate.push(normalizedPreview);
-        }
-      });
-      this.taildropMediaPreviews = normalizedMediaPreviews;
-      let persistedInboxChanged: boolean =
-        JSON.stringify(persisted.files) !== JSON.stringify(this.taildropWaitingFiles) ||
-        JSON.stringify(pendingDeletes) !== JSON.stringify(this.taildropPendingDeletes) ||
-        JSON.stringify(mediaPreviews) !== JSON.stringify(normalizedMediaPreviews);
-      const cachedFiles: TaildropCachedFile[] =
-        persisted.cachedFiles === undefined ? [] : persisted.cachedFiles;
-      this.taildropCachedFiles = this.taildropContentGateway.restoreCachedFiles(
-        cachedFiles, this.taildropWaitingFiles,
-        (cached: TaildropCachedFile): boolean => this.validTaildropCachedFile(cached));
-      persistedInboxChanged = persistedInboxChanged ||
-        JSON.stringify(cachedFiles) !== JSON.stringify(this.taildropCachedFiles);
-      const promotedMedia: TaildropMediaPreview[] = [];
-      this.taildropCachedFiles.forEach((cached: TaildropCachedFile) => {
-        const mediaType: photoAccessHelper.PhotoType | undefined =
-          this.resolveTaildropMediaType(cached.name);
-        if (mediaType !== undefined &&
-          !this.taildropMediaPreviews.some((preview: TaildropMediaPreview) =>
-            preview.name === cached.name && preview.size === cached.size)) {
-          const normalizedPath: string | undefined = this.normalizeTaildropMediaPath(
-            cached.name, cached.size, cached.path);
-          if (normalizedPath === undefined) {
-            return;
-          }
-          promotedMedia.push({
-            requestId: cached.requestId,
-            name: cached.name,
-            size: cached.size,
-            path: normalizedPath,
-            thumbnailPath: '',
-            mediaType: mediaType
-          });
-        }
-      });
-      if (promotedMedia.length > 0) {
-        this.taildropMediaPreviews = this.taildropMediaPreviews.concat(promotedMedia);
-        this.taildropCachedFiles = this.taildropCachedFiles.filter((cached: TaildropCachedFile) =>
-          !promotedMedia.some((preview: TaildropMediaPreview) =>
-            preview.requestId === cached.requestId && preview.name === cached.name &&
-            preview.size === cached.size));
-        persistedInboxChanged = true;
-        promotedMedia.filter((preview: TaildropMediaPreview) =>
-          preview.mediaType === photoAccessHelper.PhotoType.VIDEO).forEach(
-            (preview: TaildropMediaPreview) => videoPreviewsToHydrate.push(preview));
-      }
-      if (persistedInboxChanged) {
-        this.persistTaildropInbox();
-      }
-      videoPreviewsToHydrate.forEach((preview: TaildropMediaPreview) =>
-        this.hydrateTaildropVideoPreview(preview));
-    } catch (_error) {
-      if (!this.taildropContentGateway.isCurrentRecovery(recoveryGeneration)) {
-        return;
-      }
-      this.taildropWaitingFiles = [];
-      this.taildropInboxReason = '';
-      this.taildropMediaPreviews = [];
-      this.taildropCachedFiles = [];
-      this.taildropPendingDeletes = [];
-    }
-  }
-
-  private persistTaildropInbox(): void {
-    const persisted: PersistedTaildropInbox = {
-      files: this.taildropWaitingFiles,
-      inboxReason: this.taildropInboxReason,
-      mediaPreviews: this.taildropMediaPreviews,
-      cachedFiles: this.taildropCachedFiles,
-      pendingDeletes: this.taildropPendingDeletes
-    };
-    this.writeAtomicPrivateTextFile(this.taildropInboxSnapshotPath(), JSON.stringify(persisted));
-  }
-
-  private writeTaildropSendRequest(request: TaildropSendRequest): boolean {
-    const requestPath: string = this.taildropSendRequestPath();
-    return this.writeAtomicTaildropRequest(requestPath, request.requestId, JSON.stringify(request));
-  }
-
-  private sanitizeTaildropFileName(name: string, index: number): string {
-    let sanitized: string = name.replace(/[\\/\u0000]/g, '_').trim();
-    if (sanitized.length === 0 || sanitized === '.' || sanitized === '..') {
-      sanitized = `file-${index + 1}`;
-    }
-    if (sanitized.length > 180) {
-      sanitized = sanitized.substring(0, 180);
-    }
-    return sanitized;
-  }
-
-  private async prepareTaildropFiles(uris: string[], requestId: number): Promise<TaildropSendFile[]> {
-    const historyMediaRoot: string = this.taildropHistoryMediaRoot();
-    const prepared: TaildropSendFile[] = await this.taildropSendGateway.prepareFiles(
-      uris, this.taildropOutboxRoot(), requestId,
-      (name: string, index: number): string => this.sanitizeTaildropFileName(name, index),
-      async (name: string, destination: string, previewRequestId: number): Promise<string> => {
-        const mediaType: photoAccessHelper.PhotoType | undefined = this.resolveTaildropMediaType(name);
-        return mediaType === undefined ? '' : await this.createTaildropMediaThumbnail(
-          mediaType, destination, `${historyMediaRoot}/${previewRequestId}-thumb.jpg`);
-      });
-    this.notifyCacheContentsChanged();
-    return prepared;
-  }
-
-  private cleanupPreparedTaildropFiles(files: TaildropSendFile[]): void {
-    this.taildropSendGateway.cleanup(files);
-    this.notifyCacheContentsChanged();
-  }
-
-  private chooseTaildropDocuments(target: TaildropTargetSummary): void {
-    if (this.taildropTextEditorVisible) {
-      this.closeTaildropTextEditor();
-    }
-    if (!this.ensureTaildropSendAvailable(target)) {
-      return;
-    }
-    this.selectTaildropDocuments(target).catch(() => {
-      this.handleTaildropSelectionFailure();
-    });
-  }
-
-  private chooseTaildropPhotos(target: TaildropTargetSummary): void {
-    if (this.taildropTextEditorVisible) {
-      this.closeTaildropTextEditor();
-    }
-    if (!this.ensureTaildropSendAvailable(target)) {
-      return;
-    }
-    this.selectTaildropMedia(target).catch(() => {
-      this.handleTaildropSelectionFailure();
-    });
-  }
-
-  private chooseTaildropText(target: TaildropTargetSummary): void {
-    if (this.taildropTextEditorMatches(target)) {
-      this.closeTaildropTextEditor();
-      return;
-    }
-    if (this.taildropTextEditorVisible) {
-      this.closeTaildropTextEditor();
-    }
-    if (!this.ensureTaildropSendAvailable(target)) {
-      return;
-    }
-    this.taildropTextInput = '';
-    this.taildropTextInputCanSend = false;
-    this.taildropTextTarget = target;
-    this.taildropPickerOpen = true;
-    this.taildropTextEditorVisible = true;
-  }
-
-  private ensureTaildropSendAvailable(target: TaildropTargetSummary): boolean {
-    if (!this.isConnected() || this.taildropState !== 'ready') {
-      this.showToast($r('app.string.transfer_connect_first_title'));
-      return false;
-    }
-    if (!target.online) {
-      this.showToast($r('app.string.transfer_send_target_unavailable'));
-      return false;
-    }
-    this.interruptTaildropPrefetch();
-    if (this.taildropSendActive()) {
-      this.showToast($r('app.string.transfer_busy_message'));
-      return false;
-    }
-    return true;
-  }
-
-  private handleTaildropSelectionFailure(): void {
-    this.taildropPickerOpen = false;
-    this.taildropPreparing = false;
-    this.showToast($r('app.string.transfer_file_selection_failed'));
-  }
-
-  private async selectTaildropDocuments(target: TaildropTargetSummary): Promise<void> {
-    if (!target.online || !this.isConnected() || this.taildropState !== 'ready' ||
-      this.taildropSendActive()) {
-      return;
-    }
-    this.taildropPickerOpen = true;
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const documentPicker = new picker.DocumentViewPicker(context);
-    const options = new picker.DocumentSelectOptions();
-    options.maxSelectNumber = TAILDROP_MAX_FILE_SELECTION;
-    let uris: string[] = [];
-    try {
-      uris = await documentPicker.select(options);
-    } finally {
-      this.taildropPickerOpen = false;
-    }
-    if (uris.length > 0) {
-      await this.queueTaildropFiles(target, uris);
-    }
-  }
-
-  private async selectTaildropMedia(target: TaildropTargetSummary): Promise<void> {
-    if (!target.online || !this.isConnected() || this.taildropState !== 'ready' ||
-      this.taildropSendActive()) {
-      return;
-    }
-    this.taildropPickerOpen = true;
-    const mediaPicker = new photoAccessHelper.PhotoViewPicker();
-    const options = new photoAccessHelper.PhotoSelectOptions();
-    options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_VIDEO_TYPE;
-    options.maxSelectNumber = TAILDROP_MAX_MEDIA_SELECTION;
-    options.isSearchSupported = true;
-    options.isPhotoTakingSupported = true;
-    let uris: string[] = [];
-    try {
-      const result: photoAccessHelper.PhotoSelectResult = await mediaPicker.select(options);
-      uris = result.photoUris;
-    } finally {
-      this.taildropPickerOpen = false;
-    }
-    if (uris.length > 0) {
-      await this.queueTaildropFiles(target, uris);
-    }
+    this.taildropSessionController.closeTaildropTextEditor();
   }
 
   private onTaildropTextEditorVisibilityChanged(): void {
-    if (!this.taildropTextEditorVisible) {
-      this.taildropPickerOpen = false;
-      this.taildropTextTarget = undefined;
-      this.taildropTextInputCanSend = false;
-    }
+    this.taildropSessionController.onTaildropTextEditorVisibilityChanged();
+  }
+
+  private ensureTaildropSendAvailable(target: TaildropTargetSummary): boolean {
+    return this.taildropSessionController.ensureTaildropSendAvailable(target);
+  }
+
+  private chooseTaildropDocuments(target: TaildropTargetSummary): void {
+    this.taildropSessionController.chooseTaildropDocuments(target);
+  }
+
+  private chooseTaildropPhotos(target: TaildropTargetSummary): void {
+    this.taildropSessionController.chooseTaildropPhotos(target);
+  }
+
+  private chooseTaildropText(target: TaildropTargetSummary): void {
+    this.taildropSessionController.chooseTaildropText(target);
   }
 
   private sendTaildropText(): void {
-    const target: TaildropTargetSummary | undefined = this.taildropTextTarget;
-    const text: string = this.taildropTextInput;
-    if (target === undefined || text.trim().length === 0) {
-      return;
-    }
-    this.taildropTextEditorVisible = false;
-    this.taildropPickerOpen = false;
-    this.queueTaildropText(target, text).catch(() => {
-      this.handleTaildropSelectionFailure();
-    });
+    this.taildropSessionController.sendTaildropText();
   }
 
-  private async queueTaildropText(target: TaildropTargetSummary, text: string): Promise<void> {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const path: string = `${context.cacheDir}/taildrop-text-${Date.now()}.txt`;
-    let file: fileIo.File | undefined = undefined;
-    try {
-      file = fileIo.openSync(path,
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, text);
-      fileIo.closeSync(file);
-      file = undefined;
-      await this.queueTaildropFiles(target, [fileUri.getUriFromPath(path)]);
-    } finally {
-      if (file !== undefined) {
-        try {
-          fileIo.closeSync(file);
-        } catch (_closeError) {
-        }
-      }
-      try {
-        if (fileIo.accessSync(path)) {
-          fileIo.unlinkSync(path);
-        }
-      } catch (_cleanupError) {
-      }
-    }
-  }
-
-  private async queueTaildropFiles(target: TaildropTargetSummary, uris: string[]): Promise<void> {
-    if (!target.online || !this.isConnected() || this.taildropState !== 'ready' ||
-      this.taildropPreparing || this.taildropTransfer.state === 'queued' ||
-      this.taildropTransfer.state === 'sending' || this.taildropReceiveInProgress) {
-      return;
-    }
-    this.taildropPreparing = true;
-    const requestId: number = Date.now();
-    let files: TaildropSendFile[] = [];
-    try {
-      files = await this.prepareTaildropFiles(uris.slice(0, TAILDROP_MAX_MEDIA_SELECTION), requestId);
-      let totalBytes: number = 0;
-      files.forEach((file: TaildropSendFile) => {
-        totalBytes += file.size;
-      });
-      const request: TaildropSendRequest = {
-        requestId: requestId,
-        targetKey: target.key,
-        outboxRoot: this.taildropOutboxRoot(),
-        files: files
-      };
-      this.taildropTransfer = {
-        requestId: requestId, state: 'queued', reason: '', targetKey: target.key,
-        targetName: target.name, fileName: '', fileIndex: 0, fileCount: files.length,
-        fileBytes: 0, fileSize: 0, bytesSent: 0, totalBytes: totalBytes,
-        previewPath: files.length === 1 ? files[0].previewPath : '', completedAtMs: 0
-      };
-      this.resetTaildropProgressEstimate();
-      this.taildropRequestSubmittedAtMs = Date.now();
-      if (!this.writeTaildropSendRequest(request)) {
-        this.cleanupPreparedTaildropFiles(files);
-        const failed: TaildropTransferSummary = this.taildropTransferFailure(
-          this.taildropTransfer, 'extension_error');
-        this.taildropPreparing = false;
-        this.applyTaildropTransfer(failed);
-        return;
-      }
-      this.recordDiagnosticEvent('taildrop_send_queued', 'transfer');
-      this.taildropPreparing = false;
-    } catch (_error) {
-      this.cleanupPreparedTaildropFiles(files);
-      this.taildropPreparing = false;
-      this.showToast($r('app.string.transfer_file_copy_failed'));
-    }
+  private async queueTaildropFiles(target: TaildropTargetSummary, uris: string[]): Promise<boolean> {
+    return await this.taildropSessionController.queueTaildropFiles(target, uris);
   }
 
   private cancelTaildropSend(): void {
-    if (this.taildropCancelPending || this.taildropTransfer.requestId <= 0 ||
-      (this.taildropTransfer.state !== 'queued' && this.taildropTransfer.state !== 'sending')) {
-      return;
-    }
-    const request: TaildropCancelRequest = { requestId: this.taildropTransfer.requestId };
-    if (!this.writeAtomicTaildropRequest(this.taildropCancelRequestPath(), request.requestId,
-      JSON.stringify(request))) {
-      this.showToast($r('app.string.transfer_cancel_failed'));
-      return;
-    }
-    this.taildropCancelPending = true;
-    this.recordDiagnosticEvent('taildrop_send_cancel_requested', 'transfer');
+    this.taildropSessionController.cancelTaildropSend();
   }
 
   private retryTaildropSend(record: TaildropTransferRecord): void {
-    if (record.direction !== 'send' || record.state !== 'failed' || this.taildropSendActive()) {
-      return;
-    }
-    const target: TaildropTargetSummary | undefined = this.displayedTaildropTargets().find(
-      (item: TaildropTargetSummary) => item.key === record.targetKey && item.online);
-    if (target === undefined) {
-      this.showToast($r('app.string.transfer_send_target_unavailable'));
-      return;
-    }
-    this.transferScroller.scrollEdge(Edge.Top);
-    this.showToast($r('app.string.transfer_retry_choose_content'));
+    this.taildropSessionController.retryTaildropSend(record);
   }
 
   private startTaildropReceive(file: TaildropWaitingFileSummary): void {
-    if (this.taildropReceiveInProgress && this.taildropReceive.name !== file.name &&
-      this.taildropReceive.state === 'awaiting_gallery_save') {
-      this.resetTaildropReceiveOperation();
-      this.taildropAutoPrefetchKey = '';
-    }
-    if (this.taildropState !== 'ready' || this.taildropSendActive() ||
-      this.taildropReceiveInProgress) {
-      return;
-    }
-    try {
-      this.routeTaildropReceive(file);
-    } catch (error) {
-      const businessError: BusinessError = error as BusinessError;
-      this.recordDiagnosticEvent('taildrop_receive_submit_failed', 'transfer', businessError.code ?? -1);
-      this.resetTaildropReceiveOperation();
-      this.showToast($r('app.string.transfer_receive_failed'));
-    }
+    this.taildropSessionController.startTaildropReceive(file);
   }
 
   private startTaildropTextPreview(file: TaildropWaitingFileSummary): void {
-    if (this.taildropContentKind(file) !== 'text') {
-      return;
-    }
-    if (this.taildropReceiveInProgress && this.taildropReceive.name !== file.name &&
-      this.taildropReceive.state === 'awaiting_gallery_save') {
-      this.resetTaildropReceiveOperation();
-      this.taildropAutoPrefetchKey = '';
-    }
-    if (this.taildropReceiveInProgress) {
-      if (this.taildropReceive.name === file.name &&
-        this.taildropReceive.state === 'awaiting_text_preview') {
-        return;
-      }
-      this.taildropPendingTextPreview = file;
-      if (this.taildropReceive.state === 'awaiting_text_preview') {
-        this.resetTaildropReceiveOperation();
-        this.resumePendingTaildropAction();
-      }
-      return;
-    }
-    if (this.taildropSendActive()) {
-      this.showToast($r('app.string.transfer_busy_message'));
-      return;
-    }
-    const cached: TaildropCachedFile | undefined = this.findTaildropCachedFile(file);
-    if (cached !== undefined) {
-      this.showCachedTaildropTextPreview(cached);
-      return;
-    }
-    if (this.taildropState !== 'ready') {
-      this.showToast($r('app.string.transfer_connect_first_title'));
-      return;
-    }
-    try {
-      this.submitTaildropReceiveStage(file, undefined, 'text-preview', '');
-    } catch (error) {
-      const businessError: BusinessError = error as BusinessError;
-      this.recordDiagnosticEvent('taildrop_text_preview_submit_failed', 'transfer', businessError.code ?? -1);
-      this.resetTaildropReceiveOperation();
-      this.showToast($r('app.string.transfer_receive_failed'));
-    }
+    this.taildropSessionController.startTaildropTextPreview(file);
   }
 
-  private showCachedTaildropTextPreview(cached: TaildropCachedFile): boolean {
-    const result: TaildropReceiveResult = {
-      requestId: cached.requestId,
-      action: 'stage',
-      state: 'awaiting_text_preview',
-      reason: '',
-      name: cached.name,
-      size: cached.size,
-      path: cached.path
-    };
-    const content: string | undefined = this.readTaildropTextPreview(result);
-    if (content === undefined) {
-      this.removeTaildropCachedFile(cached.name, cached.size, true);
-      this.persistTaildropInbox();
-      this.showToast($r('app.string.transfer_receive_failed'));
-      return false;
-    }
-    this.taildropReceiveStrategy = 'text-preview';
-    this.taildropReceiveExpectedSize = cached.size;
-    this.taildropReceiveInProgress = true;
-    this.taildropReceiveStateStartedAtMs = 0;
-    this.taildropReceive = result;
-    this.taildropReceivedText = content;
-    return true;
-  }
-
-  private resumePendingTaildropAction(): boolean {
-    if (this.taildropReceiveInProgress) {
-      return false;
-    }
-    const pendingMediaSave: TaildropWaitingFileSummary | undefined =
-      this.taildropPendingMediaSave;
-    this.taildropPendingMediaSave = undefined;
-    if (pendingMediaSave !== undefined &&
-      this.findTaildropMediaPreview(pendingMediaSave) !== undefined) {
-      this.startPreparedTaildropMediaSave(pendingMediaSave);
-      return true;
-    }
-    const pending: TaildropWaitingFileSummary | undefined = this.taildropPendingTextPreview;
-    this.taildropPendingTextPreview = undefined;
-    if (pending !== undefined) {
-      this.startTaildropTextPreview(pending);
-      return true;
-    }
-    return false;
-  }
-
-  private resolveTaildropMediaType(name: string): photoAccessHelper.PhotoType | undefined {
-    const extension: string = this.taildropFileExtension(name);
-    if (TAILDROP_IMAGE_EXTENSIONS.includes(extension)) {
-      return photoAccessHelper.PhotoType.IMAGE;
-    }
-    if (TAILDROP_VIDEO_EXTENSIONS.includes(extension)) {
-      return photoAccessHelper.PhotoType.VIDEO;
-    }
-    return undefined;
-  }
-
-  private routeTaildropReceive(file: TaildropWaitingFileSummary): void {
-    if (this.taildropContentKind(file) === 'text') {
-      this.submitTaildropReceiveStage(file, undefined, 'text', '');
-      return;
-    }
-    const mediaType: photoAccessHelper.PhotoType | undefined = this.resolveTaildropMediaType(file.name);
-    if (mediaType !== undefined) {
-      this.submitTaildropReceiveStage(file, mediaType, 'media', '');
-      return;
-    }
-    this.submitTaildropReceiveStage(file, undefined, 'file', '');
-  }
-
-  private async selectTaildropReceiveDestination(result: TaildropReceiveResult): Promise<string> {
-    this.taildropPickerOpen = true;
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const documentPicker = new picker.DocumentViewPicker(context);
-    const options = new picker.DocumentSaveOptions();
-    options.newFileNames = [this.sanitizeTaildropFileName(result.name, 0)];
-    let uris: string[] = [];
-    try {
-      uris = await documentPicker.save(options);
-    } catch (_error) {
-      this.showToast($r('app.string.transfer_receive_picker_failed'));
-    } finally {
-      this.taildropPickerOpen = false;
-    }
-    return uris.length > 0 ? uris[0] : '';
-  }
-
-  private useDirectTaildropBackend(): boolean {
-    return !this.isConnected() && this.backendStatus.includes('state=Running');
-  }
-
-  private isCurrentTaildropReceiveRequest(request: TaildropReceiveRequest): boolean {
-    return this.taildropReceiveInProgress && this.taildropReceive.requestId === request.requestId &&
-      this.taildropReceive.action === request.action;
-  }
-
-  private dispatchTaildropReceiveRequest(request: TaildropReceiveRequest): boolean {
-    if (!this.useDirectTaildropBackend()) {
-      return this.writeAtomicTaildropRequest(this.taildropReceiveRequestPath(), request.requestId,
-        JSON.stringify(request));
-    }
-    this.taildropReceiveResponseInFlight = true;
-    try {
-      nativeBridge.backendTaildropReceiveAsync(JSON.stringify(request))
-        .then((resultText: string) => {
-          if (!this.isCurrentTaildropReceiveRequest(request)) {
-            return;
-          }
-          let result: TaildropReceiveResult;
-          try {
-            result = JSON.parse(resultText) as TaildropReceiveResult;
-          } catch (_error) {
-            this.failTaildropReceive('invalid_result');
-            return;
-          }
-          if (!this.taildropReceiveGateway.matchesResponse(this.taildropReceive, result)) {
-            this.failTaildropReceive('invalid_result');
-            return;
-          }
-          return this.handleTaildropReceiveResult(result)
-            .catch(() => this.failTaildropReceive('export_failed'));
-        })
-        .catch(() => {
-          if (this.isCurrentTaildropReceiveRequest(request)) {
-            this.failTaildropReceive('backend_unavailable');
-          }
-        })
-        .finally(() => {
-          if (!this.taildropReceiveInProgress ||
-            (this.taildropReceive.requestId === request.requestId &&
-              this.taildropReceive.action === request.action)) {
-            this.taildropReceiveResponseInFlight = false;
-          }
-        });
-    } catch (_error) {
-      this.taildropReceiveResponseInFlight = false;
-      this.failTaildropReceive('backend_unavailable');
-    }
-    return true;
-  }
-
-  private submitTaildropReceiveStage(
-    file: TaildropWaitingFileSummary,
-    mediaType?: photoAccessHelper.PhotoType,
-    strategy: string = 'file',
-    destinationUri: string = ''
-  ): void {
-    if (this.taildropState !== 'ready' || this.taildropSendActive()) {
-      return;
-    }
-    const requestId: number = Date.now();
-    const inboxRoot: string = this.taildropInboxRoot();
-    if (!this.ensureTaildropDirectory(inboxRoot)) {
-      this.recordDiagnosticEvent('taildrop_receive_inbox_unavailable', 'transfer');
-      this.showToast($r('app.string.transfer_receive_failed'));
-      return;
-    }
-    this.taildropReceiveInProgress = true;
-    const request: TaildropReceiveRequest = this.taildropReceiveGateway.createStageRequest(
-      requestId, file.name, inboxRoot);
-    this.taildropReceiveStrategy = strategy;
-    this.taildropReceiveDestinationUri = destinationUri;
-    this.taildropReceiveExpectedSize = file.size;
-    this.taildropReceiveMediaType = mediaType;
-    this.taildropReceive = {
-      requestId: requestId, action: 'stage', state: 'requesting', reason: '', name: file.name,
-      size: file.size, path: request.path
-    };
-    this.taildropReceiveStateStartedAtMs = Date.now();
-    this.writePrivateTextFile(this.taildropReceiveResponsePath(), '');
-    if (!this.dispatchTaildropReceiveRequest(request)) {
-      this.failTaildropReceive('extension_error');
-      return;
-    }
-    this.recordDiagnosticEvent(mediaType === undefined ? 'taildrop_receive_queued' :
-      'taildrop_media_receive_queued', 'transfer');
-  }
-
-  private ensureTaildropDirectory(path: string): boolean {
-    try {
-      if (!fileIo.accessSync(path)) {
-        fileIo.mkdirSync(path, true);
-      }
-      return fileIo.accessSync(path) && fileIo.statSync(path).isDirectory();
-    } catch (_error) {
-      try {
-        // mkdirSync may report 13900015 when another operation already created
-        // the directory. Treat an existing directory as a successful outcome.
-        return fileIo.accessSync(path) && fileIo.statSync(path).isDirectory();
-      } catch (_verificationError) {
-        return false;
-      }
-    }
+  private async showCachedTaildropTextPreview(cached: TaildropCachedFile): Promise<boolean> {
+    return await this.taildropSessionController.showCachedTaildropTextPreview(cached);
   }
 
   private confirmDiscardTaildropFile(file: TaildropWaitingFileSummary): void {
@@ -8325,7 +4836,7 @@ export struct BridgeStatus {
     }
     this.getUIContext().showAlertDialog({
       title: $r('app.string.transfer_discard_confirm_title'),
-      message: $r('app.string.transfer_discard_confirm_message', file.name),
+      message: $r('app.string.transfer_discard_confirm_message', this.sanitizeTaildropDisplayText(file.name)),
       autoCancel: true,
       primaryButton: {
         value: $r('app.string.cancel_action'),
@@ -8335,46 +4846,9 @@ export struct BridgeStatus {
       secondaryButton: {
         value: $r('app.string.transfer_discard_action'),
         fontColor: $r('app.color.status_error'),
-        action: () => this.discardTaildropFile(file)
+        action: () => this.taildropSessionController.discardTaildropFile(file)
       }
     });
-  }
-
-  private discardTaildropFile(file: TaildropWaitingFileSummary): void {
-    if (this.taildropSendActive() || this.taildropReceiveInProgress) {
-      return;
-    }
-    if (this.taildropState !== 'ready') {
-      this.queueTaildropPendingDelete(file);
-      this.removeTaildropMediaPreview(file.name, file.size, true);
-      this.removeTaildropCachedFile(file.name, file.size, true);
-      this.taildropWaitingFiles = this.taildropWaitingFiles.filter(
-        (waitingFile: TaildropWaitingFileSummary) =>
-          waitingFile.name !== file.name || waitingFile.size !== file.size);
-      this.persistTaildropInbox();
-      this.notifyCacheContentsChanged();
-      this.showToast($r('app.string.transfer_discard_completed'));
-      return;
-    }
-    const requestId: number = Date.now();
-    const request: TaildropReceiveRequest = {
-      requestId: requestId, action: 'delete', name: file.name, inboxRoot: '', path: ''
-    };
-    this.taildropReceiveStrategy = 'discard';
-    this.taildropReceiveDestinationUri = '';
-    this.taildropReceiveExpectedSize = 0;
-    this.taildropReceiveInProgress = true;
-    this.taildropReceive = {
-      requestId: requestId, action: 'delete', state: 'deleting', reason: '', name: file.name,
-      size: file.size, path: ''
-    };
-    this.taildropReceiveStateStartedAtMs = Date.now();
-    this.writePrivateTextFile(this.taildropReceiveResponsePath(), '');
-    if (!this.dispatchTaildropReceiveRequest(request)) {
-      this.failTaildropReceive('discard_failed');
-      return;
-    }
-    this.recordDiagnosticEvent('taildrop_receive_discard_requested', 'transfer');
   }
 
   private confirmClearTaildropInboxCache(): void {
@@ -8393,1117 +4867,17 @@ export struct BridgeStatus {
       secondaryButton: {
         value: $r('app.string.transfer_clear_cache_action'),
         fontColor: $r('app.color.status_error'),
-        action: () => this.clearTaildropInboxCache()
+        action: () => this.taildropSessionController.clearTaildropInboxCache()
       }
     });
-  }
-
-  private clearTaildropInboxCache(): void {
-    if (this.taildropSendActive() || this.taildropReceiveInProgress) {
-      return;
-    }
-    if (this.taildropState !== 'ready') {
-      this.queueTaildropPendingDeletes(this.taildropWaitingFiles);
-      const succeeded: boolean = this.clearLocalTaildropInboxCache();
-      if (succeeded) {
-        this.clearTaildropInboxViewState();
-      }
-      this.notifyCacheContentsChanged();
-      this.showToast(succeeded ? $r('app.string.transfer_cache_cleared') :
-        $r('app.string.transfer_clear_cache_failed'));
-      return;
-    }
-    this.requestTaildropInboxCacheClear();
-  }
-
-  private requestTaildropInboxCacheClear(): boolean {
-    const requestId: number = Date.now();
-    const request: TaildropReceiveRequest = {
-      requestId: requestId, action: 'clear', name: '', inboxRoot: '', path: ''
-    };
-    this.taildropReceiveStrategy = 'clear';
-    this.taildropReceiveInProgress = true;
-    this.taildropReceive = {
-      requestId: requestId, action: 'clear', state: 'requesting', reason: '', name: '', size: 0, path: ''
-    };
-    this.taildropReceiveStateStartedAtMs = Date.now();
-    this.writePrivateTextFile(this.taildropReceiveResponsePath(), '');
-    if (!this.dispatchTaildropReceiveRequest(request)) {
-      this.recordDiagnosticEvent('taildrop_receive_failed', 'clear_failed');
-      this.resetTaildropReceiveOperation();
-      if (!this.cacheClearRequestedFromSettings) {
-        this.showToast($r('app.string.transfer_clear_cache_failed'));
-      }
-      return false;
-    }
-    this.recordDiagnosticEvent('taildrop_receive_cache_clear_requested', 'transfer');
-    return true;
-  }
-
-  private checkTaildropReceiveTimeout(): void {
-    if (!this.taildropReceiveInProgress) {
-      return;
-    }
-    if (this.taildropReceive.requestId <= 0) {
-      this.recordDiagnosticEvent('taildrop_receive_invalid_busy_state', 'timeout');
-      this.resetTaildropReceiveOperation();
-      this.showToast($r('app.string.transfer_save_timeout'));
-      return;
-    }
-    if (this.taildropReceive.state === 'awaiting_gallery_save' ||
-      this.taildropReceive.state === 'awaiting_text_preview') {
-      return;
-    }
-    if (this.taildropReceiveStateStartedAtMs <= 0) {
-      this.taildropReceiveStateStartedAtMs = Date.now();
-      return;
-    }
-    const timeoutMs: number = this.taildropReceive.state === 'requesting' ||
-      this.taildropReceive.state === 'deleting' ?
-      TAILDROP_RECEIVE_BACKEND_TIMEOUT_MS : TAILDROP_SAVE_TIMEOUT_MS;
-    if (Date.now() - this.taildropReceiveStateStartedAtMs < timeoutMs) {
-      return;
-    }
-    this.recordDiagnosticEvent('taildrop_receive_timeout', this.taildropReceive.state);
-    if (this.taildropReceiveStrategy === 'media-prefetch') {
-      this.failTaildropMediaPrefetch('timeout');
-      return;
-    }
-    if (this.taildropReceive.state === 'saving_gallery' &&
-      this.taildropReceiveMediaType !== undefined && this.taildropReceive.path.length > 0) {
-      this.taildropMediaSaveInProgress = false;
-      this.taildropPickerOpen = false;
-      this.taildropReceiveResponseInFlight = false;
-      this.taildropReceive = {
-        requestId: this.taildropReceive.requestId, action: 'stage', state: 'awaiting_gallery_save',
-        reason: '', name: this.taildropReceive.name, size: this.taildropReceive.size,
-        path: this.taildropReceive.path
-      };
-      this.taildropReceiveStateStartedAtMs = 0;
-      this.showToast($r('app.string.transfer_save_timeout'));
-      return;
-    }
-    if (this.taildropReceive.state === 'deleting') {
-      if (this.taildropReceiveStrategy === 'pending-delete') {
-        this.deferTaildropPendingDelete('timeout');
-      } else if (this.taildropReceiveStrategy === 'discard') {
-        this.completeTaildropDiscard(true);
-      } else {
-        this.completeTaildropReceive(true);
-      }
-      return;
-    }
-    this.failTaildropReceive('timeout');
-  }
-
-  private processTaildropReceiveResponse(): void {
-    if (!this.taildropReceiveInProgress || this.taildropReceiveResponseInFlight) {
-      return;
-    }
-    try {
-      const path: string = this.taildropReceiveResponsePath();
-      if (!fileIo.accessSync(path)) {
-        return;
-      }
-      const responseText: string = fileIo.readTextSync(path).trim();
-      if (responseText.length === 0) {
-        return;
-      }
-      const result: TaildropReceiveResult = JSON.parse(responseText) as TaildropReceiveResult;
-      if (!this.taildropReceiveGateway.matchesResponse(this.taildropReceive, result)) {
-        this.writePrivateTextFile(path, '');
-        return;
-      }
-      this.writePrivateTextFile(path, '');
-      this.taildropReceiveResponseInFlight = true;
-      this.handleTaildropReceiveResult(result)
-        .catch(() => this.failTaildropReceive('export_failed'))
-        .finally(() => {
-          this.taildropReceiveResponseInFlight = false;
-        });
-    } catch (_error) {
-      // The Extension may be atomically replacing the response. Retry next poll.
-    }
-  }
-
-  private async handleTaildropReceiveResult(result: TaildropReceiveResult): Promise<void> {
-    if (result.state === 'failed') {
-      if (this.taildropReceiveStrategy === 'pending-delete') {
-        if (result.reason === 'file_unavailable') {
-          this.completeTaildropPendingDelete();
-        } else {
-          this.deferTaildropPendingDelete(result.reason);
-        }
-        return;
-      }
-      if (result.action === 'delete') {
-        this.recordDiagnosticEvent('taildrop_receive_delete_deferred', result.reason);
-        if (this.taildropReceiveStrategy === 'discard') {
-          this.completeTaildropDiscard(true);
-        } else {
-          this.completeTaildropReceive(true);
-        }
-        return;
-      }
-      this.failTaildropReceive(result.reason);
-      return;
-    }
-    if (result.action === 'stage' && result.state === 'staged') {
-      if (this.taildropReceiveStrategy === 'media-prefetch') {
-        const mediaType: photoAccessHelper.PhotoType | undefined = this.taildropReceiveMediaType;
-        const mediaPath: string | undefined = this.prepareTaildropMediaForSave(result);
-        if (mediaType === undefined || mediaPath === undefined) {
-          this.failTaildropMediaPrefetch('export_failed');
-          return;
-        }
-        const thumbnailPath: string = await this.createTaildropMediaThumbnail(
-          mediaType, mediaPath, `${this.taildropInboxRoot()}/${result.requestId}-thumb.jpg`);
-        if (thumbnailPath.length === 0) {
-          // The staged source is the durable offline copy. A decoder failure
-          // must not discard it just because the derived thumbnail is absent.
-          this.recordDiagnosticEvent('taildrop_thumbnail_unavailable',
-            mediaType === photoAccessHelper.PhotoType.IMAGE ? 'image' : 'video');
-        }
-        this.removeTaildropMediaPreview(result.name, result.size, true);
-        this.removeTaildropCachedFile(result.name, result.size, true);
-        const preview: TaildropMediaPreview = {
-          requestId: result.requestId,
-          name: result.name,
-          size: result.size,
-          path: mediaPath,
-          thumbnailPath: thumbnailPath,
-          mediaType: mediaType
-        };
-        if (!this.validTaildropMediaPreview(preview)) {
-          this.failTaildropMediaPrefetch('export_failed');
-          return;
-        }
-        this.taildropMediaPreviews = this.taildropMediaPreviews.concat([preview]);
-        this.taildropAutoPrefetchKey = '';
-        this.persistTaildropInbox();
-        this.notifyCacheContentsChanged();
-        this.recordDiagnosticEvent('taildrop_media_preview_ready', result.name);
-        this.resetTaildropReceiveOperation();
-        if (!this.resumePendingTaildropAction()) {
-          this.prefetchTaildropInboxFiles(this.taildropWaitingFiles);
-        }
-        return;
-      }
-      if (this.taildropReceiveStrategy === 'file-prefetch') {
-        const cached: TaildropCachedFile = {
-          requestId: result.requestId,
-          name: result.name,
-          size: result.size,
-          path: result.path
-        };
-        if (!this.validTaildropCachedFile(cached)) {
-          this.failTaildropMediaPrefetch('export_failed');
-          return;
-        }
-        this.removeTaildropCachedFile(result.name, result.size, true);
-        this.taildropCachedFiles = this.taildropCachedFiles.concat([cached]);
-        this.taildropAutoPrefetchKey = '';
-        this.persistTaildropInbox();
-        this.notifyCacheContentsChanged();
-        this.recordDiagnosticEvent('taildrop_file_cache_ready', result.name);
-        this.resetTaildropReceiveOperation();
-        if (!this.resumePendingTaildropAction()) {
-          this.prefetchTaildropInboxFiles(this.taildropWaitingFiles);
-        }
-        return;
-      }
-      if (this.taildropReceiveMediaType !== undefined) {
-        const mediaPath: string | undefined = this.prepareTaildropMediaForSave(result);
-        if (mediaPath === undefined) {
-          this.failTaildropReceive('export_failed');
-          return;
-        }
-        this.taildropReceiveThumbnailPath = await this.createTaildropMediaThumbnail(
-          this.taildropReceiveMediaType,
-          mediaPath,
-          `${this.taildropInboxRoot()}/${result.requestId}-active-thumb.jpg`);
-        this.taildropReceive = {
-          requestId: result.requestId, action: 'stage', state: 'awaiting_gallery_save', reason: '',
-          name: result.name, size: result.size, path: mediaPath
-        };
-        this.taildropReceiveStateStartedAtMs = 0;
-        this.recordDiagnosticEvent('taildrop_media_ready_for_save', 'transfer');
-        this.showToast($r('app.string.transfer_media_ready_to_save'));
-        return;
-      }
-      if (this.taildropReceiveStrategy === 'text-preview') {
-        const content: string | undefined = this.readTaildropTextPreview(result);
-        if (content === undefined) {
-          this.failTaildropReceive('export_failed');
-          return;
-        }
-        this.taildropReceive = {
-          requestId: result.requestId, action: 'stage', state: 'awaiting_text_preview', reason: '',
-          name: result.name, size: result.size, path: result.path
-        };
-        this.taildropReceivedText = content;
-        this.taildropReceiveStateStartedAtMs = 0;
-        this.taildropTextPreviewVisible = false;
-        this.recordDiagnosticEvent('taildrop_text_preview_ready', 'transfer');
-        return;
-      }
-      this.taildropReceive = {
-        requestId: result.requestId, action: 'stage', state: 'exporting', reason: '', name: result.name,
-        size: result.size, path: result.path
-      };
-      this.taildropReceiveStateStartedAtMs = Date.now();
-      if (this.taildropReceiveStrategy === 'file') {
-        const destinationUri: string = await this.selectTaildropReceiveDestination(result);
-        if (!this.isCurrentTaildropReceive(result.requestId, 'stage', 'exporting')) {
-          return;
-        }
-        if (destinationUri.length === 0) {
-          this.resetTaildropReceiveOperation();
-          return;
-        }
-        this.taildropReceiveDestinationUri = destinationUri;
-      }
-      const handled: boolean = await this.handleTaildropStagedFile(result);
-      if (!this.isCurrentTaildropReceive(result.requestId, 'stage', 'exporting')) {
-        return;
-      }
-      if (!handled) {
-        this.failTaildropReceive('export_failed');
-        return;
-      }
-      this.requestTaildropReceiveDelete(result.requestId, result.name, result.size);
-      return;
-    }
-    if (result.action === 'delete' && result.state === 'completed') {
-      if (this.taildropReceiveStrategy === 'pending-delete') {
-        this.completeTaildropPendingDelete();
-      } else if (this.taildropReceiveStrategy === 'discard') {
-        this.completeTaildropDiscard();
-      } else {
-        this.completeTaildropReceive();
-      }
-      return;
-    }
-    if (result.action === 'clear' && result.state === 'completed') {
-      if (!this.clearLocalTaildropInboxCache()) {
-        this.failTaildropReceive('clear_failed');
-        return;
-      }
-      const requestedFromSettings: boolean = this.cacheClearRequestedFromSettings;
-      this.taildropPendingDeletes = [];
-      this.taildropPendingDeleteRetryAtMs = 0;
-      this.clearTaildropInboxViewState();
-      this.recordDiagnosticEvent('taildrop_receive_cache_cleared', 'transfer');
-      this.resetTaildropReceiveOperation();
-      if (requestedFromSettings) {
-        this.finishSettingsCacheClear(true);
-      } else {
-        this.notifyCacheContentsChanged();
-        this.showToast($r('app.string.transfer_cache_cleared'));
-      }
-      return;
-    }
-    this.failTaildropReceive('invalid_result');
-  }
-
-  private isCurrentTaildropReceive(requestId: number, action: string, state: string): boolean {
-    return this.taildropReceiveInProgress && this.taildropReceive.requestId === requestId &&
-      this.taildropReceive.action === action && this.taildropReceive.state === state;
-  }
-
-  private prepareTaildropMediaForSave(result: TaildropReceiveResult): string | undefined {
-    return this.normalizeTaildropMediaPath(result.name, result.size, result.path);
-  }
-
-  private normalizeTaildropMediaPath(
-    name: string,
-    size: number,
-    sourcePath: string
-  ): string | undefined {
-    if (name.length === 0 || name.length > 255 || name === '.' || name === '..' ||
-      name.includes('/') || name.includes('\\') || name.includes('\u0000')) {
-      return undefined;
-    }
-    const mediaPath: string = `${this.taildropInboxRoot()}/${name}`;
-    try {
-      const sourceStat: fileIo.Stat = fileIo.statSync(sourcePath);
-      if (!sourceStat.isFile() || sourceStat.size !== size) {
-        return undefined;
-      }
-      if (sourcePath === mediaPath) {
-        return mediaPath;
-      }
-      if (fileIo.accessSync(mediaPath)) {
-        fileIo.unlinkSync(mediaPath);
-      }
-      fileIo.renameSync(sourcePath, mediaPath);
-      const stat: fileIo.Stat = fileIo.statSync(mediaPath);
-      if (!stat.isFile() || stat.size !== size) {
-        fileIo.unlinkSync(mediaPath);
-        return undefined;
-      }
-      return mediaPath;
-    } catch (_error) {
-      return undefined;
-    }
-  }
-
-  private requestTaildropReceiveDelete(requestId: number, name: string, size: number): void {
-    if (!this.taildropReceiveGateway.claimRemoteDelete(requestId, name)) {
-      return;
-    }
-    const deleteRequest: TaildropReceiveRequest = this.taildropReceiveGateway.createDeleteRequest(requestId, name);
-    this.taildropReceive = {
-      requestId: requestId, action: 'delete', state: 'deleting', reason: '', name: name,
-      size: size, path: ''
-    };
-    this.taildropReceiveStateStartedAtMs = Date.now();
-    if (!this.dispatchTaildropReceiveRequest(deleteRequest)) {
-      this.recordDiagnosticEvent('taildrop_receive_delete_deferred', 'request_unavailable');
-      if (this.taildropReceiveStrategy === 'discard') {
-        this.completeTaildropDiscard(true);
-      } else {
-        this.completeTaildropReceive(true);
-      }
-    }
-  }
-
-  private submitNextTaildropPendingDelete(): void {
-    if (this.taildropState !== 'ready' || this.taildropInboxReason.length > 0 ||
-      this.taildropPendingDeletes.length === 0 || this.taildropReceiveInProgress ||
-      this.taildropReceiveResponseInFlight || this.taildropSendActive() ||
-      Date.now() < this.taildropPendingDeleteRetryAtMs) {
-      return;
-    }
-    const pending: TaildropWaitingFileSummary = this.taildropPendingDeletes[0];
-    const requestId: number = Date.now();
-    const request: TaildropReceiveRequest = this.taildropReceiveGateway.createDeleteRequest(requestId, pending.name);
-    this.taildropReceiveStrategy = 'pending-delete';
-    this.taildropReceiveExpectedSize = pending.size;
-    this.taildropReceiveInProgress = true;
-    this.taildropReceive = {
-      requestId: requestId, action: 'delete', state: 'deleting', reason: '', name: pending.name,
-      size: pending.size, path: ''
-    };
-    this.taildropReceiveStateStartedAtMs = Date.now();
-    this.writePrivateTextFile(this.taildropReceiveResponsePath(), '');
-    if (!this.dispatchTaildropReceiveRequest(request)) {
-      this.deferTaildropPendingDelete('request_unavailable');
-      return;
-    }
-    this.recordDiagnosticEvent('taildrop_pending_delete_requested', 'reconnect');
-  }
-
-  private completeTaildropPendingDelete(): void {
-    const deletedName: string = this.taildropReceive.name;
-    const deletedSize: number = this.taildropReceive.size;
-    this.taildropPendingDeletes = this.taildropPendingDeletes.filter(
-      (pending: TaildropWaitingFileSummary) =>
-        pending.name !== deletedName || pending.size !== deletedSize);
-    this.taildropPendingDeleteRetryAtMs = 0;
-    this.persistTaildropInbox();
-    this.recordDiagnosticEvent('taildrop_pending_delete_completed', 'reconnect');
-    this.resetTaildropReceiveOperation();
-    this.scheduleLifecycleTask(() => this.submitNextTaildropPendingDelete(), 0);
-  }
-
-  private deferTaildropPendingDelete(reason: string): void {
-    this.recordDiagnosticEvent('taildrop_pending_delete_deferred', reason);
-    this.taildropPendingDeleteRetryAtMs = Date.now() + TAILDROP_PENDING_DELETE_RETRY_MS;
-    this.resetTaildropReceiveOperation();
   }
 
   private handlePreparedTaildropMediaSaveClick(file: TaildropWaitingFileSummary): void {
-    const preview: TaildropMediaPreview | undefined = this.findTaildropMediaPreview(file);
-    if (preview === undefined) {
-      return;
-    }
-    this.interruptTaildropPrefetch();
-    if (this.taildropReceiveInProgress) {
-      if (this.taildropReceive.name === file.name &&
-        this.taildropReceive.state === 'awaiting_gallery_save') {
-        this.startTaildropMediaSave();
-        return;
-      }
-      if (this.taildropReceive.state === 'awaiting_text_preview') {
-        this.resetTaildropReceiveOperation();
-        this.startPreparedTaildropMediaSave(file);
-        return;
-      }
-      this.taildropPendingMediaSave = file;
-      this.recordDiagnosticEvent('taildrop_media_save_queued', 'transfer');
-      return;
-    }
-    this.startPreparedTaildropMediaSave(file);
+    this.taildropSessionController.handlePreparedTaildropMediaSaveClick(file);
   }
 
   private startPreparedTaildropFileSave(file: TaildropWaitingFileSummary): void {
-    const cached: TaildropCachedFile | undefined = this.findTaildropCachedFile(file);
-    if (cached === undefined) {
-      if (this.taildropState !== 'ready') {
-        this.showToast($r('app.string.transfer_connect_first_title'));
-        this.releaseTaildropNotificationActionClaim();
-      } else {
-        this.startTaildropReceive(file);
-      }
-      return;
-    }
-    if (this.taildropSendActive() || this.taildropReceiveInProgress) {
-      this.showToast($r('app.string.transfer_busy_message'));
-      this.releaseTaildropNotificationActionClaim();
-      return;
-    }
-    this.taildropReceiveStrategy = 'file';
-    this.taildropReceiveExpectedSize = cached.size;
-    this.taildropReceiveInProgress = true;
-    this.taildropReceive = {
-      requestId: cached.requestId,
-      action: 'stage',
-      state: 'selecting_destination',
-      reason: '',
-      name: cached.name,
-      size: cached.size,
-      path: cached.path
-    };
-    this.selectTaildropReceiveDestination(this.taildropReceive).then((destinationUri: string) => {
-      if (!this.isCurrentTaildropReceive(cached.requestId, 'stage', 'selecting_destination')) {
-        return;
-      }
-      if (destinationUri.length === 0) {
-        this.resetTaildropReceiveOperation();
-        return;
-      }
-      this.taildropReceiveDestinationUri = destinationUri;
-      this.taildropReceive = {
-        requestId: cached.requestId,
-        action: 'stage',
-        state: 'exporting',
-        reason: '',
-        name: cached.name,
-        size: cached.size,
-        path: cached.path
-      };
-      this.copyTaildropStagedFile(cached.path, destinationUri, cached.size).then((saved: boolean) => {
-        if (!this.isCurrentTaildropReceive(cached.requestId, 'stage', 'exporting')) {
-          return;
-        }
-        if (!saved) {
-          this.failTaildropReceive('export_failed');
-          return;
-        }
-        if (this.taildropState === 'ready') {
-          this.requestTaildropReceiveDelete(cached.requestId, cached.name, cached.size);
-        } else {
-          this.completeTaildropReceive(true);
-        }
-      }).catch(() => this.failTaildropReceive('export_failed'));
-    }).catch(() => this.failTaildropReceive('export_failed'));
-  }
-
-  private startPreparedTaildropMediaSave(file: TaildropWaitingFileSummary): void {
-    const preview: TaildropMediaPreview | undefined = this.findTaildropMediaPreview(file);
-    if (preview === undefined || this.taildropReceiveInProgress) {
-      this.releaseTaildropNotificationActionClaim();
-      return;
-    }
-    this.taildropReceiveStrategy = 'media';
-    this.taildropReceiveDestinationUri = '';
-    this.taildropReceiveExpectedSize = preview.size;
-    this.taildropReceiveMediaType = preview.mediaType;
-    this.taildropReceiveThumbnailPath = preview.thumbnailPath;
-    this.taildropReceiveInProgress = true;
-    this.taildropReceive = {
-      requestId: preview.requestId,
-      action: 'stage',
-      state: 'awaiting_gallery_save',
-      reason: '',
-      name: preview.name,
-      size: preview.size,
-      path: preview.path
-    };
-    this.taildropReceiveStateStartedAtMs = 0;
-    this.startTaildropMediaSave();
-  }
-
-  private startTaildropMediaSave(): void {
-    if (this.taildropMediaSaveInProgress || this.taildropReceive.state !== 'awaiting_gallery_save') {
-      return;
-    }
-    this.taildropMediaSaveInProgress = true;
-    this.saveTaildropMediaToGallery().then((saved: boolean) => {
-      if (!saved) {
-        this.restoreTaildropMediaSaveAfterFailure(false);
-      }
-    }).catch((error: BusinessError) => {
-      const mediaKind: string = this.taildropReceiveMediaType === photoAccessHelper.PhotoType.VIDEO ?
-        'video' : 'image';
-      const extension: string = this.taildropFileExtension(this.taildropReceive.name);
-      this.recordDiagnosticEvent('taildrop_media_save_failed',
-        extension.length > 0 ? `${mediaKind}_${extension}` : mediaKind, error.code ?? -1);
-      this.restoreTaildropMediaSaveAfterFailure(true);
-    }).finally(() => {
-      this.taildropMediaSaveInProgress = false;
-    });
-  }
-
-  private restoreTaildropMediaSaveAfterFailure(showFailure: boolean): void {
-    if (!this.taildropMediaSaveInProgress || this.taildropReceive.state !== 'saving_gallery' ||
-      this.taildropReceive.path.length === 0) {
-      return;
-    }
-    this.taildropReceive = {
-      requestId: this.taildropReceive.requestId,
-      action: 'stage',
-      state: 'awaiting_gallery_save',
-      reason: '',
-      name: this.taildropReceive.name,
-      size: this.taildropReceive.size,
-      path: this.taildropReceive.path
-    };
-    if (showFailure) {
-      this.showToast($r('app.string.transfer_media_save_failed'));
-    }
-  }
-
-  private validTaildropMediaTimestamp(timestampMs: number): boolean {
-    return Number.isFinite(timestampMs) && timestampMs >= TAILDROP_MEDIA_MIN_TIMESTAMP_MS &&
-      timestampMs <= Date.now() + TAILDROP_MEDIA_MAX_FUTURE_MS;
-  }
-
-  private taildropLocalDateTimestamp(
-    year: number,
-    month: number,
-    day: number,
-    hour: number,
-    minute: number,
-    second: number
-  ): number | undefined {
-    const date: Date = new Date(year, month - 1, day, hour, minute, second, 0);
-    const timestampMs: number = date.getTime();
-    if (!this.validTaildropMediaTimestamp(timestampMs) || date.getFullYear() !== year ||
-      date.getMonth() !== month - 1 || date.getDate() !== day || date.getHours() !== hour ||
-      date.getMinutes() !== minute || date.getSeconds() !== second) {
-      return undefined;
-    }
-    return timestampMs;
-  }
-
-  private parseTaildropMediaDateTime(value: string): number | undefined {
-    const normalized: string = value.trim();
-    const localMatch: RegExpMatchArray | null = normalized.match(
-      /^(\d{4})[-/]?(\d{2})[-/]?(\d{2})[ T]?(\d{2}):?(\d{2}):?(\d{2})/);
-    if (localMatch !== null) {
-      const timestampMs: number | undefined = this.taildropLocalDateTimestamp(
-        Number(localMatch[1]), Number(localMatch[2]), Number(localMatch[3]),
-        Number(localMatch[4]), Number(localMatch[5]), Number(localMatch[6]));
-      if (timestampMs !== undefined) {
-        return timestampMs;
-      }
-    }
-    const parsedTimestampMs: number = Date.parse(normalized);
-    return this.validTaildropMediaTimestamp(parsedTimestampMs) ? parsedTimestampMs : undefined;
-  }
-
-  private taildropMediaTimestampFromName(name: string): number | undefined {
-    const extensionIndex: number = name.lastIndexOf('.');
-    const baseName: string = extensionIndex > 0 ? name.substring(0, extensionIndex) : name;
-    const epochMatch: RegExpMatchArray | null = baseName.match(/(\d{13})(?:[^0-9]|$)/);
-    if (epochMatch !== null) {
-      const epochTimestampMs: number = Number(epochMatch[1]);
-      if (this.validTaildropMediaTimestamp(epochTimestampMs)) {
-        return epochTimestampMs;
-      }
-    }
-    const compactMatch: RegExpMatchArray | null = baseName.match(
-      /(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})(?:[^0-9]|$)/);
-    if (compactMatch === null) {
-      return undefined;
-    }
-    return this.taildropLocalDateTimestamp(
-      Number(compactMatch[1]), Number(compactMatch[2]), Number(compactMatch[3]),
-      Number(compactMatch[4]), Number(compactMatch[5]), Number(compactMatch[6]));
-  }
-
-  private async restoreTaildropVideoMtime(
-    name: string,
-    path: string,
-    size: number
-  ): Promise<number | undefined> {
-    let sourceFile: fileIo.File | undefined = undefined;
-    let extractor: media.AVMetadataExtractor | undefined = undefined;
-    try {
-      sourceFile = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
-      extractor = await media.createAVMetadataExtractor();
-      extractor.fdSrc = { fd: sourceFile.fd, offset: 0, length: size };
-      const metadata: media.AVMetadata = await extractor.fetchMetadata();
-      let timestampFromName: boolean = false;
-      let timestampMs: number | undefined = metadata.dateTimeFormat === undefined ? undefined :
-        this.parseTaildropMediaDateTime(metadata.dateTimeFormat);
-      if (timestampMs === undefined && metadata.dateTime !== undefined) {
-        timestampMs = this.parseTaildropMediaDateTime(metadata.dateTime);
-      }
-      if (timestampMs === undefined) {
-        timestampMs = this.taildropMediaTimestampFromName(name);
-        timestampFromName = timestampMs !== undefined;
-      }
-      if (timestampMs === undefined) {
-        return undefined;
-      }
-      const durationMs: number = metadata.duration === undefined ? 0 : Number(metadata.duration);
-      if (timestampFromName && Number.isFinite(durationMs) && durationMs > 0 &&
-        durationMs <= TAILDROP_MEDIA_MAX_DURATION_MS &&
-        this.validTaildropMediaTimestamp(timestampMs + durationMs)) {
-        timestampMs += durationMs;
-      }
-      fileIo.utimes(path, timestampMs);
-      return fileIo.statSync(path).mtime;
-    } catch (_error) {
-      return undefined;
-    } finally {
-      if (extractor !== undefined) {
-        try {
-          await extractor.release();
-        } catch (_error) {
-          // Metadata extraction failure must not prevent saving the original bytes.
-        }
-      }
-      if (sourceFile !== undefined) {
-        try {
-          fileIo.closeSync(sourceFile);
-        } catch (_error) {
-          // The descriptor may already be closed after a media service failure.
-        }
-      }
-    }
-  }
-
-  private async saveTaildropMediaToGallery(): Promise<boolean> {
-    const mediaType: photoAccessHelper.PhotoType | undefined = this.taildropReceiveMediaType;
-    const staged: TaildropReceiveResult = this.taildropReceive;
-    const extension: string = this.taildropFileExtension(staged.name);
-    if (mediaType === undefined || extension.length === 0 ||
-      staged.state !== 'awaiting_gallery_save' || staged.path.length === 0) {
-      return false;
-    }
-    let stat: fileIo.Stat;
-    try {
-      stat = fileIo.statSync(staged.path);
-    } catch (_error) {
-      this.failTaildropReceive('export_failed');
-      return false;
-    }
-    if (!stat.isFile() || stat.size !== staged.size) {
-      this.failTaildropReceive('export_failed');
-      return false;
-    }
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.taildropReceive = {
-      requestId: staged.requestId, action: 'stage', state: 'saving_gallery', reason: '',
-      name: staged.name, size: staged.size, path: staged.path
-    };
-    this.taildropReceiveStateStartedAtMs = Date.now();
-    const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
-    let restoredMtimeMs: number | undefined = undefined;
-    if (mediaType === photoAccessHelper.PhotoType.VIDEO) {
-      restoredMtimeMs = await this.restoreTaildropVideoMtime(staged.name, staged.path, staged.size);
-    }
-    const config: photoAccessHelper.PhotoCreationConfig = {
-      title: this.taildropGalleryAssetTitle(staged.name),
-      fileNameExtension: extension,
-      photoType: mediaType
-    };
-    let destinationUri: string = '';
-    try {
-      const sourceUri: string = fileUri.getUriFromPath(staged.path);
-      const destinationUris: string[] = await phAccessHelper.showAssetsCreationDialog(
-        [sourceUri], [config]);
-      destinationUri = destinationUris.length > 0 ? destinationUris[0] : '';
-    } catch (error) {
-      const businessError: BusinessError = error as BusinessError;
-      this.recordDiagnosticEvent('taildrop_media_asset_create_failed', 'creation_dialog',
-        businessError.code ?? -1);
-    }
-    if (destinationUri.length === 0) {
-      return false;
-    }
-    this.taildropReceiveDestinationUri = destinationUri;
-    const copied: boolean = await this.copyTaildropStagedFile(staged.path, destinationUri, staged.size);
-    if (!copied) {
-      return false;
-    }
-    if (restoredMtimeMs !== undefined) {
-      this.recordDiagnosticEvent('taildrop_media_mtime_restored', 'video');
-    }
-    if (!this.isCurrentTaildropReceive(staged.requestId, 'stage', 'saving_gallery')) {
-      return false;
-    }
-    this.taildropReceivePreviewPath = await this.createTaildropHistoryPreview(
-      staged.path, staged.name, staged.requestId);
-    this.removeTaildropMediaPreview(staged.name, staged.size, true);
-    try {
-      if (fileIo.accessSync(staged.path)) {
-        fileIo.unlinkSync(staged.path);
-      }
-    } catch (_error) {
-      // The receive operation reset retries cleanup after the remote inbox entry is deleted.
-    }
-    this.recordDiagnosticEvent('taildrop_media_saved_to_gallery', 'transfer');
-    if (this.taildropState === 'ready') {
-      this.requestTaildropReceiveDelete(staged.requestId, staged.name, staged.size);
-    } else {
-      this.completeTaildropReceive(true);
-    }
-    return true;
-  }
-
-  private clearLocalTaildropInboxCache(): boolean {
-    const root: string = this.taildropInboxRoot();
-    try {
-      if (!fileIo.accessSync(root)) {
-        return true;
-      }
-      let cleared: boolean = true;
-      fileIo.listFileSync(root).forEach((name: string) => {
-        const path: string = `${root}/${name}`;
-        try {
-          const stat: fileIo.Stat = fileIo.statSync(path);
-          if (stat.isFile()) {
-            fileIo.unlinkSync(path);
-          } else {
-            cleared = false;
-          }
-        } catch (_error) {
-          cleared = false;
-        }
-      });
-      this.notifyCacheContentsChanged();
-      return cleared;
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  private async handleTaildropStagedFile(result: TaildropReceiveResult): Promise<boolean> {
-    let handled: boolean = false;
-    if (result.size === this.taildropReceiveExpectedSize) {
-      if (this.taildropReceiveStrategy === 'image') {
-        handled = await this.exportTaildropImageToGallery(result);
-      } else if (this.taildropReceiveStrategy === 'text') {
-        handled = await this.copyTaildropTextToClipboard(result);
-      } else {
-        handled = await this.exportTaildropReceivedFile(result);
-      }
-    }
-    try {
-      if (result.path.length > 0 && fileIo.accessSync(result.path)) {
-        fileIo.unlinkSync(result.path);
-      }
-    } catch (_error) {
-      // Extension startup cleanup removes any staged export left behind.
-    }
-    return handled;
-  }
-
-  private async exportTaildropImageToGallery(result: TaildropReceiveResult): Promise<boolean> {
-    const extension: string = this.taildropFileExtension(result.name);
-    const mediaType: photoAccessHelper.PhotoType | undefined = this.resolveTaildropMediaType(result.name);
-    if (mediaType === undefined) {
-      return false;
-    }
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const helper = photoAccessHelper.getPhotoAccessHelper(context);
-      const configs: photoAccessHelper.PhotoCreationConfig[] = [{
-        title: this.taildropGalleryAssetTitle(result.name),
-        fileNameExtension: extension,
-        photoType: mediaType
-      }];
-      const sourceUri: string = fileUri.getUriFromPath(result.path);
-      const destinationUris: string[] = await helper.showAssetsCreationDialog([sourceUri], configs);
-      if (destinationUris.length === 0) {
-        return false;
-      }
-      this.taildropReceiveDestinationUri = destinationUris[0];
-      return await this.copyTaildropStagedFile(result.path, destinationUris[0], result.size);
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  private async copyTaildropTextToClipboard(result: TaildropReceiveResult): Promise<boolean> {
-    if (result.size > TAILDROP_TEXT_CLIPBOARD_MAX_BYTES) {
-      return false;
-    }
-    try {
-      const content: string = fileIo.readTextSync(result.path);
-      const data: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, content);
-      await pasteboard.getSystemPasteboard().setData(data);
-      return true;
-    } catch (_error) {
-      return false;
-    }
-  }
-
-  private openTaildropExportDestination(destinationUri: string): fileIo.File {
-    try {
-      // Media-library assets returned by PhotoAccessHelper already exist. Do
-      // not ask the provider to create them again; opening for write/truncate
-      // preserves the URI grant returned by the save operation.
-      return fileIo.openSync(destinationUri, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-    } catch (_error) {
-      // DocumentViewPicker providers may require the CREATE-capable mode.
-      return fileIo.openSync(destinationUri,
-        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-    }
-  }
-
-  private async copyTaildropStagedFile(sourcePath: string, destinationUri: string,
-    expectedSize: number): Promise<boolean> {
-    let source: fileIo.File | undefined = undefined;
-    let destination: fileIo.File | undefined = undefined;
-    let verifier: fileIo.File | undefined = undefined;
-    let copied: boolean = false;
-    try {
-      if (destinationUri.length === 0) {
-        copied = false;
-      } else {
-        source = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
-        destination = this.openTaildropExportDestination(destinationUri);
-        await fileIo.copyFile(source.fd, destination.fd);
-        fileIo.closeSync(source);
-        source = undefined;
-        fileIo.closeSync(destination);
-        destination = undefined;
-        verifier = fileIo.openSync(destinationUri, fileIo.OpenMode.READ_ONLY);
-        const stat: fileIo.Stat = fileIo.statSync(verifier.fd);
-        copied = stat.isFile() && stat.size === expectedSize;
-      }
-    } catch (_error) {
-      copied = false;
-    }
-    if (source !== undefined) {
-      try {
-        fileIo.closeSync(source);
-      } catch (_error) {
-        copied = false;
-      }
-    }
-    if (destination !== undefined) {
-      try {
-        fileIo.closeSync(destination);
-      } catch (_error) {
-        copied = false;
-      }
-    }
-    if (verifier !== undefined) {
-      try {
-        fileIo.closeSync(verifier);
-      } catch (_error) {
-        copied = false;
-      }
-    }
-    if (!copied && destinationUri.length > 0) {
-      try {
-        fileIo.unlinkSync(destinationUri);
-      } catch (_error) {
-        // The system provider may not allow deleting a failed export URI.
-      }
-    }
-    return copied;
-  }
-
-  private async exportTaildropReceivedFile(result: TaildropReceiveResult): Promise<boolean> {
-    return await this.copyTaildropStagedFile(result.path, this.taildropReceiveDestinationUri, result.size);
-  }
-
-  private addTaildropReceiveRecord(state: string, reason: string): void {
-    const record: TaildropTransferRecord = {
-      requestId: this.taildropReceive.requestId,
-      direction: 'receive',
-      state: state,
-      reason: reason,
-      targetKey: '',
-      targetName: '',
-      fileName: this.taildropReceive.name,
-      fileCount: 1,
-      totalBytes: this.taildropReceive.size > 0 ? this.taildropReceive.size : this.taildropReceiveExpectedSize,
-      previewPath: this.taildropReceivePreviewPath,
-      completedAtMs: Date.now()
-    };
-    this.taildropHistory = [record].concat(this.taildropHistory).slice(0, TAILDROP_HISTORY_LIMIT);
-    this.persistTaildropHistory();
-  }
-
-  private completeTaildropReceive(queueBackendDelete: boolean = false): void {
-    const receivedName: string = this.taildropReceive.name;
-    const receivedSize: number = this.taildropReceive.size;
-    const receiveStrategy: string = this.taildropReceiveStrategy;
-    if (queueBackendDelete) {
-      const receivedFile: TaildropWaitingFileSummary | undefined = this.taildropWaitingFiles.find(
-        (file: TaildropWaitingFileSummary) => file.name === receivedName && file.size === receivedSize);
-      this.queueTaildropPendingDelete(receivedFile === undefined ? {
-        name: receivedName, size: receivedSize, receivedAtMs: Date.now()
-      } : receivedFile);
-    }
-    this.addTaildropReceiveRecord('completed', '');
-    this.removeTaildropMediaPreview(receivedName, receivedSize, true);
-    this.removeTaildropCachedFile(receivedName, receivedSize, true);
-    this.taildropWaitingFiles = this.taildropWaitingFiles.filter(
-      (file: TaildropWaitingFileSummary) => file.name !== receivedName || file.size !== receivedSize);
-    this.persistTaildropInbox();
-    this.recordDiagnosticEvent('taildrop_receive_completed', 'transfer');
-    if (receiveStrategy === 'image' ||
-      (receiveStrategy === 'media' && this.taildropReceiveMediaType === photoAccessHelper.PhotoType.IMAGE)) {
-      this.showToast($r('app.string.transfer_image_saved'));
-    } else if (receiveStrategy === 'text' || receiveStrategy === 'text-preview') {
-      this.showToast($r('app.string.transfer_text_copied'));
-    } else {
-      this.showToast($r('app.string.transfer_receive_completed'));
-    }
-    this.resetTaildropReceiveOperation();
-    this.resumePendingTaildropAction();
-    this.notifyCacheContentsChanged();
-  }
-
-  private completeTaildropDiscard(queueBackendDelete: boolean = false): void {
-    const discardedName: string = this.taildropReceive.name;
-    const discardedSize: number = this.taildropReceive.size;
-    if (queueBackendDelete) {
-      const discardedFile: TaildropWaitingFileSummary | undefined = this.taildropWaitingFiles.find(
-        (file: TaildropWaitingFileSummary) => file.name === discardedName && file.size === discardedSize);
-      this.queueTaildropPendingDelete(discardedFile === undefined ? {
-        name: discardedName, size: discardedSize, receivedAtMs: Date.now()
-      } : discardedFile);
-    }
-    this.removeTaildropMediaPreview(discardedName, discardedSize, true);
-    this.removeTaildropCachedFile(discardedName, discardedSize, true);
-    this.taildropWaitingFiles = this.taildropWaitingFiles.filter(
-      (file: TaildropWaitingFileSummary) => file.name !== discardedName || file.size !== discardedSize);
-    this.persistTaildropInbox();
-    this.recordDiagnosticEvent('taildrop_receive_discarded', 'transfer');
-    this.showToast($r('app.string.transfer_discard_completed'));
-    this.resetTaildropReceiveOperation();
-    this.resumePendingTaildropAction();
-    this.notifyCacheContentsChanged();
-  }
-
-  private failTaildropReceive(reason: string): void {
-    if (this.taildropReceiveStrategy === 'pending-delete') {
-      this.deferTaildropPendingDelete(reason);
-      return;
-    }
-    if (this.taildropReceive.action === 'delete') {
-      this.recordDiagnosticEvent('taildrop_receive_delete_deferred', reason);
-      if (this.taildropReceiveStrategy === 'discard') {
-        this.completeTaildropDiscard(true);
-      } else {
-        this.completeTaildropReceive(true);
-      }
-      return;
-    }
-    if (this.taildropReceiveStrategy === 'media-prefetch' ||
-      this.taildropReceiveStrategy === 'file-prefetch') {
-      this.failTaildropMediaPrefetch(reason);
-      return;
-    }
-    const settingsCacheClearFailed: boolean =
-      this.cacheClearRequestedFromSettings && this.taildropReceive.action === 'clear';
-    if (this.taildropReceive.requestId > 0 && this.taildropReceive.action !== 'clear') {
-      this.addTaildropReceiveRecord('failed', reason);
-    }
-    this.recordDiagnosticEvent('taildrop_receive_failed', reason);
-    if (!settingsCacheClearFailed) {
-      this.showToast(this.taildropReceiveFailureMessage(reason));
-    }
-    this.resetTaildropReceiveOperation();
-    this.resumePendingTaildropAction();
-    if (settingsCacheClearFailed) {
-      this.finishSettingsCacheClear(false);
-    }
-  }
-
-  private failTaildropMediaPrefetch(reason: string): void {
-    const key: string = this.taildropAutoPrefetchKey;
-    if (key.length > 0 && !this.taildropAutoPrefetchFailedKeys.includes(key)) {
-      this.taildropAutoPrefetchFailedKeys = this.taildropAutoPrefetchFailedKeys.concat([key]);
-    }
-    this.recordDiagnosticEvent('taildrop_media_preview_failed', reason);
-    this.taildropAutoPrefetchKey = '';
-    this.resetTaildropReceiveOperation();
-    this.resumePendingTaildropAction();
-  }
-
-  private resetTaildropReceiveOperation(): void {
-    this.releaseTaildropNotificationActionClaim();
-    const receivePath: string = this.taildropReceive.path;
-    const receiveThumbnailPath: string = this.taildropReceiveThumbnailPath;
-    const pathIsCachedPreview: boolean = this.taildropMediaPreviews.some(
-      (preview: TaildropMediaPreview) => preview.path === receivePath) ||
-      this.taildropCachedFiles.some((cached: TaildropCachedFile) => cached.path === receivePath);
-    const thumbnailIsCachedPreview: boolean = this.taildropMediaPreviews.some(
-      (preview: TaildropMediaPreview) => preview.thumbnailPath === receiveThumbnailPath);
-    if (receivePath.length > 0 && !pathIsCachedPreview) {
-      try {
-        if (fileIo.accessSync(receivePath)) {
-          fileIo.unlinkSync(receivePath);
-        }
-      } catch (_error) {
-        // Extension startup cleanup removes any staged export left behind.
-      }
-    }
-    if (receiveThumbnailPath.length > 0 && !thumbnailIsCachedPreview) {
-      try {
-        if (fileIo.accessSync(receiveThumbnailPath)) {
-          fileIo.unlinkSync(receiveThumbnailPath);
-          this.notifyCacheContentsChanged();
-        }
-      } catch (_error) {
-        // A later inbox-cache cleanup removes an inaccessible temporary thumbnail.
-      }
-    }
-    this.taildropReceiveInProgress = false;
-    this.taildropReceiveResponseInFlight = false;
-    this.taildropMediaSaveInProgress = false;
-    this.taildropPickerOpen = false;
-    this.taildropReceiveStateStartedAtMs = 0;
-    this.taildropReceiveDestinationUri = '';
-    this.taildropReceiveExpectedSize = 0;
-    this.taildropReceiveMediaType = undefined;
-    this.taildropReceivePreviewPath = '';
-    this.taildropReceiveThumbnailPath = '';
-    this.taildropReceiveStrategy = 'none';
-    this.taildropReceive = emptyTaildropReceive();
-    this.taildropReceivedText = '';
-    this.taildropTextPreviewVisible = false;
-  }
-
-  private taildropReceiveFailureMessage(reason: string): ResourceStr {
-    if (this.taildropReceive.action === 'clear' || reason === 'clear_failed') {
-      return $r('app.string.transfer_clear_cache_failed');
-    }
-    if (reason === 'file_unavailable') {
-      return $r('app.string.transfer_receive_unavailable');
-    }
-    if (reason === 'no_space') {
-      return $r('app.string.transfer_receive_no_space');
-    }
-    if (reason === 'timeout') {
-      return $r('app.string.transfer_save_timeout');
-    }
-    if (reason === 'delete_failed') {
-      return this.taildropReceiveStrategy === 'discard' ?
-        $r('app.string.transfer_discard_failed') : $r('app.string.transfer_receive_delete_failed');
-    }
-    if (reason === 'discard_failed') {
-      return $r('app.string.transfer_discard_failed');
-    }
-    if (reason === 'export_failed' && this.taildropReceiveStrategy === 'image') {
-      return $r('app.string.transfer_gallery_failed');
-    }
-    if (reason === 'export_failed' && this.taildropReceiveStrategy === 'text') {
-      return $r('app.string.transfer_text_copy_failed');
-    }
-    return $r('app.string.transfer_receive_failed');
+    this.taildropSessionController.startPreparedTaildropFileSave(file);
   }
 
   private secondaryBackground(): ResourceColor {
@@ -9520,13 +4894,13 @@ export struct BridgeStatus {
   private SectionHeader(title: ResourceStr, description?: ResourceStr) {
     Column({ space: 2 }) {
       Text(title)
-        .fontSize(18)
+        .fontSize(UiTokens.SECTION_TITLE_SIZE)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('sys.color.font_primary'))
         .width('100%')
       if (description !== undefined) {
         Text(description)
-          .fontSize(13)
+          .fontSize(UiTokens.CAPTION_SIZE)
           .fontColor($r('sys.color.font_secondary'))
           .lineHeight(18)
           .width('100%')
@@ -9539,7 +4913,7 @@ export struct BridgeStatus {
   @Builder
   private SettingsGroupHeader(title: ResourceStr, compactTop: boolean = false) {
     Text(title)
-      .fontSize(15)
+      .fontSize(UiTokens.SECTION_TITLE_SIZE)
       .fontWeight(FontWeight.Medium)
       .fontColor($r('sys.color.font_primary'))
       .width('100%')
@@ -9583,8 +4957,7 @@ export struct BridgeStatus {
     }
       .id(nodeId)
       .width('100%')
-      .height(44)
-      .opacity(enabled ? 1 : 0.4)
+      .height(UiTokens.ACTION_HEIGHT)
       .enabled(enabled)
       .onClick(action)
   }
@@ -9611,7 +4984,7 @@ export struct BridgeStatus {
   }
 
   private connectionActionEnabled(): boolean {
-    return !this.connectionActionLoading() && !this.deviceNeedsApproval();
+    return !this.controlServerSwitching && !this.connectionActionLoading() && !this.deviceNeedsApproval();
   }
 
   private connectionActionBackground(): ResourceColor {
@@ -9629,6 +5002,7 @@ export struct BridgeStatus {
   }
 
   private runConnectionAction(): void {
+    if (this.controlServerSwitching) return;
     if (!this.controlServerConfirmed) {
       this.openControlServerSettings();
     } else if (this.isConnected()) {
@@ -9644,7 +5018,7 @@ export struct BridgeStatus {
   private ConnectionCircleButton() {
     Button({
       type: ButtonType.Circle,
-      stateEffect: true,
+      stateEffect: LightAppearance.nativePress(this.glowLevel),
       buttonStyle: ButtonStyleMode.TEXTUAL,
       controlSize: ControlSize.NORMAL
     }) {
@@ -9665,6 +5039,12 @@ export struct BridgeStatus {
     .height(42)
     .backgroundColor(this.connectionActionBackground())
     .border({ width: 1, color: $r('sys.color.comp_divider') })
+    .visualEffect(LightAppearance.pressEffect(this.glowLevel,
+      this.connectionButtonPressed && this.connectionActionEnabled()))
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) this.connectionButtonPressed = true;
+      else if (event.type === TouchType.Up || event.type === TouchType.Cancel) this.connectionButtonPressed = false;
+    })
     .enabled(this.connectionActionEnabled())
     .opacity(this.connectionActionEnabled() ? 1 : 0.65)
     .accessibilityText(this.isConnected() ?
@@ -9815,9 +5195,9 @@ export struct BridgeStatus {
       this.AnimatedTrafficSummary()
     }
     .width('100%')
-    .padding(14)
+    .padding(UiTokens.CARD_PADDING)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
@@ -9858,6 +5238,7 @@ export struct BridgeStatus {
   private CompactHomeHeader(connected: boolean) {
     CompactConnectedHomeHeader({
       connected: connected,
+      glowLevel: this.glowLevel,
       statusTitle: this.connectionTitle(),
       statusDescription: this.compactConnectionDescription(connected),
       statusColor: this.connectionColor(),
@@ -9866,8 +5247,7 @@ export struct BridgeStatus {
       showTraffic: connected,
       exitNodeLabel: this.compactExitNodeLabel(connected),
       exitNodeEditable: !connected,
-      exitNodeEnabled: this.isAuthenticated() && this.exitNodes.length > 0 &&
-        !this.isConnected() && !this.isConnecting() && !this.connectInProgress && !this.exitNodeUpdateInProgress,
+      exitNodeEnabled: this.canEditExitNode(),
       exitNodeOptions: this.exitNodeSelectOptions(),
       exitNodeSelectedIndex: this.selectedExitNodeIndex(),
       onDetails: (): void => { this.openConnectionDetails(); },
@@ -9886,25 +5266,38 @@ export struct BridgeStatus {
 
   @Builder
   private HomeConnectionHeader() {
-    this.CompactHomeHeader(this.connectedHomeLayoutActive())
+    HomeConnectionSection({
+      connected: this.connectedHomeLayoutActive(),
+      layoutMode: this.connectedHomeLayoutMode,
+      inactiveHeader: (): void => { this.CompactHomeHeader(false); },
+      legacyHeader: (): void => { this.LegacyConnectedHeader(); },
+      compactHeader: (): void => { this.CompactConnectedHeader(); }
+    })
   }
 
   @Builder
   private ConnectionDetailsContent() {
-    ConnectionDetailsSheet({
-      tailscaleAddress: this.primaryTailscaleAddress(this.accountSummary.addresses),
-      duration: this.connectedDurationLabel(),
-      downloadRate: this.formatTrafficBytes(this.trafficDownloadRate, true),
-      uploadRate: this.formatTrafficBytes(this.trafficUploadRate, true),
-      downloadTotal: this.formatTrafficBytes(this.trafficDownloadBytes),
-      uploadTotal: this.formatTrafficBytes(this.trafficUploadBytes),
-      exitNodeName: this.selectedExitNodeName(),
-      exitNodeAvailableCount: this.exitNodes.filter((choice: ExitNodeChoice) => choice.online).length,
-      allowLanAccess: this.networkSettings.exitNodeAllowLANAccess,
-      onCopyAddress: (): void => this.copyDeviceValue(
-        this.primaryTailscaleAddress(this.accountSummary.addresses),
-        $r('app.string.peer_ip_copied'))
-    })
+    Stack() {
+      ConnectionDetailsSheet({
+        tailscaleAddress: this.primaryTailscaleAddress(this.accountSummary.addresses),
+        duration: this.connectedDurationLabel(),
+        downloadRate: this.formatTrafficBytes(this.trafficDownloadRate, true),
+        uploadRate: this.formatTrafficBytes(this.trafficUploadRate, true),
+        downloadTotal: this.formatTrafficBytes(this.trafficDownloadBytes),
+        uploadTotal: this.formatTrafficBytes(this.trafficUploadBytes),
+        exitNodeName: this.selectedExitNodeName(),
+        exitNodeAvailableCount: this.exitNodes.filter((choice: ExitNodeChoice) => choice.online).length,
+        allowLanAccess: this.networkSettings.exitNodeAllowLANAccess,
+        onCopyAddress: (): void => this.copyDeviceValue(
+          this.primaryTailscaleAddress(this.accountSummary.addresses),
+          $r('app.string.peer_ip_copied'))
+      })
+      if (this.isSecurityCoverActive()) {
+        this.SecurityCoverOverlay()
+      }
+    }
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -9959,44 +5352,60 @@ export struct BridgeStatus {
 
   @Builder
   private DeviceDetailsContent() {
-    Column() {
-      ForEach(this.selectedPeerDetails,
-        (peer: PeerSummary) => {
-          DeviceDetailSheet({
-            online: this.peers.some((current: PeerSummary) => current.key === peer.key && current.online),
-            meshConnected: this.isConnected(),
-            path: this.streamingState(peer.key).path,
-            tailscaleAddress: this.primaryTailscaleAddress(peer.addresses),
-            exitNodeCapable: peer.exitNode,
-            servicesChecking: this.streamingState(peer.key).checking || this.mediaState(peer.key).checking,
-            showSunshine: this.isSunshineCandidate(peer),
-            sunshineState: this.streamingState(peer.key).sunshine.state,
-            sunshineAvailable: this.streamingState(peer.key).sunshine.state === 'available',
-            sunshineLaunching: this.streamingState(peer.key).launching,
-            mediaServiceCount: this.mediaState(peer.key).result.services.length,
-            mediaServiceNames: this.mediaServiceNames(peer.key),
-            mediaLaunching: this.mediaState(peer.key).launching,
-            serviceRefreshVisible: this.deviceDetailServiceRefreshInFlight,
-            localSendState: this.localSendStatusForPeer(peer.key)?.state ?? 'unknown',
-            localSendRefreshing: this.transferProtocolRefreshing,
-            localSendAvailable: this.localSendAvailableForPeer(peer),
-            taildropAvailable: this.taildropTargetAvailableForPeer(peer),
-            taildropOnline: this.taildropTargetOnlineForPeer(peer),
-            taildropReady: this.taildropTargetReadyForPeer(peer),
-            remoteFilesEnabled: this.isConnected(),
-            onRefresh: (): Promise<void> => this.refreshSelectedPeerServicesManually(),
-            onOpenStream: (): void => this.launchRemoteStream(peer),
-            onOpenMedia: (): void => this.openMediaMethodForPeer(peer),
-            onOpenFileTransfer: (): void => this.openFileTransferFromDevice(peer),
-            onOpenRemoteFiles: (): void => this.openRemoteFilesFromDevice(peer),
-            onCopyIp: (): void => this.copyDeviceValue(this.primaryTailscaleAddress(peer.addresses),
-              $r('app.string.peer_ip_copied'))
-          })
-        }, (peer: PeerSummary) => this.deviceDetailRenderKey(peer))
+    Stack() {
+      Column() {
+        ForEach(this.selectedPeerDetails,
+          (peer: PeerSummary) => {
+            DeviceDetailSheet({
+              online: this.peers.some((current: PeerSummary) => current.key === peer.key && current.online),
+              meshConnected: this.isConnected(),
+              path: this.streamingState(peer.key).path,
+              tailscaleAddress: this.deviceDetailAddress(peer.key),
+              magicDnsName: this.deviceDetailMagicDnsName(peer.key),
+              exitNodeCapable: this.deviceDetailExitNodeCapable(peer.key),
+              servicesChecking: this.streamingState(peer.key).checking || this.mediaState(peer.key).checking,
+              glowLevel: this.glowLevel,
+              showSunshine: this.deviceDetailSunshineCandidate(peer.key),
+              sunshineState: this.streamingState(peer.key).sunshine.state,
+              sunshineAvailable: this.streamingState(peer.key).sunshine.state === 'available',
+              sunshineLaunching: this.streamingState(peer.key).launching,
+              mediaServiceCount: this.mediaState(peer.key).result.services.length,
+              mediaProbeState: this.mediaState(peer.key).result.state,
+              setupHelpEnabled: this.canOpenContextGuide(),
+              mediaServiceNames: this.mediaServiceNames(peer.key),
+              mediaLaunching: this.mediaState(peer.key).launching,
+              serviceRefreshVisible: this.deviceDetailServiceRefreshInFlight,
+              localSendState: this.localSendStatusForPeer(peer.key)?.state ?? 'unknown',
+              localSendRefreshing: this.transferProtocolRefreshing,
+              localSendAvailable: this.localSendAvailableForPeer(peer),
+              taildropAvailable: this.taildropTargetAvailableForPeer(peer),
+              taildropOnline: this.taildropTargetOnlineForPeer(peer),
+              taildropReady: this.taildropTargetReadyForPeer(peer),
+              remoteFilesEnabled: this.isConnected(),
+              onRefresh: (): Promise<void> => this.refreshSelectedPeerServicesManually(peer.key),
+              onOpenStream: (): void => this.withCurrentDeviceDetailPeer(peer.key,
+                (current: PeerSummary): void => this.launchRemoteStream(current)),
+              onOpenMedia: (): void => this.withCurrentDeviceDetailPeer(peer.key,
+                (current: PeerSummary): void => this.openMediaMethodForPeer(current)),
+              onOpenFileTransfer: (): void => this.withCurrentDeviceDetailPeer(peer.key,
+                (current: PeerSummary): void => this.openFileTransferFromDevice(current)),
+              onOpenRemoteFiles: (): void => this.withCurrentDeviceDetailPeer(peer.key,
+                (current: PeerSummary): void => this.openRemoteFilesFromDevice(current)),
+              onCopyIp: (): void => this.copyDeviceDetailAddress(peer.key),
+              onCopyDns: (): void => this.copyDeviceValue(this.deviceDetailMagicDnsName(peer.key),
+                $r('app.string.peer_dns_copied'))
+            })
+          }, (peer: PeerSummary) => this.deviceDetailRenderKey(peer))
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(LightAppearance.supports() ? Color.Transparent : $r('sys.color.background_secondary'))
+      if (this.isSecurityCoverActive()) {
+        this.SecurityCoverOverlay()
+      }
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.background_secondary'))
   }
 
   @Builder
@@ -10080,33 +5489,40 @@ export struct BridgeStatus {
       .alignItems(HorizontalAlign.Start)
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(17)
+        .fontSize(UiTokens.ICON_CHEVRON)
         .fontColor([$r('sys.color.icon_secondary')])
     }
     .width('100%')
     .constraintSize({ minHeight: 68 })
     .padding({ left: 14, right: 14, top: 10, bottom: 10 })
     .backgroundColor($r('sys.color.comp_background_primary'))
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
     .onClick(() => this.launchSelectedMediaWithHosPlayer())
   }
 
   @Builder
   private MediaMethodContent() {
-    Column({ space: 10 }) {
-      Text($r('app.string.media_method_message', this.mediaMethodSelectionPeerName()))
-        .fontSize(13)
-        .fontColor($r('sys.color.font_secondary'))
-        .lineHeight(19)
-        .width('100%')
-        .margin({ bottom: 4 })
+    Stack() {
+      Column({ space: 10 }) {
+        Text($r('app.string.media_method_message', this.mediaMethodSelectionPeerName()))
+          .fontSize(13)
+          .fontColor($r('sys.color.font_secondary'))
+          .lineHeight(19)
+          .width('100%')
+          .margin({ bottom: 4 })
 
-      this.HosPlayerMediaMethodRow()
+        this.HosPlayerMediaMethodRow()
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ left: 16, right: 16, top: 2, bottom: 24 })
+      .backgroundColor(LightAppearance.supports() ? Color.Transparent : $r('sys.color.background_secondary'))
+      if (this.isSecurityCoverActive()) {
+        this.SecurityCoverOverlay()
+      }
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 16, right: 16, top: 2, bottom: 24 })
-    .backgroundColor($r('sys.color.background_secondary'))
   }
 
   @Builder
@@ -10151,14 +5567,14 @@ export struct BridgeStatus {
       .alignItems(HorizontalAlign.Start)
 
       SymbolGlyph($r('sys.symbol.chevron_right'))
-        .fontSize(17)
+        .fontSize(UiTokens.ICON_CHEVRON)
         .fontColor([$r('sys.color.icon_secondary')])
     }
     .width('100%')
     .constraintSize({ minHeight: 68 })
     .padding({ left: 14, right: 14, top: 10, bottom: 10 })
     .backgroundColor($r('sys.color.comp_background_primary'))
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
     .enabled(enabled)
     .opacity(enabled ? 1 : 0.48)
     .onClick(() => {
@@ -10170,34 +5586,55 @@ export struct BridgeStatus {
 
   @Builder
   private FileTransferMethodContent() {
-    Column({ space: 10 }) {
-      Text($r('app.string.transfer_method_message', this.fileTransferSelectionPeerName()))
-        .fontSize(13)
-        .fontColor($r('sys.color.font_secondary'))
-        .lineHeight(19)
-        .width('100%')
-        .margin({ bottom: 4 })
+    Stack() {
+      Column({ space: 10 }) {
+        Text($r('app.string.transfer_method_message', this.fileTransferSelectionPeerName()))
+          .fontSize(13)
+          .fontColor($r('sys.color.font_secondary'))
+          .lineHeight(19)
+          .width('100%')
+          .margin({ bottom: 4 })
 
-      if (this.fileTransferSelectionSupports('tailsend')) {
-        this.FileTransferMethodRow('tailsend',
-          $r('app.string.transfer_method_tailsend_title'),
-          $r('app.string.transfer_method_tailsend_description'), true)
+        if (this.fileTransferSelectionSupports('tailsend')) {
+          this.FileTransferMethodRow('tailsend',
+            $r('app.string.transfer_method_tailsend_title'),
+            $r('app.string.transfer_method_tailsend_description'), true)
+        }
+        if (this.fileTransferSelectionSupports('localsend')) {
+          this.FileTransferMethodRow('localsend',
+            $r('app.string.transfer_method_localsend_title'),
+            $r('app.string.transfer_method_localsend_description'), true)
+        }
       }
-      if (this.fileTransferSelectionSupports('localsend')) {
-        this.FileTransferMethodRow('localsend',
-          $r('app.string.transfer_method_localsend_title'),
-          $r('app.string.transfer_method_localsend_description'), true)
+      .width('100%')
+      .height('100%')
+      .padding({ left: 16, right: 16, top: 2, bottom: 24 })
+      .backgroundColor(LightAppearance.supports() ? Color.Transparent : $r('sys.color.background_secondary'))
+      if (this.isSecurityCoverActive()) {
+        this.SecurityCoverOverlay()
       }
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 16, right: 16, top: 2, bottom: 24 })
-    .backgroundColor($r('sys.color.background_secondary'))
   }
 
   @Builder
   private NetworkSettingsPanel() {
     Column({ space: 0 }) {
+      Row() {
+        Column({ space: 2 }) {
+          Text($r('app.string.setting_tailnet_dns')).fontSize(14).fontColor($r('sys.color.font_primary'))
+          Text($r('app.string.setting_tailnet_dns_description')).fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+        Toggle({ type: ToggleType.Switch, isOn: this.tailnetDnsEnabled })
+          .id('tailnet-dns-toggle')
+          .selectedColor($r('app.color.emphasize'))
+          .enabled(!this.isConnected() && !this.isConnecting() && this.isAuthenticated())
+          .systemMaterial(LightAppearance.control(this.glowLevel))
+          .onClick(() => this.toggleTailnetDns())
+      }.width('100%').constraintSize({ minHeight: 62 }).padding({ top: 6, bottom: 6 })
+      Divider().color($r('sys.color.comp_divider'))
       Row() {
         Column({ space: 2 }) {
           Text($r('app.string.setting_subnet_routes'))
@@ -10213,7 +5650,7 @@ export struct BridgeStatus {
           .id('route-all-toggle')
           .selectedColor($r('app.color.emphasize'))
           .enabled(!this.isConnected() && this.isAuthenticated() && !this.routeAllUpdateInProgress)
-          .opacity(!this.isConnected() && this.isAuthenticated() && !this.routeAllUpdateInProgress ? 1 : 0.4)
+          .systemMaterial(LightAppearance.control(this.glowLevel))
           .onClick(() => this.toggleNetworkSetting('routeAll'))
       }
       .width('100%')
@@ -10238,7 +5675,7 @@ export struct BridgeStatus {
           .id('exit-node-lan-toggle')
           .selectedColor($r('app.color.emphasize'))
           .enabled(!this.isConnected() && this.isAuthenticated() && !this.exitNodeLanUpdateInProgress)
-          .opacity(!this.isConnected() && this.isAuthenticated() && !this.exitNodeLanUpdateInProgress ? 1 : 0.4)
+          .systemMaterial(LightAppearance.control(this.glowLevel))
           .onClick(() => this.toggleNetworkSetting('exitNodeAllowLANAccess'))
       }
       .width('100%')
@@ -10265,10 +5702,57 @@ export struct BridgeStatus {
     }
     .id('network-settings-panel')
     .width('100%')
-    .padding(14)
+    .padding(UiTokens.CARD_PADDING)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
     .animation({ duration: MotionTokens.EXPAND, curve: MotionTokens.curve() })
+  }
+
+  @Builder
+  private CustomDnsPanel() {
+    Column({ space: 10 }) {
+      Row() {
+        Column({ space: 3 }) {
+          Text($r('app.string.setting_dns_override')).fontSize(14).fontColor($r('sys.color.font_primary'))
+          Text($r('app.string.setting_dns_override_description')).fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+        }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+        Toggle({ type: ToggleType.Switch, isOn: this.dnsSettingsEnabled })
+          .id('dns-override-toggle').selectedColor($r('app.color.emphasize'))
+          .enabled(this.canEditCustomDns())
+          .systemMaterial(LightAppearance.control(this.glowLevel))
+          .onChange((enabled: boolean) => {
+            if (this.canEditCustomDns()) { this.dnsSettingsEnabled = enabled; this.dnsSettingsStatus = ''; }
+          })
+      }.width('100%')
+      if (this.dnsSettingsEnabled) {
+        Text($r('app.string.setting_dns_primary')).fontSize(12).fontColor($r('sys.color.font_secondary')).width('100%')
+        AccountTextField({ value: $dnsPrimaryInput, fieldId: 'dns-primary-input',
+          placeholder: $r('app.string.setting_dns_primary_placeholder'), inputEnabled: this.canEditCustomDns(),
+          onEdited: () => { this.dnsSettingsStatus = ''; } })
+        Text($r('app.string.setting_dns_secondary')).fontSize(12).fontColor($r('sys.color.font_secondary')).width('100%')
+        AccountTextField({ value: $dnsSecondaryInput, fieldId: 'dns-secondary-input',
+          placeholder: $r('app.string.setting_dns_secondary_placeholder'), inputEnabled: this.canEditCustomDns(),
+          onEdited: () => { this.dnsSettingsStatus = ''; } })
+        Text($r('app.string.setting_dns_search_domains')).fontSize(12).fontColor($r('sys.color.font_secondary')).width('100%')
+        AccountTextField({ value: $dnsSearchDomainsInput, fieldId: 'dns-search-domains-input',
+          placeholder: $r('app.string.setting_dns_search_domains_placeholder'), inputEnabled: this.canEditCustomDns(),
+          onEdited: () => { this.dnsSettingsStatus = ''; } })
+      }
+      Button($r('app.string.setting_dns_save'))
+        .id('dns-settings-save').width('100%').enabled(this.canEditCustomDns())
+        .onClick(() => this.saveCustomDns())
+      if (this.dnsSettingsStatus.length > 0) {
+        Text(this.customDnsStatusText()).id('dns-settings-status').fontSize(12)
+          .fontColor(this.dnsSettingsStatus === 'saved' ? $r('app.color.status_success') : $r('app.color.status_error'))
+          .width('100%')
+      }
+      if (this.isConnected() || this.isConnecting()) {
+        Text($r('app.string.network_settings_disconnect_first')).fontSize(12)
+          .fontColor($r('sys.color.font_secondary')).width('100%')
+      }
+    }.id('dns-settings-panel').width('100%').padding(14)
+      .backgroundColor(this.groupBackground()).borderRadius(16)
   }
 
   private selectableExitNodes(): ExitNodeChoice[] {
@@ -10301,7 +5785,16 @@ export struct BridgeStatus {
     return selected === undefined ? $r('app.string.exit_node_none') : selected.name;
   }
 
+  private canEditExitNode(): boolean {
+    return this.isAuthenticated() && this.exitNodes.length > 0 &&
+      !this.isConnected() && !this.isConnecting() && !this.connectInProgress &&
+      !this.disconnectInProgress && !this.exitNodeUpdateInProgress &&
+      !this.backendRestartDeferred && this.backendReady &&
+      this.backendStatus.includes('state=Running');
+  }
+
   private onExitNodeSelect(index: number): void {
+    if (!this.canEditExitNode()) { return; }
     if (index === 0) {
       this.queueExitNodeUpdate('');
       return;
@@ -10322,7 +5815,7 @@ export struct BridgeStatus {
           .fontColor($r('sys.color.font_primary'))
         Text(this.isConnected() ? $r('app.string.exit_node_disconnect_first') :
           $r('app.string.exit_node_description'))
-          .fontSize(11)
+          .fontSize(UiTokens.CAPTION_SIZE)
           .fontColor($r('sys.color.font_secondary'))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -10338,20 +5831,18 @@ export struct BridgeStatus {
         .font({ size: 12 })
         .optionFont({ size: 12 })
         .selectedOptionFont({ size: 12 })
-        .menuBackgroundColor(this.glowSurface())
-        .menuBackgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
         .constraintSize({ minWidth: 104, maxWidth: this.layoutWidth >= 600 ? 240 : 144 })
-        .enabled(this.isAuthenticated() && this.exitNodes.length > 0 &&
-          !this.isConnected() && !this.isConnecting() && !this.connectInProgress && !this.exitNodeUpdateInProgress)
-        .opacity(this.isAuthenticated() && this.exitNodes.length > 0 &&
-          !this.isConnected() && !this.isConnecting() && !this.connectInProgress && !this.exitNodeUpdateInProgress ? 1 : 0.55)
+        .enabled(this.canEditExitNode())
+        .opacity(this.canEditExitNode() ? 1 : 0.55)
+        .systemMaterial(LightAppearance.control(this.glowLevel))
+        .menuSystemMaterial(LightAppearance.menu(this.glowLevel))
         .onSelect((index: number) => this.onExitNodeSelect(index))
     }
     .width('100%')
     .constraintSize({ minHeight: 68 })
-    .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+    .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING, top: 12, bottom: 12 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(14)
+    .borderRadius(UiTokens.CARD_RADIUS)
     .animation({ duration: MotionTokens.EXPAND, curve: MotionTokens.curve() })
   }
 
@@ -10378,7 +5869,7 @@ export struct BridgeStatus {
     .constraintSize({ minHeight: 160 })
     .padding(16)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
@@ -10399,20 +5890,21 @@ export struct BridgeStatus {
     .constraintSize({ minHeight: 160 })
     .padding(16)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
   private DeviceStatusNotice(label: ResourceStr, error: boolean) {
     Text(label)
-      .fontSize(10)
+      .fontSize(UiTokens.BADGE_SIZE)
       .fontWeight(FontWeight.Medium)
       .fontColor(error ? $r('app.color.status_error') : $r('app.color.status_warning'))
       .maxLines(1)
       .textOverflow({ overflow: TextOverflow.Ellipsis })
-      .padding({ left: 7, right: 7, top: 2, bottom: 2 })
-      .borderRadius(9)
-      .backgroundColor(error ? '#14B42318' : '#14B54708')
+      .padding({ left: UiTokens.BADGE_PADDING_HORIZONTAL, right: UiTokens.BADGE_PADDING_HORIZONTAL,
+        top: UiTokens.BADGE_PADDING_VERTICAL, bottom: UiTokens.BADGE_PADDING_VERTICAL })
+      .borderRadius(UiTokens.BADGE_RADIUS)
+      .backgroundColor(error ? $r('app.color.badge_background_error') : $r('app.color.badge_background_warning'))
   }
 
   @Builder
@@ -10427,11 +5919,11 @@ export struct BridgeStatus {
 
   @Builder
   private LocalDeviceRow() {
-    Row({ space: 10 }) {
+    Row({ space: 12 }) {
       Stack({ alignContent: Alignment.Center }) {
         Image(this.localDeviceIcon())
-          .width(19)
-          .height(19)
+          .width(22)
+          .height(22)
           .objectFit(ImageFit.Contain)
           .fillColor($r('sys.color.icon_primary'))
         Row()
@@ -10440,11 +5932,11 @@ export struct BridgeStatus {
           .borderRadius(4)
           .border({ width: 2, color: this.groupBackground() })
           .backgroundColor(this.connectionColor())
-          .position({ x: 21, y: 21 })
+          .position({ x: 23, y: 23 })
       }
-      .width(36)
-      .height(36)
-      .borderRadius(11)
+      .width(UiTokens.ICON_LIST_CONTAINER)
+      .height(UiTokens.ICON_LIST_CONTAINER)
+      .borderRadius(UiTokens.ICON_LIST_CONTAINER_RADIUS)
       .backgroundColor(this.secondaryBackground())
 
       Column({ space: 3 }) {
@@ -10458,7 +5950,7 @@ export struct BridgeStatus {
             .wordBreak(WordBreak.BREAK_ALL)
             .layoutWeight(1)
           SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(16)
+            .fontSize(UiTokens.ICON_CHEVRON)
             .fontColor([$r('sys.color.icon_secondary')])
         }
         .width('100%')
@@ -10501,7 +5993,7 @@ export struct BridgeStatus {
     .constraintSize({ minHeight: 64 })
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
     .onClick(() => this.openConnectionDetails())
   }
 
@@ -10538,19 +6030,18 @@ export struct BridgeStatus {
     .borderRadius(0)
     .backgroundColor(Color.Transparent)
     .enabled(enabled)
-    .opacity(enabled ? 1 : 0.42)
     .onClick(action)
   }
 
   @Builder
   private PeerDeviceRow(peer: PeerSummary) {
-    Row({ space: 10 }) {
+    Row({ space: 12 }) {
       Stack({ alignContent: Alignment.Center }) {
         Image(this.peerDeviceIcon(peer.deviceType))
-          .width(19)
-          .height(19)
+          .width(22)
+          .height(22)
           .objectFit(ImageFit.Contain)
-          .fillColor($r('sys.color.icon_primary'))
+          .fillColor(this.peerEffectivelyOnline(peer) ? $r('sys.color.icon_primary') : $r('sys.color.icon_secondary'))
         Row()
           .width(8)
           .height(8)
@@ -10558,11 +6049,11 @@ export struct BridgeStatus {
           .border({ width: 2, color: this.groupBackground() })
           .backgroundColor(this.peerEffectivelyOnline(peer) ? $r('app.color.status_success') :
             $r('app.color.status_offline'))
-          .position({ x: 21, y: 21 })
+          .position({ x: 23, y: 23 })
       }
-      .width(36)
-      .height(36)
-      .borderRadius(11)
+      .width(UiTokens.ICON_LIST_CONTAINER)
+      .height(UiTokens.ICON_LIST_CONTAINER)
+      .borderRadius(UiTokens.ICON_LIST_CONTAINER_RADIUS)
       .backgroundColor(this.secondaryBackground())
 
       Column({ space: 3 }) {
@@ -10575,7 +6066,7 @@ export struct BridgeStatus {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
           SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(16)
+            .fontSize(UiTokens.ICON_CHEVRON)
             .fontColor([$r('sys.color.icon_secondary')])
         }
         .width('100%')
@@ -10605,7 +6096,7 @@ export struct BridgeStatus {
     .constraintSize({ minHeight: 64 })
     .padding({ left: 12, right: 12, top: 8, bottom: 8 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
     .id('home-peer-' + this.nodeNameSlug(peer.key))
     .onClick(() => this.openHomePeerDetails(peer))
   }
@@ -10743,7 +6234,7 @@ export struct BridgeStatus {
     .width('100%')
     .padding(20)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
@@ -10787,34 +6278,80 @@ export struct BridgeStatus {
   }
 
   @Builder
+  private ColorModeSettingsPanel() {
+    Row({ space: 12 }) {
+      Column({ space: 4 }) {
+        Text($r('app.string.native_settings_color_mode'))
+          .fontSize(UiTokens.BODY_SIZE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .width('100%')
+        Text($r('app.string.personalization_color_mode_desc'))
+          .fontSize(UiTokens.CAPTION_SIZE)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+      }
+      .layoutWeight(1)
+      Select([
+        { value: $r('app.string.native_settings_system_follow') },
+        { value: $r('app.string.personalization_color_light') },
+        { value: $r('app.string.personalization_color_dark') }
+      ])
+        .id('personalization-color-mode')
+        .selected(PersonalizationPreferences.colorModeIndex(this.personalizationColorMode))
+        .value(this.personalizationColorMode === 'light' ? $r('app.string.personalization_color_light') :
+          this.personalizationColorMode === 'dark' ? $r('app.string.personalization_color_dark') :
+            $r('app.string.native_settings_system_follow'))
+        .controlSize(ControlSize.NORMAL)
+        .font({ size: UiTokens.BODY_SIZE })
+        .constraintSize({ minWidth: 112, maxWidth: 144 })
+        .systemMaterial(LightAppearance.control(this.glowLevel))
+        .menuSystemMaterial(LightAppearance.menu(this.glowLevel))
+        .onSelect((index: number) => this.setPersonalizationColorMode(index))
+    }
+    .width('100%')
+    .padding(UiTokens.CARD_PADDING)
+    .backgroundColor(this.groupBackground())
+    .borderRadius(UiTokens.CARD_RADIUS)
+  }
+
+  @Builder
   private HomeLayoutSettingsPanel() {
     Row({ space: 10 }) {
       Column({ space: 3 }) {
-        Text('主页连接布局')
-          .fontSize(13)
+        Text($r('app.string.personalization_home_layout'))
+          .fontSize(UiTokens.BODY_SIZE)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
+        Text($r('app.string.personalization_home_layout_desc'))
+          .fontSize(UiTokens.CAPTION_SIZE)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
 
-      Select([{ value: '紧凑布局' }, { value: '经典布局' }])
+      Select([{ value: $r('app.string.personalization_home_compact') },
+        { value: $r('app.string.personalization_home_classic') }])
         .id('connected-home-layout-select')
         .selected(this.connectedHomeLayoutMode === ConnectedHomeLayoutMode.COMPACT ? 0 : 1)
-        .value(this.connectedHomeLayoutMode === ConnectedHomeLayoutMode.COMPACT ? '紧凑布局' : '经典布局')
-        .font({ size: 12 })
-        .optionFont({ size: 12 })
-        .menuBackgroundColor(this.glowSurface())
-        .menuBackgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-        .controlSize(ControlSize.SMALL)
-        .constraintSize({ minWidth: 100, maxWidth: 116 })
+        .value(this.connectedHomeLayoutMode === ConnectedHomeLayoutMode.COMPACT ?
+          $r('app.string.personalization_home_compact') : $r('app.string.personalization_home_classic'))
+        .font({ size: UiTokens.BODY_SIZE })
+        .optionFont({ size: UiTokens.BODY_SIZE })
+        .controlSize(ControlSize.NORMAL)
+        .constraintSize({ minWidth: 112, maxWidth: 144 })
+        .systemMaterial(LightAppearance.control(this.glowLevel))
+        .menuSystemMaterial(LightAppearance.menu(this.glowLevel))
         .onSelect((index: number) => this.setConnectedHomeLayoutMode(index === 0 ?
           ConnectedHomeLayoutMode.COMPACT : ConnectedHomeLayoutMode.LEGACY))
     }
     .id('connected-home-layout-settings')
     .width('100%')
     .constraintSize({ minHeight: 50 })
-    .padding(12)
+    .padding(UiTokens.CARD_PADDING)
+    .backgroundColor(this.groupBackground())
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
@@ -10840,10 +6377,10 @@ export struct BridgeStatus {
         .value(this.glowLevelLabel())
         .font({ size: 12 })
         .optionFont({ size: 12 })
-        .menuBackgroundColor(this.glowSurface())
-        .menuBackgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
         .controlSize(ControlSize.SMALL)
         .constraintSize({ minWidth: 100, maxWidth: 144 })
+        .systemMaterial(LightAppearance.control(this.glowLevel))
+        .menuSystemMaterial(LightAppearance.menu(this.glowLevel))
         .onSelect((index: number, _value?: string) => this.setGlowLevel(index))
     }
     .id('glow-settings')
@@ -10872,17 +6409,27 @@ export struct BridgeStatus {
 
   private saveNavigationPreferences(): void {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    NavigationPreferences.save(context, {
-      order: [...this.navigationOrder],
-      hidden: [...this.hiddenNavigationTabs],
+    const settings: NavigationSettings = {
+      order: [...this.navigationOrder], hidden: [...this.hiddenNavigationTabs],
       bottomMargin: this.navigationBottomMargin
-    }).catch(() => {
-      // Navigation remains usable for this session if persistence is unavailable.
+    };
+    this.navigationSaveQueue = this.navigationSaveQueue.catch(() => {}).then(() =>
+      NavigationPreferences.save(context, settings)).catch(() => {
+      this.showToast($r('app.string.personalization_save_failed'));
     });
   }
 
   private setNavigationBottomMargin(value: number): void {
+    if (!Number.isFinite(value)) return;
     this.navigationBottomMargin = Math.min(100, Math.max(0, Math.round(value)));
+    if (this.navigationMarginSaveTimer >= 0) clearTimeout(this.navigationMarginSaveTimer);
+    this.navigationMarginSaveTimer = setTimeout(() => this.flushNavigationMarginPreferences(), 180);
+  }
+
+  private flushNavigationMarginPreferences(): void {
+    if (this.navigationMarginSaveTimer < 0) return;
+    clearTimeout(this.navigationMarginSaveTimer);
+    this.navigationMarginSaveTimer = -1;
     this.saveNavigationPreferences();
   }
 
@@ -10956,6 +6503,7 @@ export struct BridgeStatus {
         .id(`navigation-visible-${id}`)
         .selectedColor($r('app.color.emphasize'))
         .enabled(id !== 'settings')
+        .systemMaterial(LightAppearance.control(this.glowLevel))
         .onChange((visible: boolean) => this.setNavigationTabVisible(id, visible))
       Column({ space: 4 }) {
         Row()
@@ -11031,12 +6579,54 @@ export struct BridgeStatus {
     .width('100%')
     .padding({ left: 14, right: 14, top: 14, bottom: 8 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   private openNativeSettingsPage(pageName: string): void {
     this.nativeSettingsPage = pageName === 'animation' ? 'animation' : 'background';
     this.nativeSettingsVisible = true;
+  }
+
+  private canOpenContextGuide(): boolean {
+    return this.appShellReady && !this.appLockRequired && !this.appLockAuthenticating &&
+      !this.securitySettingsAuthenticating && !this.taildropSendActive() && !this.taildropReceiveInProgress &&
+      !this.taildropPickerOpen;
+  }
+
+  private openContextGuide(section: string): void {
+    if (!this.canOpenContextGuide() || this.contextGuideVisible) return;
+    this.contextGuideSection = section;
+    this.contextGuidePresentation++;
+    this.contextGuideVisible = true;
+    this.contextGuideController = new CustomDialogController({
+      builder: FeatureSetupDialog({ initialSection: this.contextGuideSection,
+        presentationId: this.contextGuidePresentation }),
+      alignment: DialogAlignment.Center,
+      height: '70%',
+      autoCancel: true,
+      systemMaterial: LightAppearance.dialog(this.glowLevel),
+      onDidDisappear: () => { this.contextGuideVisible = false; }
+    });
+    this.contextGuideController.open();
+  }
+
+  @Builder
+  private ContextGuideAction(title: ResourceStr, section: string, actionId: string) {
+    Button(title, {
+      type: ButtonType.ROUNDED_RECTANGLE, stateEffect: true,
+      buttonStyle: ButtonStyleMode.TEXTUAL, controlSize: ControlSize.NORMAL
+    })
+      .fontSize(UiTokens.BODY_SIZE)
+      .constraintSize({ minHeight: UiTokens.ACTION_HEIGHT })
+      .id(actionId)
+      .enabled(this.canOpenContextGuide())
+      .onClick(() => this.openContextGuide(section))
+  }
+
+  private transferSetupNotice(): string {
+    return transferGuideNotice({ connected: this.isConnected(), refreshing: this.transferProtocolRefreshing,
+      state: this.taildropState, taildropTargets: this.displayedTaildropTargets().length,
+      busy: !this.canOpenContextGuide() });
   }
 
   private openSettingsDetail(pageName: string): void {
@@ -11045,9 +6635,11 @@ export struct BridgeStatus {
       return;
     }
     if (pageName === 'storage') {
-      this.refreshNativeStorageSummary();
+      this.storageRingGeneration++;
+      this.storageRingPageShown = false;
+      this.storageRingAnimationStarted = false;
+      this.storageRingProgress = 0;
       this.refreshCacheSize(false);
-      this.storageUsageRingProgress = 0;
     }
     this.settingsNavigationLockUntilMs = now + MotionTokens.PAGE;
     this.settingsDetailActive = true;
@@ -11060,15 +6652,11 @@ export struct BridgeStatus {
   }
 
   private featureDiagnosticToken(value: string, fallback: string = 'unknown'): string {
-    const normalized: string = value.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, '_');
-    if (normalized.length === 0) {
-      return fallback;
-    }
-    return normalized.substring(0, Math.min(normalized.length, 48));
+    return sanitizeVpnDiagnosticToken(value, fallback);
   }
 
   private featureDiagnosticCount(value: number): number {
-    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+    return sanitizeVpnDiagnosticCount(value);
   }
 
   private recordFeatureDiagnosticEvent(event: string, phase: string, code: number = 0): void {
@@ -11315,40 +6903,58 @@ export struct BridgeStatus {
     return 'B';
   }
 
-  private startStorageUsageRingAnimation(): void {
-    // Reset before the destination becomes visible so each visit has a clear
-    // fill-in motion instead of replaying a stale completed value.
-    this.storageUsageRingProgress = 0;
+  private storageSummaryLabel(): ResourceStr {
+    if (!this.storageUsageReady) {
+      return this.storageScanFailed ? $r('app.string.settings_storage_read_failed') :
+        $r('app.string.settings_cache_calculating');
+    }
+    return `${this.storageTotalValueLabel()} ${this.storageTotalUnitLabel()}`;
+  }
+
+  private startStorageRingAnimation(): void {
+    if (!this.storageRingPageShown || !this.storageUsageReady || this.storageRingAnimationStarted) return;
+    this.storageRingAnimationStarted = true;
+    const generation: number = this.storageRingGeneration;
+    // Allow the zero state to render once; refreshing statistics must never replay this animation.
     this.scheduleLifecycleTask(() => {
-      this.getUIContext().animateTo({
-        duration: MotionTokens.duration(760),
-        curve: MotionTokens.curve()
-      }, () => {
-        this.storageUsageRingProgress = 100;
+      if (!this.storageRingPageShown || generation !== this.storageRingGeneration) return;
+      this.getUIContext().animateTo({ duration: MotionTokens.duration(700), curve: Curve.EaseOut }, () => {
+        this.storageRingProgress = 1;
       });
-    }, 80);
+    }, 32);
   }
 
   private storageUsagePanelValues(): number[] {
-    const totalBytes: number = this.settingsStorageTotalBytes();
-    if (totalBytes <= 0) {
-      return [0, 0, 0];
+    const values: number[] = [Math.max(0, this.nativeStorageAppDataBytes),
+      Math.max(0, this.nativeStorageReceivedBytes), Math.max(0, this.nativeStorageTemporaryBytes)];
+    const total: number = values[0] + values[1] + values[2];
+    if (total <= 0) return [0, 0, 0];
+    const progress: number = Math.min(1, Math.max(0, this.storageRingProgress));
+    // Integer hundredths make the final sum exactly 100, including empty categories.
+    const last: number = values[2] > 0 ? 2 : values[1] > 0 ? 1 : 0;
+    let remaining: number = 10000;
+    const percentages: number[] = [0, 0, 0];
+    for (let index: number = 0; index <= last; index++) {
+      const units: number = index === last ? remaining : Math.floor(values[index] / total * 10000);
+      percentages[index] = units / 100 * progress;
+      remaining -= units;
     }
-    const animationRatio: number = Math.min(1, Math.max(0, this.storageUsageRingProgress / 100));
-    return [
-      (this.nativeStorageAppDataBytes / totalBytes) * 100 * animationRatio,
-      (this.nativeStorageReceivedBytes / totalBytes) * 100 * animationRatio,
-      (this.nativeStorageTemporaryBytes / totalBytes) * 100 * animationRatio
-    ];
+    return percentages;
   }
 
   @Builder
   private NativeAppearanceEntry() {
     Button({ type: ButtonType.Normal, stateEffect: true }) {
       Row({ space: 12 }) {
-        SymbolGlyph($r('sys.symbol.picture'))
-          .fontSize(22)
-          .fontColor([$r('app.color.emphasize')])
+        Stack({ alignContent: Alignment.Center }) {
+          SymbolGlyph($r('sys.symbol.picture'))
+            .fontSize(UiTokens.ICON_LIST_LEADING)
+            .fontColor([$r('app.color.emphasize')])
+        }
+        .width(UiTokens.ICON_LIST_CONTAINER)
+        .height(UiTokens.ICON_LIST_CONTAINER)
+        .borderRadius(UiTokens.ICON_LIST_CONTAINER_RADIUS)
+        .backgroundColor(this.secondaryBackground())
         Column({ space: 3 }) {
           Text($r('app.string.native_settings_background_material'))
             .fontSize(15)
@@ -11359,16 +6965,16 @@ export struct BridgeStatus {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
         SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(17)
-          .fontColor([$r('app.color.emphasize')])
+          .fontSize(UiTokens.ICON_CHEVRON)
+          .fontColor([$r('sys.color.icon_secondary')])
       }
       .width('100%')
       .height('100%')
-      .padding({ left: 14, right: 14 })
+      .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
     }
     .id('native-settings-entry')
     .width('100%')
-    .height(68)
+    .height(64)
     .padding(0)
     .backgroundColor(Color.Transparent)
     .onClick(() => this.openNativeSettingsPage('background'))
@@ -11378,9 +6984,15 @@ export struct BridgeStatus {
   private NativeAnimationEntry() {
     Button({ type: ButtonType.Normal, stateEffect: true }) {
       Row({ space: 12 }) {
-        SymbolGlyph($r('sys.symbol.arrow_clockwise'))
-          .fontSize(22)
-          .fontColor([$r('app.color.emphasize')])
+        Stack({ alignContent: Alignment.Center }) {
+          SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+            .fontSize(UiTokens.ICON_LIST_LEADING)
+            .fontColor([$r('app.color.emphasize')])
+        }
+        .width(UiTokens.ICON_LIST_CONTAINER)
+        .height(UiTokens.ICON_LIST_CONTAINER)
+        .borderRadius(UiTokens.ICON_LIST_CONTAINER_RADIUS)
+        .backgroundColor(this.secondaryBackground())
         Column({ space: 3 }) {
           Text($r('app.string.native_settings_animation'))
             .fontSize(15)
@@ -11391,55 +7003,90 @@ export struct BridgeStatus {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
         SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(17)
-          .fontColor([$r('app.color.emphasize')])
+          .fontSize(UiTokens.ICON_CHEVRON)
+          .fontColor([$r('sys.color.icon_secondary')])
       }
       .width('100%')
       .height('100%')
-      .padding({ left: 14, right: 14 })
+      .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
     }
     .id('native-animation-entry')
     .width('100%')
-    .height(68)
+    .height(64)
     .padding(0)
     .backgroundColor(Color.Transparent)
     .onClick(() => this.openNativeSettingsPage('animation'))
   }
 
   @Builder
+  private NavigationMarginSettingsPanel() {
+    Column({ space: 8 }) {
+      Row({ space: 12 }) {
+        Text($r('app.string.personalization_tab_margin'))
+          .fontSize(UiTokens.BODY_SIZE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .layoutWeight(1)
+        Text(`${this.navigationBottomMargin} vp`)
+          .fontSize(UiTokens.CAPTION_SIZE)
+          .fontColor($r('sys.color.font_secondary'))
+      }
+      .width('100%')
+      Text($r('app.string.personalization_tab_margin_desc'))
+        .fontSize(UiTokens.CAPTION_SIZE)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
+      Slider({ value: this.navigationBottomMargin, min: 0, max: 100, step: 1 })
+        .id('personalization-tab-bottom-margin')
+        .width('100%')
+        .accessibilityText($r('app.string.personalization_tab_margin'))
+        .accessibilityDescription(`${this.navigationBottomMargin} vp`)
+        .systemMaterial(LightAppearance.control(this.glowLevel))
+        .onChange((value: number) => this.setNavigationBottomMargin(value))
+    }
+    .width('100%')
+    .padding(UiTokens.CARD_PADDING)
+    .backgroundColor(this.groupBackground())
+    .borderRadius(UiTokens.CARD_RADIUS)
+  }
+
+  @Builder
   private AppearanceSettingsPanel() {
-    Column({ space: 12 }) {
+    Column({ space: UiTokens.GROUP_GAP }) {
+      this.ColorModeSettingsPanel()
+      this.HomeLayoutSettingsPanel()
       Column({ space: 0 }) {
         this.NativeAppearanceEntry()
-        Divider().color($r('sys.color.comp_divider')).margin({ left: 48 })
+        Divider().color($r('sys.color.comp_divider')).margin({ left: 66, right: 16 })
         this.NativeAnimationEntry()
       }
       .width('100%')
       .backgroundColor(this.groupBackground())
-      .borderRadius(16)
+      .borderRadius(UiTokens.CARD_RADIUS)
       .clip(true)
       this.NavigationSettingsPanel()
+      this.NavigationMarginSettingsPanel()
     }
     .id('appearance-settings')
     .width('100%')
   }
 
   @Builder
-  private StorageUsageLegendRow(title: ResourceStr, bytes: number, color: ResourceColor): void {
+  private StorageUsageLegendRow($$: StorageLegendRowData): void {
     Row({ space: 12 }) {
       Row()
         .width(10)
         .height(10)
         .borderRadius(5)
-        .backgroundColor(color)
-      Text(title)
+        .backgroundColor($$.color)
+      Text($$.title)
         .fontSize(15)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('sys.color.font_primary'))
         .layoutWeight(1)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text(this.formatTrafficBytes(Math.max(0, bytes)))
+      Text(this.storageUsageReady ? this.formatTrafficBytes(Math.max(0, $$.bytes)) : '—')
         .fontSize(12)
         .fontColor($r('sys.color.font_secondary'))
         .maxLines(1)
@@ -11453,15 +7100,15 @@ export struct BridgeStatus {
   private StorageUsageRing(): void {
     Stack({ alignContent: Alignment.Center }) {
       DataPanel({ values: this.storageUsagePanelValues(), max: 100, type: DataPanelType.Circle })
-        .valueColors(['#4D2A91', '#321574', '#FFB544'])
-        .trackBackgroundColor('#E4DDF2')
+        .valueColors([$r('app.color.emphasize'), $r('app.color.status_media_available'), $r('app.color.status_warning')])
+        .trackBackgroundColor($r('sys.color.comp_background_tertiary'))
         .strokeWidth(20)
-        .closeEffect(false)
+        .closeEffect(true)
         .width(244)
         .height(244)
-        .animation({ duration: MotionTokens.duration(760), curve: MotionTokens.curve() })
 
       Column({ space: 8 }) {
+        if (this.storageUsageReady) {
         Row({ space: 5 }) {
           Text(this.storageTotalValueLabel())
             .fontSize(48)
@@ -11473,6 +7120,10 @@ export struct BridgeStatus {
             .fontColor($r('sys.color.font_secondary'))
         }
         .alignItems(VerticalAlign.Bottom)
+        } else {
+          Text(this.storageSummaryLabel())
+            .fontSize(16).fontColor($r('sys.color.font_secondary'))
+        }
         Text($r('app.string.native_settings_storage_total'))
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
@@ -11485,45 +7136,53 @@ export struct BridgeStatus {
   }
 
   @Builder
-  private StorageCleanupButton(title: ResourceStr, description: ResourceStr, rowId: string,
-    enabled: boolean, onClick: () => void): void {
-    Button({ type: ButtonType.Normal, stateEffect: true }) {
-      Row({ space: 12 }) {
-        Image($r('app.media.ic_public_delete'))
-          .width(22)
-          .height(22)
-          .fillColor($r('app.color.status_error'))
-        Column({ space: 2 }) {
-          Text(title)
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.status_error'))
-            .width('100%')
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(description)
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .width('100%')
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+  private StorageCleanupButton($$: StorageCleanupButtonData): void {
+    Column() {
+      Button({ type: ButtonType.Normal, stateEffect: true }) {
+        Row({ space: 12 }) {
+          Stack({ alignContent: Alignment.Center }) {
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(UiTokens.ICON_LIST_LEADING)
+              .fontColor([$r('app.color.status_error')])
+          }
+          .width(UiTokens.ICON_LIST_CONTAINER)
+          .height(UiTokens.ICON_LIST_CONTAINER)
+          .borderRadius(UiTokens.ICON_LIST_CONTAINER_RADIUS)
+          .backgroundColor($r('app.color.badge_background_error'))
+          Column({ space: 2 }) {
+            Text($$.title)
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.status_error'))
+              .width('100%')
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text($$.description)
+              .fontSize(12)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
         }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .height('100%')
+          .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
       }
+        .id($$.rowId)
         .width('100%')
-        .height('100%')
-        .padding({ left: 14, right: 14 })
+        .height(68)
+        .padding(0)
+        .backgroundColor(Color.Transparent)
+        .enabled($$.enabled)
+        .onClick($$.onClick)
     }
-      .id(rowId)
       .width('100%')
-      .height(68)
-      .padding(0)
       .backgroundColor(this.groupBackground())
-      .borderRadius(16)
-      .enabled(enabled)
-      .opacity(enabled ? 1 : 0.48)
-      .onClick(onClick)
+      .borderRadius(UiTokens.CARD_RADIUS)
+      .clip(true)
   }
 
   @Builder
@@ -11532,32 +7191,35 @@ export struct BridgeStatus {
       this.StorageUsageRing()
 
       Column({ space: 0 }) {
-        this.StorageUsageLegendRow($r('app.string.native_settings_storage_app_data'),
-          this.nativeStorageAppDataBytes, '#4D2A91')
+        this.StorageUsageLegendRow({ title: $r('app.string.native_settings_storage_app_data'),
+            bytes: this.nativeStorageAppDataBytes,
+            color: $r('app.color.emphasize') })
         Divider().color($r('sys.color.comp_divider')).margin({ left: 20, right: 20 })
-        this.StorageUsageLegendRow($r('app.string.native_settings_storage_received'),
-          this.nativeStorageReceivedBytes, '#321574')
+        this.StorageUsageLegendRow({ title: $r('app.string.native_settings_storage_received'),
+            bytes: this.nativeStorageReceivedBytes,
+            color: $r('app.color.status_media_available') })
         Divider().color($r('sys.color.comp_divider')).margin({ left: 20, right: 20 })
-        this.StorageUsageLegendRow($r('app.string.native_settings_storage_temporary'),
-          this.nativeStorageTemporaryBytes, '#FFB544')
+        this.StorageUsageLegendRow({ title: $r('app.string.native_settings_storage_temporary'),
+            bytes: this.nativeStorageTemporaryBytes,
+            color: $r('app.color.status_warning') })
       }
       .width('100%')
       .backgroundColor(this.groupBackground())
-      .borderRadius(16)
+      .borderRadius(UiTokens.CARD_RADIUS)
       .clip(true)
 
       Column({ space: 8 }) {
-        this.StorageCleanupButton($r('app.string.native_settings_storage_clear_cache'),
-          $r('app.string.native_settings_storage_clear_cache_description'),
-          'settings-clear-cache',
-          (this.nativeStorageTemporaryBytes > 0 || this.taildropPreviewCacheAvailable()) &&
+        this.StorageCleanupButton({ title: $r('app.string.native_settings_storage_clear_cache'),
+            description: $r('app.string.native_settings_storage_clear_cache_description'),
+            rowId: 'settings-clear-cache',
+            enabled: (this.nativeStorageTemporaryBytes > 0 || this.taildropPreviewCacheAvailable()) &&
             !this.cacheClearBlocked(),
-          () => this.clearTemporaryStorage())
-        this.StorageCleanupButton($r('app.string.native_settings_storage_clear'),
-          $r('app.string.native_settings_storage_clear_description'),
-          'settings-clear-all-local-files',
-          this.storageAllLocalFilesClearEnabled(),
-          () => this.confirmClearAppCache())
+            onClick: () => this.clearTemporaryStorage() })
+        this.StorageCleanupButton({ title: $r('app.string.native_settings_storage_clear'),
+            description: $r('app.string.native_settings_storage_clear_description'),
+            rowId: 'settings-clear-all-local-files',
+            enabled: this.storageAllLocalFilesClearEnabled(),
+            onClick: () => this.confirmClearAppCache() })
       }
         .width('100%')
     }
@@ -11615,7 +7277,7 @@ export struct BridgeStatus {
       if (showOpenButton) {
         Button({ type: ButtonType.Circle, stateEffect: true }) {
           SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(20)
+            .fontSize(UiTokens.ICON_CHEVRON)
             .fontColor([$r('sys.color.icon_secondary')])
         }
           .id('account-open')
@@ -11633,7 +7295,64 @@ export struct BridgeStatus {
   @Builder
   private AccountPanel() {
     Column({ space: 6 }) {
-      if (this.controlServerEditorVisible) {
+      if (!this.isAuthenticated() && !this.isConnected() && !this.isConnecting() &&
+        !this.connectInProgress && !this.disconnectInProgress) {
+      Row({ space: 8 }) {
+        Select(this.controlServerPresetOptions())
+          .id('control-server-presets')
+          .selected(this.selectedControlServerPreset())
+          .value(this.controlServerURL === DEFAULT_CONTROL_SERVER_URL ? 'Tailscale' : this.controlServerURL)
+          .layoutWeight(1)
+          .enabled(this.canSwitchControlServer())
+          .systemMaterial(LightAppearance.control(this.glowLevel))
+          .menuSystemMaterial(LightAppearance.menu(this.glowLevel))
+          .onSelect((index: number) => this.selectControlServerPreset(index))
+        Button($r('app.string.control_server_manage'), { type: ButtonType.Normal, buttonStyle: ButtonStyleMode.NORMAL })
+          .height(40).fontSize(14)
+          .border({ radius: 10, width: 0.5, color: $r('sys.color.comp_divider') })
+          .id('control-server-manage')
+          .enabled(this.canSwitchControlServer())
+          .onClick(() => this.toggleControlServerEditor())
+      }
+      .width('100%')
+      Row({ space: 8 }) {
+        Select(this.accountProfileOptions())
+          .id('account-profile-select')
+          .selected(Math.max(0, this.accountProfiles.findIndex((item: AccountProfile) => item.id === this.accountProfileId)))
+          .value(this.activeAccountProfileLabel())
+          .layoutWeight(1)
+          .enabled(this.canSwitchControlServer() && this.controlServerConfirmed)
+          .systemMaterial(LightAppearance.control(this.glowLevel))
+          .menuSystemMaterial(LightAppearance.menu(this.glowLevel))
+          .onSelect((index: number) => {
+            if (index >= 0 && index < this.accountProfiles.length) {
+              this.persistAccountProfile(this.accountProfiles[index].id);
+            }
+          })
+        Button($r('app.string.account_profile_add'), { type: ButtonType.Normal, buttonStyle: ButtonStyleMode.NORMAL })
+          .height(40).fontSize(14)
+          .border({ radius: 10, width: 0.5, color: $r('sys.color.comp_divider') })
+          .id('account-profile-add')
+          .enabled(this.canSwitchControlServer() && this.controlServerConfirmed && this.accountProfiles.length < 16)
+          .onClick(() => this.persistAccountProfile('', true))
+      }
+      .width('100%')
+      }
+      if (this.loginInProgress && this.loginHandoffStatus === 'Secure login page opened') {
+        Button($r('app.string.account_profile_stop_login'))
+          .id('account-profile-stop-login')
+          .onClick(() => this.stopWaitingForAccountLogin())
+      }
+      if (this.accountProfileStatus === 'failed') {
+        Text($r('app.string.account_profile_failed'))
+          .fontSize(12).fontColor($r('app.color.status_error')).width('100%')
+      }
+      if (this.controlServerSwitching) {
+        Text($r('app.string.control_server_switching'))
+          .fontSize(12).fontColor($r('sys.color.font_secondary')).width('100%')
+      }
+      if (this.controlServerEditorVisible && !this.isAuthenticated() && !this.isConnected() && !this.isConnecting() &&
+        !this.connectInProgress && !this.disconnectInProgress) {
       Column({ space: 6 }) {
         Row({ space: 8 }) {
           Text($r('app.string.control_server_title'))
@@ -11647,59 +7366,13 @@ export struct BridgeStatus {
             .fontColor(this.controlServerConfirmed ? $r('app.color.status_success') :
               $r('app.color.status_warning'))
         }
-        Text($r('app.string.control_server_description'))
-          .fontSize(12)
-          .fontColor($r('sys.color.font_secondary'))
-          .lineHeight(17)
-          .width('100%')
-        TextInput({
-          text: this.controlServerInput,
-          placeholder: DEFAULT_CONTROL_SERVER_URL
+        AccountTextField({
+          value: $controlServerInput,
+          fieldId: 'control-server-input',
+          placeholder: DEFAULT_CONTROL_SERVER_URL,
+          inputEnabled: this.canSwitchControlServer(),
+          onEdited: (): void => { this.controlServerStatus = ''; }
         })
-          .id('control-server-input')
-          .width('100%')
-          .height(42)
-          .padding({ left: 12, right: 12 })
-          .fontSize(13)
-          .fontColor($r('sys.color.font_primary'))
-          .placeholderColor($r('sys.color.font_secondary'))
-          .backgroundColor(this.glowSurface())
-          .backgroundEffect({
-            radius: this.glowRadius(),
-            saturation: this.glowSaturation(),
-            brightness: this.glowBrightness(),
-            color: this.glowSurface(),
-            adaptiveColor: AdaptiveColor.DEFAULT
-          }, { disableSystemAdaptation: false })
-          .visualEffect(this.immersivePressEffect())
-          .border({
-            width: 1,
-            color: this.controlServerInputFocused ?
-              $r('app.color.emphasize') : $r('sys.color.comp_divider')
-          })
-          .borderRadius(12)
-          .shadow({
-            radius: this.controlServerInputFocused ? 8 : 0,
-            color: this.glowColor(),
-            offsetY: this.controlServerInputFocused ? 2 : 0
-          })
-          .scale({
-            x: this.controlServerInputFocused ? 1.004 : 1,
-            y: this.controlServerInputFocused ? 1.004 : 1
-          })
-          .animation({ duration: MotionTokens.NORMAL, curve: MotionTokens.curve() })
-          .selectionMenuHidden(false)
-          .enabled(!this.isConnected() && !this.isConnecting())
-          .onFocus(() => {
-            this.controlServerInputFocused = true;
-          })
-          .onBlur(() => {
-            this.controlServerInputFocused = false;
-          })
-          .onChange((value: string) => {
-            this.controlServerInput = value;
-            this.controlServerStatus = '';
-          })
         Button($r('app.string.control_server_save'), {
           type: ButtonType.ROUNDED_RECTANGLE,
           stateEffect: true,
@@ -11708,8 +7381,7 @@ export struct BridgeStatus {
         })
           .id('control-server-save')
           .width('100%')
-          .visualEffect(this.immersivePressEffect())
-          .enabled(!this.isConnected() && !this.isConnecting())
+          .enabled(this.canSwitchControlServer())
           .onClick(() => this.saveControlServer())
         if (this.controlServerStatus.length > 0) {
           Text(this.controlServerStatusText())
@@ -11803,10 +7475,23 @@ export struct BridgeStatus {
               })
               .width(48)
               .height(48)
+              .enabled(!this.loginInProgress)
               .onClick(() => this.toggleControlServerEditor())
           }
         }
         .width('100%')
+        Button($r('app.string.auth_key_login_action'), {
+          type: ButtonType.ROUNDED_RECTANGLE,
+          buttonStyle: ButtonStyleMode.NORMAL
+        })
+          .id('account-auth-key-login')
+          .width('100%')
+          .height(48)
+          .enabled(!this.loginInProgress)
+          .onClick(() => this.toggleAuthKeyLogin())
+        if (this.authKeyLoginVisible) {
+          this.AuthKeyLoginForm()
+        }
         if (this.loginHandoffStatus.startsWith('FAILED')) {
           Text(this.loginHandoffStatus)
             .id('login-handoff-status')
@@ -11827,11 +7512,61 @@ export struct BridgeStatus {
           this.localDeviceName(), 'account-device')
       }
 
+      if (this.authKeyStatus.length > 0) {
+        Text(this.authKeyStatusText())
+          .id('auth-key-login-status')
+          .fontSize(12)
+          .fontColor(this.authKeyStatus === 'authenticated' ? $r('app.color.status_success') :
+            this.authKeyStatus === 'loading' || this.authKeyStatus === 'needs_approval' ?
+              $r('sys.color.font_secondary') : $r('app.color.status_error'))
+          .width('100%')
+      }
+
     }
     .width('100%')
     .padding(12)
     .backgroundColor(this.groupBackground())
-    .borderRadius(14)
+    .borderRadius(UiTokens.CARD_RADIUS)
+  }
+
+  @Builder
+  private AuthKeyLoginForm() {
+    Column({ space: 12 }) {
+      Text($r('app.string.auth_key_description'))
+        .fontSize(13)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
+      Text(this.controlServerURL)
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
+      AccountTextField({
+        value: $authKeyInput,
+        fieldId: 'auth-key-input',
+        placeholder: $r('app.string.auth_key_placeholder'),
+        password: true,
+        inputEnabled: !this.loginInProgress,
+        onEdited: (): void => { this.authKeyStatus = ''; }
+      })
+      Text($r('app.string.auth_key_privacy'))
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .width('100%')
+      Row({ space: 8 }) {
+        Button($r('app.string.cancel_action'), { buttonStyle: ButtonStyleMode.NORMAL })
+          .layoutWeight(1)
+          .enabled(!this.loginInProgress)
+          .onClick(() => this.toggleAuthKeyLogin())
+        Button(this.loginInProgress ? $r('app.string.auth_key_loading') :
+          $r('app.string.auth_key_submit'))
+          .id('auth-key-submit')
+          .layoutWeight(1)
+          .enabled(!this.loginInProgress && this.authKeyInput.trim().length > 0)
+          .onClick(() => this.submitAuthKeyLogin())
+      }
+      .width('100%')
+    }
+    .width('100%')
   }
 
   @Builder
@@ -11908,7 +7643,7 @@ export struct BridgeStatus {
     .width('100%')
     .padding(16)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
@@ -11958,7 +7693,7 @@ export struct BridgeStatus {
           .layoutWeight(1)
           .textAlign(TextAlign.Start)
         SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(17)
+          .fontSize(UiTokens.ICON_CHEVRON)
           .fontColor([$r('sys.color.icon_secondary')])
       }
       .width('100%')
@@ -11982,13 +7717,30 @@ export struct BridgeStatus {
       this.AccountDetailRow($r('app.string.tailscale_version_label'),
         this.tailscaleVersion, 'tailscale-version')
       Divider().color($r('sys.color.comp_divider'))
-      this.AccountDetailRow($r('app.string.feedback_label'), FEEDBACK_EMAIL,
+      this.AccountDetailRow($r('app.string.feedback_email_with_diagnostics'), FEEDBACK_EMAIL,
         'feedback-email', () => this.openFeedbackEmail())
+      this.FeedbackEmailStatus()
     }
     .width('100%')
-    .padding(14)
+    .padding(UiTokens.CARD_PADDING)
     .backgroundColor(this.groupBackground())
-    .borderRadius(14)
+    .borderRadius(UiTokens.CARD_RADIUS)
+  }
+
+  @Builder
+  private FeedbackEmailStatus() {
+    if (this.feedbackEmailStatus.length > 0) {
+      Text(this.feedbackEmailStatus === 'preparing' ? $r('app.string.diagnostic_report_generating') :
+        this.feedbackEmailStatus === 'failed' ? $r('app.string.feedback_email_attachment_failed') :
+        $r('app.string.feedback_email_prepared'))
+        .id('feedback-email-status')
+        .fontSize(12).fontColor($r('sys.color.font_secondary')).width('100%')
+      if (this.feedbackEmailStatus === 'failed') {
+        this.StandardActionButton($r('app.string.diagnostic_report_action'), 'feedback-diagnostic-export',
+          false, this.canUseStandaloneDiagnostics() && !this.diagnosticReportInProgress,
+          () => this.generateDiagnosticReport())
+      }
+    }
   }
 
   @Builder
@@ -12053,6 +7805,7 @@ export struct BridgeStatus {
       Toggle({ type: ToggleType.Switch, isOn: enabled })
         .id(nodeId)
         .selectedColor($r('app.color.emphasize'))
+        .systemMaterial(LightAppearance.control(this.glowLevel))
         .onChange(onChange)
     }
     .width('100%')
@@ -12134,9 +7887,11 @@ export struct BridgeStatus {
       this.StandardActionButton($r('app.string.diagnostic_force_vpn_stop_action'),
         'diagnostic-force-vpn-stop', false, !this.diagnosticActionInProgress,
         () => this.forceStopSystemVpn(), false, true)
-      this.StandardActionButton($r('app.string.diagnostic_simulate_crash_action'),
-        'diagnostic-simulate-crash', false, !this.diagnosticActionInProgress,
-        () => this.confirmSimulateAppCrash(), false, true)
+      if (BuildProfile.DEBUG) {
+        this.StandardActionButton($r('app.string.diagnostic_simulate_crash_action'),
+          'diagnostic-simulate-crash', false, !this.diagnosticActionInProgress,
+          () => this.confirmSimulateAppCrash(), false, true)
+      }
       Row({ space: 12 }) {
         Column({ space: 2 }) {
           Text($r('app.string.diagnostic_fake_media_online_title'))
@@ -12153,6 +7908,7 @@ export struct BridgeStatus {
         Toggle({ type: ToggleType.Switch, isOn: this.fakeMediaServiceOnline })
           .id('diagnostic-fake-media-online')
           .selectedColor($r('app.color.emphasize'))
+          .systemMaterial(LightAppearance.control(this.glowLevel))
           .onChange((enabled: boolean) => {
             this.fakeMediaServiceOnline = enabled;
             this.recordFeatureDiagnosticEvent('fake_media_service_changed',
@@ -12292,9 +8048,123 @@ export struct BridgeStatus {
     .width('100%')
   }
 
+
+  private async pathDiagnosticAction(action: string): Promise<void> {
+    if (this.pathDiagnosticBusy || !this.canUseStandaloneDiagnostics()) return;
+    const generation: number = this.pathDiagnosticRequestGuard.begin();
+    this.pathDiagnosticBusy = true;
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const result: string = await PathDiagnosticService.request(context.filesDir, action);
+      if (this.pathDiagnosticRequestGuard.isCurrent(generation) && this.canUseStandaloneDiagnostics()) {
+        this.pathDiagnosticStatus = action + ': ' + result;
+      }
+    } catch (_error) {
+      if (this.pathDiagnosticRequestGuard.isCurrent(generation) && this.canUseStandaloneDiagnostics()) {
+        this.pathDiagnosticStatus = action + ': unavailable';
+      }
+    } finally {
+      if (this.pathDiagnosticRequestGuard.isCurrent(generation)) this.pathDiagnosticBusy = false;
+    }
+  }
+
+  private canUseStandaloneDiagnostics(): boolean {
+    return this.appShellReady && this.remoteStreamAppInForeground && this.securityPreferencesReady &&
+      !this.appLockRequired && !this.appLockAuthenticating && !this.securitySettingsAuthenticating;
+  }
+
+  private openStandaloneDiagnostics(): void {
+    if (!this.canUseStandaloneDiagnostics()) return;
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      this.crashCaptureEnabled = CrashDiagnosticService.isEnabled(context.filesDir);
+      this.standaloneDiagnosticsVisible = true;
+    } catch (_error) { this.showToast($r('app.string.diagnostic_report_failed')); }
+  }
+
+  private closeStandaloneDiagnostics(): void {
+    this.standaloneDiagnosticsVisible = false;
+    this.pathDiagnosticRequestGuard.invalidate();
+    this.diagnosticReportRequestGuard.invalidate();
+    this.feedbackEmailStatus = '';
+    this.pathDiagnosticBusy = false;
+    this.diagnosticReportInProgress = false;
+  }
+
+  private setStandaloneCrashCapture(enabled: boolean): void {
+    if (!this.canUseStandaloneDiagnostics()) return;
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      if (enabled) {
+        this.crashCaptureEnabled = CrashDiagnosticService.enable(context.filesDir);
+        if (!this.crashCaptureEnabled) this.showToast($r('app.string.diagnostic_report_failed'));
+      } else {
+        // Revoking capture also cancels sharing a report already being compressed.
+        this.diagnosticReportRequestGuard.invalidate();
+        this.feedbackEmailStatus = '';
+        this.diagnosticReportInProgress = false;
+        if (!CrashDiagnosticService.disable(context.filesDir)) {
+          this.showToast($r('app.string.standalone_diagnostics_clear_failed'));
+        }
+        this.crashCaptureEnabled = false;
+      }
+    } catch (_error) { this.showToast($r('app.string.diagnostic_report_failed')); }
+  }
+
+  @Builder
+  private StandaloneDiagnosticsContent() {
+    Stack() {
+      Scroll() {
+        Column({ space: 12 }) {
+          Text($r('app.string.standalone_diagnostics_description')).fontSize(14)
+            .fontColor($r('sys.color.font_secondary')).width('100%')
+          Text(this.crashCaptureEnabled ? $r('app.string.standalone_diagnostics_enabled') :
+            $r('app.string.standalone_diagnostics_disabled')).fontSize(14).width('100%')
+          this.StandardActionButton($r('app.string.standalone_diagnostics_enable'), 'standalone-crash-enable',
+            false, this.canUseStandaloneDiagnostics() && !this.crashCaptureEnabled,
+            () => this.setStandaloneCrashCapture(true))
+          this.StandardActionButton($r('app.string.standalone_diagnostics_clear'), 'standalone-crash-clear',
+            false, this.canUseStandaloneDiagnostics(), () => this.setStandaloneCrashCapture(false))
+          this.StandardActionButton($r('app.string.diagnostic_report_action'), 'standalone-diagnostic-export',
+            true, this.canUseStandaloneDiagnostics() && !this.diagnosticReportInProgress,
+            () => this.generateDiagnosticReport(), this.diagnosticReportInProgress)
+          this.StandardActionButton($r('app.string.feedback_email_with_diagnostics'), 'standalone-feedback-email',
+            false, this.canUseStandaloneDiagnostics() && !this.diagnosticReportInProgress,
+            () => this.openFeedbackEmail())
+          this.FeedbackEmailStatus()
+          if (this.diagnosticReportStatus.length > 0) {
+            Text(this.diagnosticReportStatus).fontSize(12).width('100%')
+          }
+          this.PathDiagnosticPanel()
+        }.width('100%').padding(20)
+      }.width('100%').height('100%')
+      if (this.isSecurityCoverActive()) { this.SecurityCoverOverlay() }
+    }.width('100%').height('100%')
+  }
+
+  @Builder
+  private PathDiagnosticPanel() {
+    Column({ space: 8 }) {
+      this.DiagnosticSectionHeader($r('app.string.path_diag_title'), $r('app.string.path_diag_description'))
+      this.StandardActionButton($r('app.string.path_diag_start'), 'path-diag-start', false,
+        this.isConnected() && !this.pathDiagnosticBusy, () => this.pathDiagnosticAction('start'))
+      this.StandardActionButton($r('app.string.path_diag_probe'), 'path-diag-probe', false,
+        this.isConnected() && !this.pathDiagnosticBusy, () => this.pathDiagnosticAction('probe'))
+      this.StandardActionButton($r('app.string.path_diag_stop'), 'path-diag-stop', false,
+        this.isConnected() && !this.pathDiagnosticBusy, () => this.pathDiagnosticAction('stop'))
+      this.StandardActionButton($r('app.string.path_diag_clear'), 'path-diag-clear', false,
+        this.isConnected() && !this.pathDiagnosticBusy, () => this.pathDiagnosticAction('clear'))
+      if (this.pathDiagnosticStatus.length > 0) {
+        this.DiagnosticStatus($r('app.string.path_diag_title'), this.pathDiagnosticStatus, 'path-diag-status')
+      }
+    }.width('100%')
+  }
+
   @Builder
   private DiagnosticsActionsPanel() {
     Column({ space: 12 }) {
+      this.PathDiagnosticPanel()
+      Divider().color($r('sys.color.comp_divider'))
       this.DiagnosticsProbePanel()
       Divider().color($r('sys.color.comp_divider'))
       this.DiagnosticsFeatureOptionsPanel()
@@ -12379,7 +8249,7 @@ export struct BridgeStatus {
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Start)
           SymbolGlyph($r('sys.symbol.chevron_down'))
-            .fontSize(20)
+            .fontSize(UiTokens.ICON_CHEVRON)
             .fontColor([$r('sys.color.icon_secondary')])
             .rotate({ angle: this.diagnosticsExpanded ? 180 : 0 })
             .animation({ duration: MotionTokens.NORMAL, curve: MotionTokens.curve() })
@@ -12416,15 +8286,39 @@ export struct BridgeStatus {
     .width('100%')
     .padding({ left: 10, right: 10 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(14)
+    .borderRadius(UiTokens.CARD_RADIUS)
     .margin({ top: 10 })
   }
 
   @Builder
   private HomeContent() {
     Scroll(this.homeScroller) {
-      Column({ space: 12 }) {
-        this.HomeConnectionHeader()
+      Column({ space: UiTokens.GROUP_GAP }) {
+        Column({ space: 0 }) {
+          this.HomeConnectionHeader()
+          if (this.connectedHomeLayoutActive()) {
+            Button({ type: ButtonType.Normal, stateEffect: true }) {
+              Row({ space: 5 }) {
+                Text($r('app.string.home_connection_optimization'))
+                  .fontSize(11)
+                  .fontColor($r('sys.color.font_secondary'))
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(10)
+                  .fontColor([$r('sys.color.icon_secondary')])
+              }
+              .width('100%')
+              .padding({ left: 12, right: 12 })
+            }
+            .id('home-connection-optimization')
+            .width('100%')
+            .constraintSize({ minHeight: 24 })
+            .borderRadius(8)
+            .padding(0)
+            .backgroundColor(Color.Transparent)
+            .onClick(() => this.revealBackgroundRunningSetting())
+          }
+        }
+        .width('100%')
         if ((this.isBackendLoading() || this.devicesLoading) && this.peers.length === 0 &&
           !this.diagnosticDeviceListVerificationEnabled) {
           Column() {
@@ -12482,15 +8376,17 @@ export struct BridgeStatus {
         Text(displayState === 'online' ? $r('app.string.transfer_protocol_online', protocol) :
           (displayState === 'checking' ? $r('app.string.transfer_protocol_checking', protocol) :
             $r('app.string.transfer_protocol_offline', protocol)))
-          .fontSize(10)
+          .fontSize(UiTokens.BADGE_SIZE)
           .fontWeight(FontWeight.Medium)
           .fontColor(displayState === 'online' ? $r('app.color.status_success') :
             (displayState === 'checking' ? $r('app.color.status_warning') :
               $r('sys.color.font_secondary')))
-          .padding({ left: 7, right: 7, top: 3, bottom: 3 })
-          .backgroundColor(displayState === 'online' ? '#1837B77A' :
-            (displayState === 'checking' ? '#18F59E0B' : '#12000000'))
-          .borderRadius(10)
+          .padding({ left: UiTokens.BADGE_PADDING_HORIZONTAL, right: UiTokens.BADGE_PADDING_HORIZONTAL,
+            top: UiTokens.BADGE_PADDING_VERTICAL, bottom: UiTokens.BADGE_PADDING_VERTICAL })
+          .backgroundColor(displayState === 'online' ? $r('app.color.badge_background_available') :
+            (displayState === 'checking' ? $r('app.color.badge_background_warning') :
+              $r('app.color.badge_background_pending')))
+          .borderRadius(UiTokens.BADGE_RADIUS)
           .maxLines(1)
           .transition(
             TransitionEffect.asymmetric(
@@ -12516,17 +8412,33 @@ export struct BridgeStatus {
     .align(Alignment.Start)
   }
 
-  private localSendProtocolState(peer: PeerSummary | undefined): string {
-    if (!this.isConnected() || peer === undefined || !this.peerEffectivelyOnline(peer)) {
+  private taildropProtocolState(target: TaildropTargetSummary | undefined): string {
+    if (!this.isConnected() || target === undefined || !target.online) {
       return 'offline';
     }
-    if (this.transferProtocolRefreshing) {
-      return 'checking';
-    }
-    if (peer.localSend?.state === 'available') {
+    if (this.taildropState === 'ready') {
       return 'online';
     }
-    return peer.localSend?.state === 'checking' ? 'checking' : 'offline';
+    return this.taildropState === 'loading' ? 'checking' : 'offline';
+  }
+
+  private taildropTargetReady(target: TaildropTargetSummary): boolean {
+    return this.taildropProtocolState(target) === 'online';
+  }
+
+  private localSendProtocolState(peer: PeerSummary | undefined): string {
+    const current: PeerSummary | undefined = peer === undefined ? undefined :
+      (this.peerForFileTransferKey(peer.key) ?? peer);
+    if (!this.isConnected() || current === undefined || !this.peerEffectivelyOnline(current)) {
+      return 'offline';
+    }
+    if (this.transferProtocolRefreshing || current.localSend?.state === 'checking') {
+      return 'checking';
+    }
+    if (current.localSend?.state === 'available') {
+      return 'online';
+    }
+    return 'offline';
   }
 
   private localSendAvailableForTarget(target: TaildropTargetSummary): boolean {
@@ -12536,18 +8448,20 @@ export struct BridgeStatus {
 
   private transferTargetDeviceOffline(target: TaildropTargetSummary): boolean {
     const peer: PeerSummary | undefined = this.peerForFileTransferKey(target.key);
-    return !this.isConnected() || (!target.online && (peer === undefined || !this.peerEffectivelyOnline(peer)));
+    return !this.isConnected() || (!this.taildropTargetReady(target) && !target.online &&
+      (peer === undefined || !this.peerEffectivelyOnline(peer)));
   }
 
   @Builder
   private TransferDeviceOfflineBadge() {
     Text($r('app.string.device_detail_device_offline'))
-      .fontSize(10)
+      .fontSize(UiTokens.BADGE_SIZE)
       .fontWeight(FontWeight.Medium)
       .fontColor($r('sys.color.font_secondary'))
-      .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-      .backgroundColor('#12000000')
-      .borderRadius(10)
+      .padding({ left: UiTokens.BADGE_PADDING_HORIZONTAL, right: UiTokens.BADGE_PADDING_HORIZONTAL,
+        top: UiTokens.BADGE_PADDING_VERTICAL, bottom: UiTokens.BADGE_PADDING_VERTICAL })
+      .backgroundColor($r('app.color.badge_background_pending'))
+      .borderRadius(UiTokens.BADGE_RADIUS)
       .maxLines(1)
   }
 
@@ -12557,9 +8471,9 @@ export struct BridgeStatus {
       Row()
         .width('100%')
         .height('100%')
-        .borderRadius(16)
-        .backgroundColor('#18000000')
-        .shadow({ radius: 14, color: '#26000000', offsetY: 4 })
+        .borderRadius(UiTokens.CARD_RADIUS)
+        .backgroundColor($r('app.color.surface_subtle'))
+        .shadow({ radius: 14, color: $r('app.color.shadow_elevated_soft'), offsetY: 4 })
         .hitTestBehavior(HitTestMode.None)
         .transition(TransitionEffect.OPACITY.animation({
           duration: MotionTokens.duration(180), curve: MotionTokens.curve()
@@ -12569,30 +8483,25 @@ export struct BridgeStatus {
 
   private taildropFileChoicesVisible(target: TaildropTargetSummary,
     peer: PeerSummary | undefined): boolean {
-    if (!target.online || !this.taildropContentChoiceEnabled()) {
+    if (!this.taildropTargetReady(target)) {
       return false;
     }
     if (peer === undefined) {
       return true;
     }
-    const localSendState: string = peer.localSend?.state ?? 'checking';
-    if (localSendState === 'checking' || localSendState === 'unknown') {
-      return false;
-    }
-    const capabilities: FileTransferCapabilities = this.fileTransferCapabilitiesForPeer(peer);
-    return capabilities.tailsend && !capabilities.localSend;
+    return this.localSendProtocolState(peer) === 'offline';
   }
 
   @Builder
   private TaildropTargetRow(target: TaildropTargetSummary) {
     Column({ space: 0 }) {
       Row({ space: 12 }) {
-        Stack() {
-          Image(this.peerDeviceIcon(target.deviceType))
+        Stack({ alignContent: Alignment.Center }) {
+          Image(this.peerDeviceIcon(target.deviceType ?? ''))
             .width(22)
             .height(22)
-            .fillColor(this.isConnected() && target.online ? $r('sys.color.icon_primary') :
-              $r('sys.color.icon_secondary'))
+            .fillColor((this.taildropTargetReady(target) || this.localSendAvailableForTarget(target)) ?
+              $r('sys.color.icon_primary') : $r('sys.color.icon_secondary'))
         }
         .width(38)
         .height(38)
@@ -12600,7 +8509,7 @@ export struct BridgeStatus {
         .backgroundColor(this.secondaryBackground())
 
         Column({ space: 2 }) {
-          Text(target.name)
+          Text(this.peerDisplayName(target.name))
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_primary'))
@@ -12611,7 +8520,7 @@ export struct BridgeStatus {
             if (this.transferTargetDeviceOffline(target)) {
               this.TransferDeviceOfflineBadge()
             } else {
-              this.TransferProtocolBadge('Taildrop', target.online ? 'online' : 'offline')
+              this.TransferProtocolBadge('Taildrop', this.taildropProtocolState(target))
               this.TransferProtocolBadge('LocalSend',
                 this.localSendProtocolState(this.peerForFileTransferKey(target.key)),
                 () => {
@@ -12632,7 +8541,7 @@ export struct BridgeStatus {
       .width('100%')
       .constraintSize({ minHeight: 54 })
       .padding({ left: 12, right: 12, top: 7, bottom: 4 })
-      if (this.isConnected() && (target.online || this.localSendAvailableForTarget(target))) {
+      if (this.taildropTargetReady(target) || this.localSendAvailableForTarget(target)) {
         Row() {
           if (this.taildropFileChoicesVisible(target, this.peerForFileTransferKey(target.key))) {
             this.TaildropFileMediaCapsule(target, this.peerForFileTransferKey(target.key))
@@ -12643,17 +8552,23 @@ export struct BridgeStatus {
         .width('100%')
         .padding({ left: 12, right: 12, top: 4, bottom: 12 })
       }
-      if (this.taildropTextEditorVisible && this.taildropTextTarget !== undefined &&
-        this.taildropTextTarget.key === target.key) {
+      if (this.taildropTextEditorVisible && this.taildropTextEditorMatches(target)) {
         this.TaildropTextEditorSheet()
+      }
+      if (this.remotePortEditorVisible && this.remotePortPeerKey === target.key) {
+        Column() {
+          this.RemotePortEditorPanel()
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, bottom: 12 })
       }
     }
     .id('taildrop-target-' + target.key)
     .width('100%')
     .overlay(this.TransferTargetFocusOverlay(target.key), { align: Alignment.Center })
     .backgroundColor(Color.Transparent)
-    .borderRadius(16)
-    .opacity(this.isConnected() && (target.online || this.localSendAvailableForTarget(target)) ? 1 : 0.52)
+    .borderRadius(UiTokens.CARD_RADIUS)
+    .opacity((this.taildropTargetReady(target) || this.localSendAvailableForTarget(target)) ? 1 : 0.52)
     .animation({ duration: MotionTokens.EXPAND, curve: MotionTokens.curve() })
   }
 
@@ -12662,28 +8577,23 @@ export struct BridgeStatus {
     Row({ space: 0 }) {
       this.PeerActionSegment($r('app.string.transfer_file_action'),
         'taildrop-file-' + target.key,
-        (target.online || (peer !== undefined && this.localSendAvailableForPeer(peer))) &&
-          this.taildropContentChoiceEnabled(), false,
-        () => {
-          if (peer === undefined) {
-            this.chooseTaildropDocuments(target);
-          } else {
-            this.startFileTransferForPeer(peer);
-          }
-        })
+        this.taildropTargetReady(target) && this.taildropContentChoiceEnabled(), false,
+        () => this.chooseTaildropDocuments(target))
       Divider()
         .vertical(true)
         .height(18)
         .color($r('sys.color.comp_divider'))
       this.PeerActionSegment($r('app.string.transfer_photo_action'),
-        'taildrop-media-' + target.key, target.online && this.taildropContentChoiceEnabled(), false,
+        'taildrop-media-' + target.key,
+        this.taildropTargetReady(target) && this.taildropContentChoiceEnabled(), false,
         () => this.chooseTaildropPhotos(target))
       Divider()
         .vertical(true)
         .height(18)
         .color($r('sys.color.comp_divider'))
       this.PeerActionSegment($r('app.string.transfer_text_action'),
-        'taildrop-text-' + target.key, target.online && this.taildropContentChoiceEnabled(), false,
+        'taildrop-text-' + target.key,
+        this.taildropTargetReady(target) && this.taildropContentChoiceEnabled(), false,
         () => this.chooseTaildropText(target))
     }
     .width('100%')
@@ -12699,7 +8609,7 @@ export struct BridgeStatus {
     Row({ space: 0 }) {
       this.PeerActionSegment($r('app.string.transfer_send_file_action'),
         'taildrop-send-file-' + target.key,
-        (target.online || (peer !== undefined && this.localSendAvailableForPeer(peer))) &&
+        (this.taildropTargetReady(target) || (peer !== undefined && this.localSendAvailableForPeer(peer))) &&
           this.taildropContentChoiceEnabled(), false,
         () => {
           if (peer === undefined) {
@@ -12719,70 +8629,142 @@ export struct BridgeStatus {
 
   @Builder
   private LocalSendOnlyTargetRow(peer: PeerSummary) {
-    Row({ space: 12 }) {
-      Stack({ alignContent: Alignment.Center }) {
-        Image($r('app.media.ic_light_connect'))
-          .width(28)
-          .height(28)
-          .objectFit(ImageFit.Contain)
-      }
-      .width(38)
-      .height(38)
-      .borderRadius(12)
-      .backgroundColor(this.secondaryBackground())
-
-      Column({ space: 2 }) {
-        Text(this.peerDisplayName(peer.name))
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text($r('app.string.device_detail_transfer_localsend_description'))
-          .fontSize(12)
-          .fontColor($r('sys.color.font_secondary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Row({ space: 10 }) {
-          if (!this.isConnected() || !this.peerEffectivelyOnline(peer)) {
-            this.TransferDeviceOfflineBadge()
-          } else {
-            this.TransferProtocolBadge('Taildrop', 'offline')
-            this.TransferProtocolBadge('LocalSend', this.localSendProtocolState(peer),
-              () => this.openRemotePortEditor(peer))
-          }
+    Column({ space: 0 }) {
+      Row({ space: 12 }) {
+        Stack({ alignContent: Alignment.Center }) {
+          Image(this.peerDeviceIcon(peer.deviceType))
+            .width(22)
+            .height(22)
+            .fillColor(this.localSendAvailableForPeer(peer) ?
+              $r('sys.color.icon_primary') : $r('sys.color.icon_secondary'))
         }
-          .width('100%')
-          .margin({ top: 8, bottom: 2 })
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
+        .width(38)
+        .height(38)
+        .borderRadius(12)
+        .backgroundColor(this.secondaryBackground())
 
-      if (this.isConnected() && this.peerEffectivelyOnline(peer)) {
-        Button($r('app.string.transfer_send_file_action'), {
-          type: ButtonType.ROUNDED_RECTANGLE,
-          stateEffect: true,
-          controlSize: ControlSize.SMALL
-        })
-          .fontSize(11)
-          .height(34)
-          .enabled(this.localSendAvailableForPeer(peer))
-          .opacity(this.localSendAvailableForPeer(peer) ? 1 : 0.42)
+        Column({ space: 2 }) {
+          Text(this.peerDisplayName(peer.name))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          Row({ space: 10 }) {
+            if (!this.isConnected() || !this.peerEffectivelyOnline(peer)) {
+              this.TransferDeviceOfflineBadge()
+            } else {
+              this.TransferProtocolBadge('Taildrop', 'offline')
+              this.TransferProtocolBadge('LocalSend', this.localSendProtocolState(peer),
+                () => this.openRemotePortEditor(peer))
+            }
+          }
+            .width('100%')
+            .margin({ top: 5, bottom: 2 })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 54 })
+      .padding({ left: 12, right: 12, top: 7, bottom: 4 })
+
+      if (this.localSendAvailableForPeer(peer)) {
+        Row() {
+          Row({ space: 0 }) {
+            this.PeerActionSegment($r('app.string.transfer_send_file_action'),
+              'file-transfer-send-file-' + peer.key,
+              this.localSendAvailableForPeer(peer) && this.taildropContentChoiceEnabled(), false,
+              () => this.startFileTransferForPeer(peer))
+          }
+          .width('100%')
+          .height(36)
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor(this.secondaryBackground())
+          .borderRadius(18)
+          .clip(true)
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 4, bottom: 12 })
+      }
+      if (this.remotePortEditorVisible && this.remotePortPeerKey === peer.key) {
+        Column() {
+          this.RemotePortEditorPanel()
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, bottom: 12 })
       }
     }
     .id('file-transfer-target-' + peer.key)
     .width('100%')
-    .padding({ left: 12, right: 12, top: 12, bottom: 14 })
     .overlay(this.TransferTargetFocusOverlay(peer.key), { align: Alignment.Center })
     .backgroundColor(Color.Transparent)
-    .borderRadius(12)
-    .onClick(() => {
-      if (this.localSendAvailableForPeer(peer)) {
-        this.startFileTransferForPeer(peer);
+    .borderRadius(UiTokens.CARD_RADIUS)
+    .opacity(this.localSendAvailableForPeer(peer) ? 1 : 0.52)
+    .animation({ duration: MotionTokens.EXPAND, curve: MotionTokens.curve() })
+  }
+
+  @Builder
+  private RemotePortEditorPanel() {
+    Column({ space: 8 }) {
+      Text($r('app.string.transfer_remote_port_title'))
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('sys.color.font_primary'))
+        .width('100%')
+      Text($r('app.string.transfer_remote_port_message', this.remotePortEditorPeerName()))
+        .fontSize(12)
+        .fontColor($r('sys.color.font_secondary'))
+        .lineHeight(18)
+        .width('100%')
+      Row({ space: 8 }) {
+        TextInput({
+          text: this.remotePortInput,
+          placeholder: $r('app.string.transfer_remote_port_placeholder')
+        })
+          .id('transfer-remote-port-input')
+          .layoutWeight(1)
+          .height(42)
+          .padding({ left: 12, right: 12 })
+          .fontSize(15)
+          .fontColor($r('sys.color.font_primary'))
+          .placeholderColor($r('sys.color.font_secondary'))
+          .backgroundColor(this.glowSurface())
+          .border({ width: 1, color: $r('sys.color.comp_divider') })
+          .borderRadius(12)
+          .selectionMenuHidden(false)
+          .onChange((value: string) => {
+            this.remotePortInput = value.replace(/[^0-9]/g, '');
+          })
+        Button($r('app.string.cancel_action'), {
+          type: ButtonType.ROUNDED_RECTANGLE,
+          stateEffect: true,
+          buttonStyle: ButtonStyleMode.NORMAL,
+          controlSize: ControlSize.SMALL
+        })
+          .height(42)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor(this.secondaryBackground())
+          .fontColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            this.remotePortEditorVisible = false;
+          })
+        Button($r('app.string.transfer_remote_port_save'), {
+          type: ButtonType.ROUNDED_RECTANGLE,
+          stateEffect: true,
+          buttonStyle: ButtonStyleMode.NORMAL,
+          controlSize: ControlSize.SMALL
+        })
+          .height(42)
+          .padding({ left: 10, right: 10 })
+          .backgroundColor($r('app.color.emphasize'))
+          .fontColor($r('sys.color.font_primary'))
+          .onClick(() => this.saveRemotePortOverride())
       }
-    })
+      .width('100%')
+    }
+    .width('100%')
   }
 
   @Builder
@@ -12849,62 +8831,8 @@ export struct BridgeStatus {
       }
 
       if (this.remotePortEditorVisible && this.remotePortPeerKey === peer.key) {
-        Column({ space: 8 }) {
-          Text($r('app.string.transfer_remote_port_title'))
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'))
-            .width('100%')
-          Text($r('app.string.transfer_remote_port_message', this.remotePortEditorPeerName()))
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .lineHeight(18)
-            .width('100%')
-          Row({ space: 8 }) {
-            TextInput({
-              text: this.remotePortInput,
-              placeholder: $r('app.string.transfer_remote_port_placeholder')
-            })
-              .id('transfer-remote-port-input')
-              .layoutWeight(1)
-              .height(42)
-              .padding({ left: 12, right: 12 })
-              .fontSize(15)
-              .fontColor($r('sys.color.font_primary'))
-              .placeholderColor($r('sys.color.font_secondary'))
-              .backgroundColor(this.glowSurface())
-              .border({ width: 1, color: $r('sys.color.comp_divider') })
-              .borderRadius(12)
-              .selectionMenuHidden(false)
-              .onChange((value: string) => {
-                this.remotePortInput = value.replace(/[^0-9]/g, '');
-              })
-            Button($r('app.string.cancel_action'), {
-              type: ButtonType.ROUNDED_RECTANGLE,
-              stateEffect: true,
-              buttonStyle: ButtonStyleMode.NORMAL,
-              controlSize: ControlSize.SMALL
-            })
-              .height(42)
-              .padding({ left: 10, right: 10 })
-              .backgroundColor(this.secondaryBackground())
-              .fontColor($r('sys.color.font_primary'))
-              .onClick(() => {
-                this.remotePortEditorVisible = false;
-              })
-            Button($r('app.string.transfer_remote_port_save'), {
-              type: ButtonType.ROUNDED_RECTANGLE,
-              stateEffect: true,
-              buttonStyle: ButtonStyleMode.NORMAL,
-              controlSize: ControlSize.SMALL
-            })
-              .height(42)
-              .padding({ left: 10, right: 10 })
-              .backgroundColor($r('app.color.emphasize'))
-              .fontColor($r('sys.color.font_primary'))
-              .onClick(() => this.saveRemotePortOverride())
-          }
-          .width('100%')
+        Column() {
+          this.RemotePortEditorPanel()
         }
         .width('100%')
         .padding({ left: 46, right: 0 })
@@ -12933,7 +8861,7 @@ export struct BridgeStatus {
     .width('100%')
     .padding({ top: 2, bottom: 2 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
@@ -12960,22 +8888,37 @@ export struct BridgeStatus {
     .width('100%')
     .padding({ top: 4, bottom: 4 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
   private TaildropTargetsEmptyPanel() {
-    Text(!this.isConnected() ? $r('app.string.transfer_connect_first_description') :
-      this.taildropState === 'disabled' ? $r('app.string.transfer_admin_disabled_description') :
-        $r('app.string.transfer_no_targets_description'))
-      .fontSize(12)
-      .fontColor($r('sys.color.font_secondary'))
-      .lineHeight(18)
-      .textAlign(TextAlign.Center)
-      .width('100%')
-      .padding({ left: 20, right: 20, top: 20, bottom: 20 })
-      .backgroundColor(this.groupBackground())
-      .borderRadius(16)
+    Column({ space: 6 }) {
+      if (this.transferSetupNotice() === 'loading') {
+        LoadingProgress().width(24).height(24)
+        Text($r('app.string.transfer_protocol_refreshing')).fontSize(UiTokens.BODY_SIZE)
+          .fontColor($r('sys.color.font_secondary'))
+      } else {
+        Text(!this.isConnected() ? $r('app.string.transfer_connect_first_description') :
+          this.transferSetupNotice() === 'disabled' ? $r('app.string.feature_guide_taildrop_disabled') :
+            this.transferSetupNotice() === 'error' ? $r('app.string.feature_guide_transfer_error') :
+              $r('app.string.transfer_no_targets_description'))
+          .fontSize(UiTokens.BODY_SIZE).fontColor($r('sys.color.font_secondary')).lineHeight(20)
+          .textAlign(TextAlign.Center).width('100%')
+        if (this.transferSetupNotice() === 'connect') {
+          Button(this.needsLogin() ? $r('app.string.action_login') : $r('app.string.action_connect'))
+            .fontSize(14).id('transfer-connect-action')
+            .enabled(this.connectionActionEnabled())
+            .onClick(() => this.runConnectionAction())
+          this.ContextGuideAction($r('app.string.feature_guide_connect_help'), 'connect', 'transfer-connect-help')
+        } else if (this.transferSetupNotice() === 'disabled') {
+          this.ContextGuideAction($r('app.string.feature_guide_enable_taildrop'), 'taildrop', 'transfer-enable-taildrop')
+        } else if (this.transferSetupNotice() === 'targets') {
+          this.ContextGuideAction($r('app.string.feature_guide_target_requirements'), 'taildrop', 'transfer-target-help')
+        }
+      }
+    }
+      .width('100%').padding(UiTokens.CARD_PADDING).backgroundColor(this.groupBackground()).borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
@@ -13054,13 +8997,13 @@ export struct BridgeStatus {
         .backgroundColor(this.secondaryBackground())
         Column({ space: 2 }) {
           Text(this.taildropPreparing ? $r('app.string.transfer_preparing') :
-            $r('app.string.transfer_sending_to', this.taildropTransfer.targetName))
+            $r('app.string.transfer_sending_to', this.sanitizeTaildropDisplayText(this.taildropTransfer.targetName)))
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_primary'))
             .width('100%')
           if (this.taildropTransfer.fileName.length > 0) {
-            Text(this.taildropTransfer.fileName)
+            Text(this.sanitizeTaildropDisplayText(this.taildropTransfer.fileName))
               .fontSize(12)
               .fontColor($r('sys.color.font_secondary'))
               .maxLines(1)
@@ -13077,8 +9020,7 @@ export struct BridgeStatus {
             .height(32)
             .backgroundColor(this.secondaryBackground())
             .fontColor($r('sys.color.font_primary'))
-            .visualEffect(this.immersivePressEffect())
-            .enabled(!this.taildropCancelPending)
+              .enabled(!this.taildropCancelPending)
             .opacity(this.taildropCancelPending ? 0.6 : 1)
             .onClick(() => this.cancelTaildropSend())
         }
@@ -13137,7 +9079,7 @@ export struct BridgeStatus {
       .width(44)
       .height(44)
       Column({ space: 2 }) {
-        Text(file.name)
+        Text(this.sanitizeTaildropDisplayText(file.name))
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
@@ -13283,8 +9225,11 @@ export struct BridgeStatus {
                 const cachedText: TaildropCachedFile | undefined =
                   this.findTaildropCachedFile(file);
                 if (cachedText !== undefined) {
-                  this.showCachedTaildropTextPreview(cachedText);
-                  this.copyTaildropTextPreview();
+                  void this.showCachedTaildropTextPreview(cachedText).then((shown: boolean) => {
+                    if (shown) {
+                      this.copyTaildropTextPreview();
+                    }
+                  });
                   return;
                 }
               } else {
@@ -13343,12 +9288,12 @@ export struct BridgeStatus {
           this.taildropReceivedText.length > 0) {
           this.TaildropInlineTextPreview()
         }
-      }, (file: TaildropWaitingFileSummary) => JSON.stringify(file))
+      }, (file: TaildropWaitingFileSummary) => `${file.name}\n${file.size}\n${file.receivedAtMs}`)
     }
     .width('100%')
     .padding({ top: 4, bottom: 4 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
@@ -13370,68 +9315,12 @@ export struct BridgeStatus {
     .borderRadius(12)
   }
 
-  private readTaildropTextPreview(result: TaildropReceiveResult): string | undefined {
-    if (result.size > TAILDROP_TEXT_CLIPBOARD_MAX_BYTES || result.path.length === 0) {
-      return undefined;
-    }
-    try {
-      const stat: fileIo.Stat = fileIo.statSync(result.path);
-      if (!stat.isFile() || stat.size !== result.size) {
-        return undefined;
-      }
-      return fileIo.readTextSync(result.path);
-    } catch (_error) {
-      return undefined;
-    }
-  }
-
   private collapseTaildropTextPreview(): void {
-    if (this.taildropReceive.state !== 'awaiting_text_preview') {
-      return;
-    }
-    this.resetTaildropReceiveOperation();
+    this.taildropSessionController.collapseTaildropTextPreview();
   }
 
   private copyTaildropTextPreview(): void {
-    if (this.taildropReceive.state !== 'awaiting_text_preview') {
-      this.releaseTaildropNotificationActionClaim();
-      return;
-    }
-    const staged: TaildropReceiveResult = this.taildropReceive;
-    this.taildropReceive = {
-      requestId: staged.requestId, action: 'stage', state: 'copying_text', reason: '',
-      name: staged.name, size: staged.size, path: staged.path
-    };
-    this.taildropReceiveStateStartedAtMs = Date.now();
-    this.taildropTextPreviewVisible = false;
-    const data: pasteboard.PasteData = pasteboard.createData(
-      pasteboard.MIMETYPE_TEXT_PLAIN, this.taildropReceivedText);
-    pasteboard.getSystemPasteboard().setData(data).then(() => {
-      if (!this.isCurrentTaildropReceive(staged.requestId, 'stage', 'copying_text')) {
-        return;
-      }
-      if (this.taildropState === 'ready') {
-        this.requestTaildropReceiveDelete(staged.requestId, staged.name, staged.size);
-      } else {
-        this.completeTaildropReceive(true);
-      }
-    }).catch(() => {
-      if (!this.isCurrentTaildropReceive(staged.requestId, 'stage', 'copying_text')) {
-        return;
-      }
-      this.taildropReceive = {
-        requestId: staged.requestId, action: 'stage', state: 'awaiting_text_preview', reason: '',
-        name: staged.name, size: staged.size, path: staged.path
-      };
-      this.taildropReceiveStateStartedAtMs = 0;
-      this.taildropTextPreviewVisible = true;
-      this.showToast($r('app.string.transfer_text_copy_failed'));
-    });
-  }
-
-  private releaseTaildropNotificationActionClaim(): void {
-    this.taildropReceiveGateway.releaseNotificationAction(this.taildropNotificationActionInFlight);
-    this.taildropNotificationActionInFlight = undefined;
+    this.taildropSessionController.copyTaildropTextPreview();
   }
 
   @Builder
@@ -13491,19 +9380,19 @@ export struct BridgeStatus {
     .width('100%')
     .padding({ top: 4, bottom: 4 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
   private TransferEmptyPanel() {
     Text($r('app.string.transfer_empty_title'))
-      .fontSize(12)
+      .fontSize(UiTokens.BODY_SIZE)
       .fontColor($r('sys.color.font_secondary'))
       .textAlign(TextAlign.Center)
     .width('100%')
-    .padding({ left: 20, right: 20, top: 18, bottom: 18 })
+    .padding(UiTokens.CARD_PADDING)
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
@@ -13551,16 +9440,16 @@ export struct BridgeStatus {
       Column({ space: 2 }) {
         Text(this.remoteCachedPeers().length > 0 ?
           $r('app.string.transfer_remote_cached_title') : $r('app.string.transfer_connect_first_title'))
-          .fontSize(13)
+          .fontSize(UiTokens.BODY_SIZE)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
           .width('100%')
         Text(this.remoteCachedPeers().length > 0 ?
           $r('app.string.transfer_remote_cached_description') :
           $r('app.string.transfer_connect_first_description'))
-          .fontSize(11)
+          .fontSize(UiTokens.CAPTION_SIZE)
           .fontColor($r('sys.color.font_secondary'))
-          .maxLines(1)
+          .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
       }
@@ -13568,13 +9457,13 @@ export struct BridgeStatus {
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+    .padding(UiTokens.CARD_PADDING)
     .backgroundColor(this.groupBackground())
     .border({
       width: 1,
       color: $r('sys.color.comp_divider')
     })
-    .borderRadius(12)
+    .borderRadius(UiTokens.CARD_RADIUS)
     .transition(
       TransitionEffect.asymmetric(
         TransitionEffect.OPACITY.animation({ duration: MotionTokens.NORMAL, curve: MotionTokens.curve() })
@@ -13634,7 +9523,7 @@ export struct BridgeStatus {
         Column({ space: 2 }) {
           Text(!this.isConnected() && this.remoteCachedPeers().length > 0 ?
             $r('app.string.transfer_remote_devices_title') : $r('app.string.transfer_targets_title'))
-            .fontSize(15)
+            .fontSize(UiTokens.SECTION_TITLE_SIZE)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_primary'))
             .width('100%')
@@ -13647,27 +9536,38 @@ export struct BridgeStatus {
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
-        Button({
-          type: ButtonType.Normal,
-          stateEffect: false,
-          buttonStyle: ButtonStyleMode.TEXTUAL,
-          controlSize: ControlSize.SMALL
-        }) {
+        Button({ type: ButtonType.Circle, stateEffect: true }) {
+          SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+            .fontSize(UiTokens.ICON_NAV_BAR)
+            .fontColor([$r('sys.color.icon_secondary')])
+        }
+          .width(40)
+          .height(40)
+          .padding(0)
+          .backgroundColor(Color.Transparent)
+          .id('transfer-help-menu')
+          .accessibilityText($r('app.string.feature_guide_transfer_help'))
+          .enabled(this.canOpenContextGuide())
+          .bindMenu([{ value: $r('app.string.feature_guide_transfer_help'),
+            action: () => this.openContextGuide('transfer') }], {
+            systemMaterial: LightAppearance.menu(this.glowLevel)
+          })
+        Button({ type: ButtonType.Circle, stateEffect: true }) {
           if (this.transferProtocolRefreshing) {
             LoadingProgress()
-              .width(20)
-              .height(20)
+              .width(UiTokens.ICON_NAV_BAR)
+              .height(UiTokens.ICON_NAV_BAR)
               .color($r('app.color.emphasize'))
           } else {
-            Image($r('app.media.arrow_clockwise'))
-              .width(20)
-              .height(20)
-              .fillColor($r('app.color.emphasize'))
+            SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+              .fontSize(UiTokens.ICON_NAV_BAR)
+              .fontColor([$r('app.color.emphasize')])
           }
         }
         .id('transfer-protocol-refresh')
-        .height(34)
-        .padding({ left: 8, right: 8 })
+        .width(40)
+        .height(40)
+        .padding(0)
         .backgroundColor(Color.Transparent)
         .enabled(!this.transferProtocolRefreshing)
         .opacity(this.transferProtocolRefreshing ? 0.45 : 1)
@@ -13682,6 +9582,15 @@ export struct BridgeStatus {
         this.RemoteCachedDevicesSection()
       } else if (this.displayedTaildropTargets().length > 0 || this.peersWithoutTaildropTarget().length > 0) {
         this.TaildropTargetsPanel()
+        if (this.transferSetupNotice() === 'disabled') {
+          Text($r('app.string.feature_guide_taildrop_disabled')).fontSize(12)
+            .fontColor($r('sys.color.font_secondary')).width('100%')
+          this.ContextGuideAction($r('app.string.feature_guide_enable_taildrop'), 'taildrop', 'transfer-disabled-taildrop-help')
+        } else if (this.transferSetupNotice() === 'targets') {
+          Text($r('app.string.feature_guide_taildrop_no_targets')).fontSize(12)
+            .fontColor($r('sys.color.font_secondary')).width('100%')
+          this.ContextGuideAction($r('app.string.feature_guide_target_requirements'), 'taildrop', 'transfer-localsend-target-help')
+        }
       } else {
         this.TaildropTargetsEmptyPanel()
       }
@@ -13723,7 +9632,7 @@ export struct BridgeStatus {
             .width('100%')
             .padding({ left: 20, right: 20, top: 18, bottom: 18 })
             .backgroundColor(this.groupBackground())
-            .borderRadius(16)
+            .borderRadius(UiTokens.CARD_RADIUS)
         }
       }
       .width('100%')
@@ -13759,10 +9668,53 @@ export struct BridgeStatus {
   }
 
   @Builder
+  private SystemSharePanel() {
+    Column({ space: 12 }) {
+      Text($r('app.string.system_share_title', this.sharedFileCount))
+        .fontSize(17).fontWeight(FontWeight.Medium).fontColor($r('sys.color.font_primary'))
+      if (this.sharedFileSummary.length > 0) {
+        Text(this.sharedFileSummary)
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'))
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .id('system-share-file-names')
+      }
+      if (!this.isConnected()) {
+        Text($r('app.string.transfer_connect_first_description'))
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+        Button(this.needsLogin() ? $r('app.string.action_login') : $r('app.string.action_connect'))
+          .id('system-share-connect')
+          .enabled(this.connectionActionEnabled())
+          .onClick(() => this.runConnectionAction())
+      } else {
+        Text($r('app.string.system_share_choose_device'))
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+        ForEach(this.displayedTaildropTargets(), (target: TaildropTargetSummary) => {
+          Button(this.peerDisplayName(target.name))
+            .width('100%').enabled(target.online && !this.sharedFileSending)
+            .onClick(() => { this.sendSharedFiles(target); })
+        }, (target: TaildropTargetSummary) => this.transferTargetRenderKey(target))
+      }
+      Button($r('app.string.system_share_cancel'))
+        .enabled(!this.sharedFileSending)
+        .onClick(() => {
+          const draft: SharedFileDraft | undefined = SystemShareInbox.first();
+          if (draft !== undefined) { SystemShareInbox.remove(draft.id); }
+        })
+    }
+    .id('system-share-panel')
+    .width('100%').padding(16).backgroundColor(this.groupBackground()).borderRadius(UiTokens.CARD_RADIUS)
+  }
+
+  @Builder
   private TransferContent() {
     Scroll(this.transferScroller) {
       Column({ space: 10 }) {
-        if (!this.isConnected() && this.remoteCachedPeers().length === 0) {
+        if (this.sharedFileCount > 0) {
+          this.SystemSharePanel()
+        }
+        if (this.sharedFileCount === 0 && !this.isConnected() && this.remoteCachedPeers().length === 0) {
           this.TaildropConnectionNotice()
         }
         if (this.taildropPreparing || this.taildropTransfer.state === 'queued' ||
@@ -13814,6 +9766,7 @@ export struct BridgeStatus {
   @Builder
   private FilesContent() {
     Column() {
+      ForEach([`${this.controlServerURL}|${this.accountProfileId}`], (_server: string) => {
       TaildriveBrowser({
         // Keep the child property directly subscribed to the observable VPN
         // status. A method call here is not tracked reliably while HdsTabs
@@ -13822,15 +9775,21 @@ export struct BridgeStatus {
         standalone: true,
         bottomInset: this.pageBottomInset(),
         contentScroller: this.filesScroller,
+        onShowFeatureGuide: (section: string) => this.openContextGuide(section),
+        onRequestConnection: () => this.runConnectionAction(),
+        connectionActionText: this.needsLogin() ? $r('app.string.action_login') : $r('app.string.action_connect'),
+        connectionActionAvailable: this.connectionActionEnabled(),
         titleBarPadding: this.contentMargin(),
         materialLevel: this.glowMaterialLevel(),
+        glowLevel: this.glowLevel,
         transparentBackground: this.appBackgroundActive(),
         targetMachineName: this.taildriveTargetMachineName,
         targetTailnetName: this.accountSummary.tailnetName,
         targetRequestId: this.taildriveTargetRequestId,
         folderLockEnabled: this.folderLockEnabled,
-        appLockActive: this.appLockRequired || this.appLockAuthenticating
+        appLockActive: this.isSecurityCoverActive()
       })
+      }, (server: string) => server)
     }
     .width('100%')
     .height('100%')
@@ -13841,65 +9800,67 @@ export struct BridgeStatus {
 
   @Builder
   private NativeSettingsSheetContent() {
-    Column() {
-      NativeSettingsNavigation({
-        glowLevel: this.glowLevel,
-        backgroundImageUri: this.nativeSettingsBackgroundUri,
-        profileName: this.accountSummary.displayName,
-        storageAppDataBytes: this.nativeStorageAppDataBytes,
-        storageReceivedBytes: this.nativeStorageReceivedBytes,
-        storageTemporaryBytes: this.nativeStorageTemporaryBytes,
-        storageClearEnabled: this.nativeStorageTemporaryBytes > 0 && !this.cacheClearBlocked(),
-        backgroundPickerInProgress: this.nativeSettingsBackgroundPickerInProgress,
-        backgroundClearEnabled: this.nativeSettingsBackgroundUri.length > 0,
-        immersiveColorEnabled: this.immersiveColorBackgroundEnabled,
-        pageName: this.nativeSettingsPage,
-        initialAnimationPreset: this.animationPreset,
-        initialAnimationDuration: this.animationDuration,
-        initialAnimationAmplitude: this.animationAmplitude,
-        initialAnimationDamping: this.animationDamping,
-        onGlowLevelChange: (level: number) => this.setGlowLevel(level),
-        onSelectBackground: () => {
-          this.selectNativeSettingsBackground();
-        },
-        onClearBackground: () => {
-          this.clearNativeSettingsBackground();
-        },
-        onImmersiveColorChange: (enabled: boolean) => {
-          this.setImmersiveColorBackground(enabled);
-        },
-        onSelectTransfer: () => {
-          this.nativeSettingsVisible = false;
-          this.navigateToNavigationTab('transfer', true);
-        },
-        onClearTemporaryStorage: () => this.clearTemporaryStorage(),
-        onAnimationSettingsChange: (settings: AnimationSettings) =>
-          this.updateAnimationSettings(settings),
-        onDismiss: () => {
-          this.nativeSettingsVisible = false;
-        }
-      })
+    Stack() {
+      Column() {
+        NativeSettingsNavigation({
+          glowLevel: this.glowLevel,
+          backgroundImageUri: this.nativeSettingsBackgroundUri,
+          backgroundUnavailable: this.backgroundUnavailable,
+          backgroundBrightnessValue: this.backgroundBrightnessValue,
+          immersiveColorTint: this.immersiveColorTint(),
+          onBackgroundImageError: (uri: string) => this.onBackgroundImageLoadError(uri),
+          onBackgroundBrightnessChange: (value: number, mode: SliderChangeMode) =>
+            this.setBackgroundBrightness(value, mode),
+          backgroundPickerInProgress: this.nativeSettingsBackgroundPickerInProgress,
+          backgroundClearEnabled: this.nativeSettingsBackgroundUri.length > 0,
+          immersiveColorEnabled: this.immersiveColorBackgroundEnabled,
+          pageName: this.nativeSettingsPage,
+          initialAnimationPreset: this.animationPreset,
+          initialAnimationDuration: this.animationDuration,
+          initialAnimationAmplitude: this.animationAmplitude,
+          initialAnimationDamping: this.animationDamping,
+          onGlowLevelChange: (level: number) => this.setGlowLevel(level),
+          onSelectBackground: () => {
+            this.selectNativeSettingsBackground();
+          },
+          onClearBackground: () => {
+            this.clearNativeSettingsBackground();
+          },
+          onImmersiveColorChange: (enabled: boolean) => {
+            this.setImmersiveColorBackground(enabled);
+          },
+          onAnimationSettingsChange: (settings: AnimationSettings) =>
+            this.updateAnimationSettings(settings),
+          onDismiss: () => {
+            this.nativeSettingsVisible = false;
+          }
+        })
+      }
+        .width('100%')
+        .height('100%')
+      if (this.isSecurityCoverActive()) {
+        this.SecurityCoverOverlay()
+      }
     }
       .width('100%')
       .height('100%')
   }
 
   @Builder
-  private SettingsCategoryRow(icon: Resource, title: ResourceStr, summary: ResourceStr,
-    rowId: string, action: () => void) {
+  private SettingsCategoryRow($$: SettingsCategoryRowData) {
     Button({ type: ButtonType.Normal, stateEffect: true }) {
       Row({ space: 12 }) {
         Stack({ alignContent: Alignment.Center }) {
-          SymbolGlyph(icon)
-            .fontSize(22)
+          SymbolGlyph($$.icon)
+            .fontSize(UiTokens.ICON_LIST_LEADING)
             .fontColor([$r('app.color.emphasize')])
         }
-        .width(36)
-        .height(36)
-        .borderRadius(18)
+        .width(UiTokens.ICON_LIST_CONTAINER)
+        .height(UiTokens.ICON_LIST_CONTAINER)
+        .borderRadius(UiTokens.ICON_LIST_CONTAINER_RADIUS)
         .backgroundColor(this.secondaryBackground())
 
-        Text(title)
+        Text($$.title)
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
@@ -13908,8 +9869,8 @@ export struct BridgeStatus {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        if (summary !== '') {
-          Text(summary)
+        if ($$.summary !== '') {
+          Text($$.summary)
             .fontSize(12)
             .fontColor($r('sys.color.font_secondary'))
             .maxLines(1)
@@ -13918,19 +9879,21 @@ export struct BridgeStatus {
         }
 
         SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(17)
+          .fontSize(UiTokens.ICON_CHEVRON)
           .fontColor([$r('sys.color.icon_secondary')])
       }
       .width('100%')
       .height('100%')
-      .padding({ left: 14, right: 14 })
+      .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
     }
-    .id(rowId)
+    .id($$.rowId)
     .width('100%')
-    .height(60)
+    .height(64)
     .padding(0)
-    .backgroundColor(Color.Transparent)
-    .onClick(action)
+    .borderRadius(10)
+    .backgroundColor($$.rowId === 'settings-background-running-entry' && this.backgroundRunningHighlighted ?
+      $r('app.color.background_running_highlight') : Color.Transparent)
+    .onClick($$.action)
   }
 
   @Builder
@@ -13952,6 +9915,7 @@ export struct BridgeStatus {
           .id('security-app-lock-toggle')
           .selectedColor($r('app.color.emphasize'))
           .enabled(!this.securitySettingsAuthenticating && !this.appLockAuthenticating)
+          .systemMaterial(LightAppearance.control(this.glowLevel))
           .onChange((enabled: boolean) => this.setAppLockEnabled(enabled))
       }
       .width('100%')
@@ -13976,6 +9940,7 @@ export struct BridgeStatus {
           .id('security-folder-lock-toggle')
           .selectedColor($r('app.color.emphasize'))
           .enabled(!this.securitySettingsAuthenticating && !this.appLockAuthenticating)
+          .systemMaterial(LightAppearance.control(this.glowLevel))
           .onChange((enabled: boolean) => this.setFolderLockEnabled(enabled))
       }
       .width('100%')
@@ -13986,13 +9951,13 @@ export struct BridgeStatus {
     .width('100%')
     .padding({ left: 14, right: 14, top: 8, bottom: 8 })
     .backgroundColor(this.groupBackground())
-    .borderRadius(16)
+    .borderRadius(UiTokens.CARD_RADIUS)
   }
 
   @Builder
   private SettingsContent() {
     Scroll(this.settingsScroller) {
-      Column({ space: 10 }) {
+      Column({ space: UiTokens.GROUP_GAP }) {
         Column({ space: 5 }) {
           this.SettingsGroupHeader($r('app.string.account_title'), true)
           this.AccountPanel()
@@ -14000,31 +9965,59 @@ export struct BridgeStatus {
         .width('100%')
 
         Column({ space: 0 }) {
-          this.SettingsCategoryRow($r('sys.symbol.connection'),
-            $r('app.string.settings_network_connection_title'), this.selectedExitNodeLabel(),
-            'settings-network-entry', () => this.openSettingsDetail('network'))
-          Divider().color($r('sys.color.comp_divider')).margin({ left: 60, right: 12 })
-          this.SettingsCategoryRow($r('sys.symbol.picture'),
-            $r('app.string.settings_appearance_navigation_title'), '',
-            'settings-appearance-entry', () => this.openSettingsDetail('appearance'))
-          Divider().color($r('sys.color.comp_divider')).margin({ left: 60, right: 12 })
-          this.SettingsCategoryRow($r('sys.symbol.archivebox'),
-            $r('app.string.settings_storage_cache_title'),
-            this.formatTrafficBytes(this.storageSummaryBytes),
-            'settings-storage-entry', () => this.openSettingsDetail('storage'))
-          Divider().color($r('sys.color.comp_divider')).margin({ left: 60, right: 12 })
-          this.SettingsCategoryRow($r('sys.symbol.lock'),
-            $r('app.string.settings_security_title'), '',
-            'settings-security-entry', () => this.openSettingsDetail('security'))
-          Divider().color($r('sys.color.comp_divider')).margin({ left: 60, right: 12 })
-          this.SettingsCategoryRow($r('sys.symbol.info_circle'),
-            $r('app.string.settings_about_help_title'), this.appVersion,
-            'settings-about-entry', () => this.openSettingsDetail('about'))
+          this.SettingsCategoryRow({ icon: $r('sys.symbol.connection'),
+            title: $r('app.string.settings_network_connection_title'),
+            summary: this.selectedExitNodeLabel(),
+            rowId: 'settings-network-entry',
+            action: () => this.openSettingsDetail('network') })
+          Divider().color($r('sys.color.comp_divider')).margin({ left: 66, right: 16 })
+          this.SettingsCategoryRow({ icon: $r('sys.symbol.clock'),
+            title: $r('app.string.background_running_title'),
+            summary: $r('app.string.background_running_summary'),
+            rowId: 'settings-background-running-entry',
+            action: () => this.openSettingsDetail('background-running') })
+          Divider().color($r('sys.color.comp_divider')).margin({ left: 66, right: 16 })
+          this.SettingsCategoryRow({ icon: $r('sys.symbol.picture'),
+            title: $r('app.string.settings_appearance_navigation_title'),
+            summary: '',
+            rowId: 'settings-appearance-entry',
+            action: () => this.openSettingsDetail('appearance') })
+          Divider().color($r('sys.color.comp_divider')).margin({ left: 66, right: 16 })
+          this.SettingsCategoryRow({ icon: $r('sys.symbol.archivebox'),
+            title: $r('app.string.settings_storage_cache_title'),
+            summary: this.storageSummaryLabel(),
+            rowId: 'settings-storage-entry',
+            action: () => this.openSettingsDetail('storage') })
+          Divider().color($r('sys.color.comp_divider')).margin({ left: 66, right: 16 })
+          this.SettingsCategoryRow({ icon: $r('sys.symbol.lock'),
+            title: $r('app.string.settings_security_title'),
+            summary: '',
+            rowId: 'settings-security-entry',
+            action: () => this.openSettingsDetail('security') })
+          Divider().color($r('sys.color.comp_divider')).margin({ left: 66, right: 16 })
+          this.SettingsCategoryRow({ icon: $r('sys.symbol.info_circle'),
+            title: $r('app.string.settings_about_help_title'),
+            summary: this.appVersion,
+            rowId: 'settings-about-entry',
+            action: () => this.openSettingsDetail('about') })
         }
         .id('settings-category-list')
         .width('100%')
         .backgroundColor(this.groupBackground())
-        .borderRadius(16)
+        .borderRadius(UiTokens.CARD_RADIUS)
+        .clip(true)
+
+        this.SettingsGroupHeader($r('app.string.feature_guide_help_section'))
+        Column({ space: 0 }) {
+          this.SettingsCategoryRow({ icon: $r('sys.symbol.doc'),
+            title: $r('app.string.feature_guide_title'),
+            summary: '',
+            rowId: 'settings-feature-guide-entry',
+            action: () => this.openSettingsDetail('feature-guide') })
+        }
+        .width('100%')
+        .backgroundColor(this.groupBackground())
+        .borderRadius(UiTokens.CARD_RADIUS)
         .clip(true)
       }
       .width('100%')
@@ -14044,6 +10037,7 @@ export struct BridgeStatus {
     .scrollBar(BarState.Auto)
     .scrollBarWidth(4)
     .align(Alignment.TopStart)
+    .id('settings-root-scroll')
   }
 
   @Builder
@@ -14076,8 +10070,14 @@ export struct BridgeStatus {
       Column({ space: 14 }) {
         this.SettingsGroupHeader($r('app.string.settings_network_preferences_title'))
         this.NetworkSettingsPanel()
+        this.SettingsGroupHeader($r('app.string.settings_dns_title'))
+        this.CustomDnsPanel()
+        this.ContextGuideAction($r('app.string.feature_guide_subnet_help'), 'subnet', 'network-subnet-help')
         this.SettingsGroupHeader($r('app.string.exit_node_title'))
         this.ExitNodePanel()
+        this.ContextGuideAction(this.exitNodes.length === 0 && this.isAuthenticated() ?
+          $r('app.string.feature_guide_exit_empty_help') : $r('app.string.feature_guide_exit_help'),
+          'exit', 'network-exit-help')
       }
       .width('100%')
       .constraintSize({ maxWidth: ResponsiveLayout.SETTINGS_CONTENT_MAX_WIDTH })
@@ -14091,6 +10091,18 @@ export struct BridgeStatus {
     .edgeEffect(EdgeEffect.Spring)
     .scrollBar(BarState.Auto)
     .align(Alignment.TopStart)
+  }
+
+  @Builder
+  private SettingsBackgroundRunningDetailContent() {
+    BackgroundRunningSettings({
+      contentScroller: this.settingsBackgroundRunningDetailScroller,
+      contentMargin: this.contentMargin(),
+      bottomInset: this.pageBottomInset(),
+      glowLevel: this.glowLevel,
+      canvasBackground: this.settingsDetailCanvasBackground(),
+      groupBackground: this.groupBackground()
+    })
   }
 
   @Builder
@@ -14177,25 +10189,73 @@ export struct BridgeStatus {
     .align(Alignment.TopStart)
   }
 
+  private settingsDetailTitleBar(title: ResourceStr): HdsNavigationTitleBarOptions {
+    return {
+      avoidLayoutSafeArea: true,
+      enableComponentSafeArea: true,
+      style: {
+        blurStrategy: LightAppearance.blurStrategy(this.glowLevel),
+        thermoCtrl: true,
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
+        },
+        originalStyle: {
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('sys.color.font_primary'),
+              subTitleColor: $r('sys.color.font_secondary')
+            },
+            menuStyle: {
+              iconColor: $r('sys.color.icon_primary'),
+              textColor: $r('sys.color.font_primary')
+            },
+            backIconStyle: {
+              iconColor: $r('sys.color.icon_primary')
+            }
+          }
+        },
+        scrollEffectStyle: {
+          backgroundStyle: {
+            backgroundColor: Color.Transparent,
+            blurRadius: 24,
+            maskExtraHeight: 40.0
+          },
+          contentStyle: {
+            titleStyle: {
+              mainTitleColor: $r('sys.color.font_primary'),
+              subTitleColor: $r('sys.color.font_secondary')
+            },
+            menuStyle: {
+              iconColor: $r('sys.color.icon_primary'),
+              textColor: $r('sys.color.font_primary')
+            },
+            backIconStyle: {
+              iconColor: $r('sys.color.icon_primary')
+            }
+          }
+        },
+        systemMaterialEffect: {
+          materialType: this.glowMaterialType(),
+          materialLevel: this.glowMaterialLevel()
+        }
+      },
+      content: { title: { mainTitle: title } }
+    };
+  }
+
   @Builder
   private SettingsDetailPageMap(name: string) {
     if (name === 'account') {
       HdsNavDestination() { this.SettingsAccountDetailContent() }
         .titleMode(HdsNavDestinationTitleMode.MINI)
         .bindToScrollable([this.settingsAccountDetailScroller])
-        .titleBar({
-          avoidLayoutSafeArea: true,
-          enableComponentSafeArea: true,
-          style: {
-            blurStrategy: BlurStrategy.DISABLE,
-            originalStyle: {
-              backgroundStyle: { backgroundColor: this.settingsDetailCanvasBackground() }
-            }
-          },
-          content: { title: { mainTitle: $r('app.string.account_title') } }
-        })
+        .titleBar(this.settingsDetailTitleBar($r('app.string.account_title')))
         .hideBackButton(false)
         .backgroundColor(this.settingsDetailCanvasBackground())
+        .onShown(() => {
+          this.settingsDetailActive = true;
+        })
         .onWillDisappear(() => {
           this.settingsDetailActive = false;
         })
@@ -14203,19 +10263,25 @@ export struct BridgeStatus {
       HdsNavDestination() { this.SettingsNetworkDetailContent() }
         .titleMode(HdsNavDestinationTitleMode.MINI)
         .bindToScrollable([this.settingsNetworkDetailScroller])
-        .titleBar({
-          avoidLayoutSafeArea: true,
-          enableComponentSafeArea: true,
-          style: {
-            blurStrategy: BlurStrategy.DISABLE,
-            originalStyle: {
-              backgroundStyle: { backgroundColor: this.settingsDetailCanvasBackground() }
-            }
-          },
-          content: { title: { mainTitle: $r('app.string.settings_network_connection_title') } }
-        })
+        .titleBar(this.settingsDetailTitleBar($r('app.string.settings_network_connection_title')))
         .hideBackButton(false)
         .backgroundColor(this.settingsDetailCanvasBackground())
+        .onShown(() => {
+          this.settingsDetailActive = true;
+        })
+        .onWillDisappear(() => {
+          this.settingsDetailActive = false;
+        })
+    } else if (name === 'background-running') {
+      HdsNavDestination() { this.SettingsBackgroundRunningDetailContent() }
+        .titleMode(HdsNavDestinationTitleMode.MINI)
+        .bindToScrollable([this.settingsBackgroundRunningDetailScroller])
+        .titleBar(this.settingsDetailTitleBar($r('app.string.background_running_title')))
+        .hideBackButton(false)
+        .backgroundColor(this.settingsDetailCanvasBackground())
+        .onShown(() => {
+          this.settingsDetailActive = true;
+        })
         .onWillDisappear(() => {
           this.settingsDetailActive = false;
         })
@@ -14223,19 +10289,12 @@ export struct BridgeStatus {
       HdsNavDestination() { this.SettingsAppearanceDetailContent() }
         .titleMode(HdsNavDestinationTitleMode.MINI)
         .bindToScrollable([this.settingsAppearanceDetailScroller])
-        .titleBar({
-          avoidLayoutSafeArea: true,
-          enableComponentSafeArea: true,
-          style: {
-            blurStrategy: BlurStrategy.DISABLE,
-            originalStyle: {
-              backgroundStyle: { backgroundColor: this.settingsDetailCanvasBackground() }
-            }
-          },
-          content: { title: { mainTitle: $r('app.string.settings_appearance_navigation_title') } }
-        })
+        .titleBar(this.settingsDetailTitleBar($r('app.string.settings_appearance_navigation_title')))
         .hideBackButton(false)
         .backgroundColor(this.settingsDetailCanvasBackground())
+        .onShown(() => {
+          this.settingsDetailActive = true;
+        })
         .onWillDisappear(() => {
           this.settingsDetailActive = false;
         })
@@ -14243,42 +10302,49 @@ export struct BridgeStatus {
       HdsNavDestination() { this.SettingsStorageDetailContent() }
         .titleMode(HdsNavDestinationTitleMode.MINI)
         .bindToScrollable([this.settingsStorageDetailScroller])
-        .titleBar({
-          avoidLayoutSafeArea: true,
-          enableComponentSafeArea: true,
-          style: {
-            blurStrategy: BlurStrategy.DISABLE,
-            originalStyle: {
-              backgroundStyle: { backgroundColor: this.settingsDetailCanvasBackground() }
-            }
-          },
-          content: { title: { mainTitle: $r('app.string.native_settings_storage') } }
-        })
+        .titleBar(this.settingsDetailTitleBar($r('app.string.native_settings_storage')))
         .hideBackButton(false)
         .backgroundColor(this.settingsDetailCanvasBackground())
         .onShown(() => {
-          this.startStorageUsageRingAnimation();
+          this.settingsDetailActive = true;
+          this.storageRingPageShown = true;
+          this.startStorageRingAnimation();
         })
         .onWillDisappear(() => {
+          this.storageRingPageShown = false;
+          this.storageRingAnimationStarted = false;
+          this.storageRingGeneration++;
           this.settingsDetailActive = false;
         })
     } else if (name === 'security') {
       HdsNavDestination() { this.SettingsSecurityDetailContent() }
         .titleMode(HdsNavDestinationTitleMode.MINI)
         .bindToScrollable([this.settingsSecurityDetailScroller])
-        .titleBar({
-          avoidLayoutSafeArea: true,
-          enableComponentSafeArea: true,
-          style: {
-            blurStrategy: BlurStrategy.DISABLE,
-            originalStyle: {
-              backgroundStyle: { backgroundColor: this.settingsDetailCanvasBackground() }
-            }
-          },
-          content: { title: { mainTitle: $r('app.string.settings_security_title') } }
-        })
+        .titleBar(this.settingsDetailTitleBar($r('app.string.settings_security_title')))
         .hideBackButton(false)
         .backgroundColor(this.settingsDetailCanvasBackground())
+        .onShown(() => {
+          this.settingsDetailActive = true;
+        })
+        .onWillDisappear(() => {
+          this.settingsDetailActive = false;
+        })
+    } else if (name === 'feature-guide') {
+      HdsNavDestination() {
+        FeatureSetupGuide({
+          contentScroller: this.featureGuideScroller,
+          contentMargin: this.contentMargin(),
+          bottomInset: this.pageBottomInset()
+        })
+      }
+        .titleMode(HdsNavDestinationTitleMode.MINI)
+        .bindToScrollable([this.featureGuideScroller])
+        .titleBar(this.settingsDetailTitleBar($r('app.string.feature_guide_title')))
+        .hideBackButton(false)
+        .backgroundColor(this.settingsDetailCanvasBackground())
+        .onShown(() => {
+          this.settingsDetailActive = true;
+        })
         .onWillDisappear(() => {
           this.settingsDetailActive = false;
         })
@@ -14286,19 +10352,12 @@ export struct BridgeStatus {
       HdsNavDestination() { this.SettingsAboutDetailContent() }
         .titleMode(HdsNavDestinationTitleMode.MINI)
         .bindToScrollable([this.settingsAboutDetailScroller])
-        .titleBar({
-          avoidLayoutSafeArea: true,
-          enableComponentSafeArea: true,
-          style: {
-            blurStrategy: BlurStrategy.DISABLE,
-            originalStyle: {
-              backgroundStyle: { backgroundColor: this.settingsDetailCanvasBackground() }
-            }
-          },
-          content: { title: { mainTitle: $r('app.string.settings_about_help_title') } }
-        })
+        .titleBar(this.settingsDetailTitleBar($r('app.string.settings_about_help_title')))
         .hideBackButton(false)
         .backgroundColor(this.settingsDetailCanvasBackground())
+        .onShown(() => {
+          this.settingsDetailActive = true;
+        })
         .onWillDisappear(() => {
           this.settingsDetailActive = false;
         })
@@ -14326,7 +10385,7 @@ export struct BridgeStatus {
         end: LengthMetrics.vp(this.contentMargin())
       },
       style: {
-        blurStrategy: BlurStrategy.DISABLE,
+        blurStrategy: LightAppearance.blurStrategy(this.glowLevel),
         thermoCtrl: true,
         scrollEffectOpts: {
           enableScrollEffect: true,
@@ -14344,7 +10403,7 @@ export struct BridgeStatus {
         },
         scrollEffectStyle: {
           backgroundStyle: {
-            backgroundColor: this.pageCanvasBackground(),
+            backgroundColor: Color.Transparent,
             blurRadius: 24,
             maskExtraHeight: 40.0
           },
@@ -14391,7 +10450,7 @@ export struct BridgeStatus {
         end: LengthMetrics.vp(this.contentMargin())
       },
       style: {
-        blurStrategy: BlurStrategy.DISABLE,
+        blurStrategy: LightAppearance.blurStrategy(this.glowLevel),
         thermoCtrl: true,
         scrollEffectOpts: {
           enableScrollEffect: true,
@@ -14409,7 +10468,7 @@ export struct BridgeStatus {
         },
         scrollEffectStyle: {
           backgroundStyle: {
-            backgroundColor: this.pageCanvasBackground(),
+            backgroundColor: Color.Transparent,
             blurRadius: 24,
             maskExtraHeight: 40.0
           },
@@ -14456,7 +10515,7 @@ export struct BridgeStatus {
         end: LengthMetrics.vp(this.contentMargin())
       },
       style: {
-        blurStrategy: BlurStrategy.DISABLE,
+        blurStrategy: LightAppearance.blurStrategy(this.glowLevel),
         thermoCtrl: true,
         scrollEffectOpts: {
           enableScrollEffect: true,
@@ -14474,7 +10533,7 @@ export struct BridgeStatus {
         },
         scrollEffectStyle: {
           backgroundStyle: {
-            backgroundColor: this.pageCanvasBackground(),
+            backgroundColor: Color.Transparent,
             blurRadius: 24,
             maskExtraHeight: 40.0
           },
@@ -14509,7 +10568,11 @@ export struct BridgeStatus {
 
   @Builder
   private FilesPage() {
-    this.FilesContent()
+    // HdsTabs may build an inactive neighbor during a transition. Defer the
+    // file navigation/title builders until Files has actually been selected.
+    if (this.filesPageActivated || this.activeNavigationId === 'files') {
+      this.FilesContent()
+    }
   }
 
   @Builder
@@ -14653,15 +10716,18 @@ export struct BridgeStatus {
       }
     })
     .divider({ mode: DividerMode.NONE })
+    .onTabBarClick((index: number) => {
+      this.handleNavigationTabClick(index);
+    })
     .onSelected((index: number) => {
-      this.handleNavigationTabChange(index, false);
+      this.scheduleNavigationTabChange(index, false);
       // HdsTabs emits onSelected when the swipe transition starts and
       // onChange after it completes. Writing the controlled index here makes
       // the component jump straight to the destination and cancels the
       // interactive page animation.
     })
     .onChange((index: number) => {
-      this.handleNavigationTabChange(index, true);
+      this.scheduleNavigationTabChange(index, true);
     })
     .width('100%')
     .height('100%')
@@ -14686,6 +10752,7 @@ export struct BridgeStatus {
   }
 
   private async resetFirstRunState(): Promise<void> {
+    this.cancelVpnAutoRecovery();
     if (this.diagnosticActionInProgress) {
       return;
     }
@@ -14696,7 +10763,7 @@ export struct BridgeStatus {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
       try {
-        await this.vpnCommandGateway.stopVpnExtension(this.vpnWant());
+        await this.vpnSessionController.stopVpnExtensionDirect();
       } catch (_vpnError) {
         // A stopped extension is already in the desired state.
       }
@@ -14704,7 +10771,7 @@ export struct BridgeStatus {
         return;
       }
       try {
-        await this.vpnCommandGateway.stopBackend();
+        await this.vpnSessionController.stopBackendDirect();
       } catch (_backendError) {
         // Continue with cleanup when no in-process backend exists.
       }
@@ -14722,6 +10789,7 @@ export struct BridgeStatus {
       this.controlServerURL = settings.controlURL;
       this.controlServerInput = settings.controlURL;
       this.controlServerConfirmed = settings.confirmed;
+      this.loadAccountProfiles();
       this.controlServerStatus = '';
       this.controlServerEditorVisible = true;
       this.backendStatus = 'Tailscale Backend Stopped | control server not configured';
@@ -14760,6 +10828,7 @@ export struct BridgeStatus {
   }
 
   private async forceStopSystemVpn(): Promise<void> {
+    this.cancelVpnAutoRecovery();
     if (this.diagnosticActionInProgress) {
       return;
     }
@@ -14769,7 +10838,7 @@ export struct BridgeStatus {
     const requestGeneration: number = this.diagnosticActionRequestGuard.begin();
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
-      await this.vpnCommandGateway.stopVpnExtension(this.vpnWant());
+      await this.vpnSessionController.stopVpnExtensionDirect();
       if (!this.diagnosticActionRequestGuard.isCurrent(requestGeneration)) {
         return;
       }
@@ -14803,6 +10872,9 @@ export struct BridgeStatus {
   }
 
   private confirmSimulateAppCrash(): void {
+    if (!BuildProfile.DEBUG) {
+      return;
+    }
     this.getUIContext().showAlertDialog({
       title: $r('app.string.diagnostic_simulate_crash_confirm_title'),
       message: $r('app.string.diagnostic_simulate_crash_confirm_message'),
@@ -14821,6 +10893,10 @@ export struct BridgeStatus {
   }
 
   private async simulateAppCrash(): Promise<void> {
+    if (!BuildProfile.DEBUG) {
+      return;
+    }
+    this.cancelVpnAutoRecovery();
     if (this.diagnosticActionInProgress) {
       return;
     }
@@ -14830,7 +10906,7 @@ export struct BridgeStatus {
     const requestGeneration: number = this.diagnosticActionRequestGuard.begin();
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
-      await this.vpnCommandGateway.stopVpnExtension(this.vpnWant());
+      await this.vpnSessionController.stopVpnExtensionDirect();
       if (!this.diagnosticActionRequestGuard.isCurrent(requestGeneration)) {
         return;
       }
@@ -14929,8 +11005,11 @@ export struct BridgeStatus {
     .barOverlap(false)
     .barBackgroundColor($r('sys.color.comp_background_primary'))
     .divider({ mode: DividerMode.NONE })
+    .onTabBarClick((index: number) => {
+      this.handleNavigationTabClick(index);
+    })
     .onChange((index: number) => {
-      this.handleNavigationTabChange(index, true);
+      this.scheduleNavigationTabChange(index, true);
     })
     .width('100%')
     .height('100%')
@@ -14942,15 +11021,29 @@ export struct BridgeStatus {
       UpdateChangelogSheet({
         entries: this.updateChangelogEntries(),
         appName: 'MeshArc',
-        materialLevel: this.glowMaterialLevel()
+        materialLevel: this.glowMaterialLevel(),
+        glowLevel: this.glowLevel
       })
-      if (this.appLockRequired) {
-        this.AppLockOverlay()
+      if (this.isSecurityCoverActive()) {
+        this.SecurityCoverOverlay()
       }
     }
       .width('100%')
       .height('100%')
       .id('update-changelog-sheet-content')
+  }
+
+  @Builder
+  private SecurityCoverOverlay() {
+    if (this.appLockRequired) {
+      this.AppLockOverlay()
+    } else if (!this.securityPreferencesReady) {
+      Column() {}
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('sys.color.background_secondary'))
+        .id('security-startup-cover')
+    }
   }
 
   @Builder
@@ -14990,6 +11083,14 @@ export struct BridgeStatus {
   @Builder
   private RootSheetHosts() {
     Stack() {
+      Row().width(0).height(0).id('standalone-diagnostics-sheet-host')
+        .bindSheet($$this.standaloneDiagnosticsVisible, this.StandaloneDiagnosticsContent(), {
+          detents: ['80%', SheetSize.LARGE], preferType: SheetType.BOTTOM, mode: SheetMode.OVERLAY,
+          dragBar: true, showClose: true, enableOutsideInteractive: false,
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
+          title: { title: $r('app.string.standalone_diagnostics_title') },
+          onDisappear: () => this.closeStandaloneDiagnostics()
+        })
       Row()
         .width(0)
         .height(0)
@@ -15002,7 +11103,7 @@ export struct BridgeStatus {
           dragBar: true,
           showClose: false,
           enableOutsideInteractive: false,
-          backgroundColor: $r('sys.color.background_secondary'),
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
           onDisappear: () => {
             this.onUpdateChangelogSheetDisappear();
           }
@@ -15019,7 +11120,7 @@ export struct BridgeStatus {
           dragBar: true,
           showClose: true,
           enableOutsideInteractive: false,
-          backgroundColor: $r('sys.color.background_secondary'),
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
           title: (): void => { this.DeviceDetailsTitle(); },
           onDisappear: () => {
             this.deviceDetailVisible = false;
@@ -15038,7 +11139,7 @@ export struct BridgeStatus {
           dragBar: true,
           showClose: true,
           enableOutsideInteractive: false,
-          backgroundColor: $r('sys.color.background_secondary'),
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
           title: { title: $r('app.string.transfer_method_title') },
           onDisappear: () => {
             this.fileTransferMethodVisible = false;
@@ -15056,7 +11157,7 @@ export struct BridgeStatus {
           dragBar: true,
           showClose: true,
           enableOutsideInteractive: false,
-          backgroundColor: $r('sys.color.background_secondary'),
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
           title: { title: $r('app.string.media_method_title') },
           onDisappear: () => {
             this.mediaMethodVisible = false;
@@ -15074,7 +11175,7 @@ export struct BridgeStatus {
           dragBar: true,
           showClose: false,
           enableOutsideInteractive: false,
-          backgroundColor: $r('sys.color.background_secondary'),
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
           onDisappear: () => {
             this.nativeSettingsVisible = false;
           }
@@ -15091,7 +11192,7 @@ export struct BridgeStatus {
           dragBar: true,
           showClose: true,
           enableOutsideInteractive: false,
-          backgroundColor: $r('sys.color.background_secondary'),
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
           title: (): void => { this.ConnectionDetailsTitle(); },
           onDisappear: () => {
             this.connectionDetailsVisible = false;
@@ -15103,23 +11204,42 @@ export struct BridgeStatus {
     .id('root-sheet-hosts')
   }
 
-  build() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      if (this.nativeSettingsBackgroundUri.length > 0) {
-        Image(this.nativeSettingsBackgroundUri)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Cover)
-          .opacity(this.immersiveColorBackgroundEnabled ? 0.48 : 0.36)
-          .id('app-background-image')
+  @Builder
+  private AppBackgroundImage(uri: string) {
+    Image(uri)
+      .width('100%')
+      .height('100%')
+      .objectFit(ImageFit.Cover)
+      .opacity(this.immersiveColorBackgroundEnabled ? 0.48 : 0.36)
+      .brightness(PersonalizationPreferences.backgroundBrightnessFactor(this.backgroundBrightnessValue))
+      .onError(() => this.onBackgroundImageLoadError(uri))
+      .id('app-background-image')
+  }
+
+  @Builder
+  private AppBackgroundLayer() {
+    Stack() {
+      if (this.nativeSettingsBackgroundUri.length > 0 && !this.backgroundUnavailable) {
+        this.AppBackgroundImage(this.nativeSettingsBackgroundUri)
       }
       if (this.immersiveColorBackgroundEnabled) {
         Row()
           .width('100%')
           .height('100%')
           .backgroundColor(this.immersiveColorTint())
+          .brightness(PersonalizationPreferences.backgroundBrightnessFactor(this.backgroundBrightnessValue))
           .id('immersive-color-background')
       }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.background_secondary'))
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      this.AppBackgroundLayer()
       Column() {
         this.MobileTabs()
       }
@@ -15136,10 +11256,10 @@ export struct BridgeStatus {
     .backgroundColor(this.pageCanvasBackground())
     .id('shell-hds-navigation-safe-area')
     .onAreaChange((_oldValue: Area, newValue: Area) => this.updateLayoutMetrics(newValue))
-    .bindContentCover(this.appLockRequired, this.AppLockOverlay(), {
+    .bindContentCover(this.isSecurityCoverActive(), this.SecurityCoverOverlay(), {
       backgroundColor: $r('sys.color.background_secondary'),
       onWillDismiss: (dismissAction: DismissContentCoverAction) => {
-        if (this.appLockRequired) {
+        if (this.isSecurityCoverActive()) {
           return;
         }
         dismissAction.dismiss();

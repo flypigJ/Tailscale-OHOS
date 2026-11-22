@@ -1,3 +1,7 @@
+import { TaildropReceiveRequest, TaildropReceiveResult } from '@tailscale/common';
+
+export { TaildropReceiveRequest, TaildropReceiveResult } from '@tailscale/common';
+
 export interface TaildropNotificationActionRequest {
   action: string;
   fileName: string;
@@ -5,24 +9,6 @@ export interface TaildropNotificationActionRequest {
   receivedAtMs: number;
   eventId: string;
   atMs: number;
-}
-
-export interface TaildropReceiveRequest {
-  requestId: number;
-  action: string;
-  name: string;
-  inboxRoot: string;
-  path: string;
-}
-
-export interface TaildropReceiveResult {
-  requestId: number;
-  action: string;
-  state: string;
-  reason: string;
-  name: string;
-  size: number;
-  path: string;
 }
 
 /** M6A owner for receive protocol payloads and notification/delete idempotency. */
@@ -33,12 +19,17 @@ export class TaildropReceiveGateway {
   parseNotificationAction(value: string): TaildropNotificationActionRequest | undefined {
     try {
       const request: TaildropNotificationActionRequest = JSON.parse(value) as TaildropNotificationActionRequest;
+      const unsafeChars: RegExp =
+        /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
       if ((request.action !== 'open' && request.action !== 'save' && request.action !== 'later') ||
         typeof request.fileName !== 'string' || request.fileName.length === 0 || request.fileName.length > 255 ||
+        request.fileName === '.' || request.fileName === '..' ||
         request.fileName.includes('/') || request.fileName.includes('\\') ||
+        unsafeChars.test(request.fileName) ||
         !Number.isSafeInteger(request.size) || request.size < 0 ||
         !Number.isSafeInteger(request.receivedAtMs) || request.receivedAtMs < -1 ||
-        typeof request.eventId !== 'string' || request.eventId.length === 0 || request.eventId.length > 96) {
+        (request.action === 'save' && request.receivedAtMs <= 0) ||
+        typeof request.eventId !== 'string' || request.eventId.length === 0 || request.eventId.length > 128) {
         return undefined;
       }
       return request;

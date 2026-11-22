@@ -2,6 +2,7 @@ import nativeBridge from 'libtailscale_ohos.so';
 import { Want } from '@kit.AbilityKit';
 import { vpnExtension } from '@kit.NetworkKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { VpnConnectConfigHandoff as CommonVpnConnectConfigHandoff } from '@tailscale/common';
 
 export enum VpnCommandState {
   STOPPED = 'stopped',
@@ -108,12 +109,20 @@ export class VpnCommandGateway {
     return nativeBridge.backendStatus();
   }
 
+  async backendStatusAsync(): Promise<string> {
+    return await nativeBridge.backendStatusAsync();
+  }
+
   async requestVpnConfig(): Promise<string> {
     return await nativeBridge.backendVpnConfigAsync();
   }
 
   async requestLoginUrl(): Promise<string> {
     return await nativeBridge.backendAuthURLAsync();
+  }
+
+  async loginWithAuthKey(authKey: string): Promise<string> {
+    return await nativeBridge.backendLoginWithAuthKeyAsync(authKey);
   }
 
   async startVpnExtension(want: Want): Promise<void> {
@@ -175,7 +184,4 @@ export class VpnCommandGateway {
   }
 }
 
-export interface VpnConnectConfigHandoff {
-  createdAtMs: number;
-  config: string;
-}
+export type VpnConnectConfigHandoff = CommonVpnConnectConfigHandoff;

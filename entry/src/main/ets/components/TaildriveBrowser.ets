@@ -1,3 +1,6 @@
+import { ControlServerConfig } from '../services/ControlServerConfig';
+import { AccountProfiles } from '../services/AccountProfiles';
+import { LightAppearance } from './LightAppearance';
 import { common, Want, wantConstant } from '@kit.AbilityKit';
 import { uniformTypeDescriptor } from '@kit.ArkData';
 import { pasteboard } from '@kit.BasicServicesKit';
@@ -5,26 +8,42 @@ import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
 import { vibrator } from '@kit.SensorServiceKit';
 import { systemShare } from '@kit.ShareKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { LengthMetrics } from '@kit.ArkUI';
+import { LengthMetrics, SymbolGlyphModifier, uiMaterial } from '@kit.ArkUI';
 import {
   BlurStrategy,
   DividerShowType,
   HdsNavigation,
   HdsNavigationAttribute,
   HdsNavigationTitleMode,
+  IconStyleMode,
   TextStyleMode,
   hdsMaterial
 } from '@kit.UIDesignKit';
 import {
   PreparedTaildriveFile,
   TaildriveEntry,
-  TaildriveGateway,
   TaildriveListResult,
   TaildriveMutationRequest,
   TaildriveMutationResult,
   TaildriveStatResult,
-  TaildriveTransferSnapshot
-} from '../services/TaildriveGateway';
+  TaildriveTransferRequest,
+  TaildriveTransferSnapshot,
+  extractFileExtension
+} from '@tailscale/common';
+import { TaildriveGateway } from '../services/TaildriveGateway';
+import { resolveFileIconResource } from '../services/FileIconResolver';
+import {
+  TaildriveConfirmationPrompt,
+  TaildriveGroupedBucket,
+  TaildriveSessionController,
+  TaildriveSessionHost,
+  emptyTaildriveEntry,
+  idleTaildriveTransfer,
+  localTaildriveFileSnapshot,
+  sanitizeTaildriveLocalName,
+  snapshotTaildriveEntry,
+  taildrivePathDepth
+} from '../services/TaildriveSessionController';
 import {
   clearTaildriveProgress,
   publishTaildriveCompletion,
@@ -37,9 +56,13 @@ import {
 } from '../services/TaildrivePreviewGateway';
 import { AppSecurityAuthenticator } from '../services/AppSecurityAuthenticator';
 import { AppSecurityPreferences } from '../services/AppSecurityPreferences';
-import { APP_FOREGROUND_EVENT } from '../services/AppLifecycleEvents';
+import { createLocalTextPasteData } from '../services/AppShellIntentAdapter';
+import { APP_BACKGROUND_EVENT, APP_FOREGROUND_EVENT } from '../services/AppLifecycleEvents';
 import { DiagnosticEventStore } from '../services/DiagnosticEventStore';
 import { MotionTokens } from './MotionTokens';
+import { UiTokens } from './UiTokens';
+import { taildriveGuideNotice } from '../services/FeatureGuideEntryRules';
+import { LatestTaskPool } from '../services/LatestTaskPool';
 
 interface TaildriveEntryGroup {
   key: string;
@@ -59,11 +82,43 @@ interface TaildriveThumbnailModel {
   uri: string;
 }
 
+interface TaildriveSelectionActionData {
+  icon: Resource;
+  label: ResourceStr;
+  isEnabled: boolean;
+  destructive: boolean;
+  actionId: string;
+  action: () => void;
+}
+
+interface TaildriveSelectionMoreData {
+  isEnabled: boolean;
+  actionId: string;
+  action: () => void;
+}
+
+interface TaildriveDetailActionData {
+  icon: Resource;
+  label: ResourceStr;
+  isEnabled: boolean;
+  destructive: boolean;
+  actionId: string;
+  action: () => void;
+}
+
+interface TaildriveSharePreparedFile {
+  entry: TaildriveEntry;
+  localPath: string;
+}
+
 const TAILDRIVE_AUTO_PREVIEW_LIMIT_BYTES: number = 5 * 1024 * 1024;
 const TAILDRIVE_REFRESH_INTERVAL_MS: number = 30000;
 const TAILDRIVE_LOG_DOMAIN: number = 0x0000;
 const TAILDRIVE_LOG_TAG: string = 'TaildrivePreview';
 const TAILDRIVE_SECURITY_LOG_TAG: string = 'TaildriveSecurity';
+const TAILDRIVE_TOOLBAR_HEIGHT: number = 52;
+const TAILDRIVE_SELECTION_TOOLBAR_HEIGHT: number = 48;
+const TAILDRIVE_TOOLBAR_SIDE_MARGIN: number = 36;
 
 class TaildriveListDataSource implements IDataSource {
   private data: TaildriveListItemModel[] = [];
@@ -103,6 +158,7 @@ export struct TaildriveBrowser {
   @Prop bottomInset: number = 0;
   @Prop titleBarPadding: number = 16;
   @Prop materialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.ADAPTIVE;
+  @Prop glowLevel: number = 3;
   @Prop transparentBackground: boolean = false;
   @Prop targetMachineName: string = '';
   @Prop targetTailnetName: string = '';
@@ -112,9 +168,10 @@ export struct TaildriveBrowser {
   @Prop @Watch('onTargetRequestChanged') targetRequestId: number = 0;
   @StorageLink('taildriveFilesTabActive') @Watch('onFilesTabActiveChanged') private filesTabActive: boolean = false;
   @StorageLink('taildriveBackRequest') @Watch('onBackRequestChanged') backRequest: number = 0;
-  @State private path: string = '/';
+  @State @Watch('onPathChanged') private path: string = '/';
   @State private entries: TaildriveEntry[] = [];
   @State private loading: boolean = false;
+  @State private pullRefreshing: boolean = false;
   @State private busy: boolean = false;
   @State private previewDownloading: boolean = false;
   @State private manualDownloadCount: number = 0;
@@ -130,77 +187,309 @@ export struct TaildriveBrowser {
   @State @Watch('onSortSheetVisibilityChanged') private sortSheetVisible: boolean = false;
   @State private searchVisible: boolean = false;
   @State private selectionMode: boolean = false;
+  @State private dragSelecting: boolean = false;
   @State private selectedPaths: string[] = [];
   @State private viewMode: string = 'list';
   @State private retryAvailable: boolean = false;
   @State private editorVisible: boolean = false;
+  @State private editorSubmitInFlight: boolean = false;
   @State private editorName: string = '';
   @State private editorOperation: string = 'mkdir';
   @State private editorPath: string = '';
   @State private folderDialogVisible: boolean = false;
+  @State private folderSubmitInFlight: boolean = false;
   @State @Watch('onPreviewDownloadVisibilityChanged') private previewDownloadVisible: boolean = false;
-  @State private previewDownloadEntry: TaildriveEntry = TaildriveBrowser.emptyEntry();
+  @State private previewDownloadEntry: TaildriveEntry = emptyTaildriveEntry();
   @State private detailsVisible: boolean = false;
   @State private detailsLoading: boolean = false;
   @State private detailsReason: string = '';
-  @State private detailEntry: TaildriveEntry = TaildriveBrowser.emptyEntry();
+  @State private detailEntry: TaildriveEntry = emptyTaildriveEntry();
   @State private moveVisible: boolean = false;
+  @State private moveOperation: string = 'move';
+  @State private moveTargetCount: number = 0;
   @State private moveLoading: boolean = false;
-  @State private movePath: string = '/';
+  @State private moveSubmitInFlight: boolean = false;
+  @State private moveReason: string = '';
+  @State @Watch('onMovePathChanged') private movePath: string = '/';
   @State private moveRoot: string = '/';
   @State private moveEntries: TaildriveEntry[] = [];
-  @State private transfer: TaildriveTransferSnapshot = TaildriveBrowser.idleTransfer();
+  @State private transfer: TaildriveTransferSnapshot = idleTaildriveTransfer();
   @State private thumbnails: TaildriveThumbnailModel[] = [];
+  @State private cachedEntries: TaildriveEntry[] = [];
+  @State private downloadedEntries: TaildriveEntry[] = [];
 
   private readonly gateway: TaildriveGateway = new TaildriveGateway();
   private readonly previewGateway: TaildrivePreviewGateway = new TaildrivePreviewGateway();
   private readonly listDataSource: TaildriveListDataSource = new TaildriveListDataSource();
+  onShowFeatureGuide: (section: string) => void = (_section: string) => {};
+  onRequestConnection: () => void = () => {};
+  @Prop connectionActionText: ResourceStr = '';
+  @Prop connectionActionAvailable: boolean = false;
+  @State private lastListedPath: string = '';
   contentScroller: Scroller = new Scroller();
   private breadcrumbScroller: Scroller = new Scroller();
+  private movePathScroller: Scroller = new Scroller();
   private nextTransferRequestId: number = Date.now();
   private previewRequestId: number = 0;
   private previewGeneration: number = 0;
+  private activePreviewPath: string = '';
   private transferTimer: number = -1;
   private transferPollInFlight: boolean = false;
   private statusTimer: number = -1;
   private refreshTimer: number = -1;
-  private refreshInFlight: boolean = false;
-  private targetOpenInFlight: boolean = false;
-  private lastTargetRequestId: number = 0;
-  private deferredTargetRequestId: number = 0;
+  private browserVisible: boolean = false;
+  private appInForeground: boolean = true;
   private lastNotifiedProgress: number = -1;
-  private retryKind: string = '';
   private retryDownloadEntry: TaildriveEntry | undefined = undefined;
   private retryPreviewEntry: TaildriveEntry | undefined = undefined;
-  private retryMutation: TaildriveMutationRequest | undefined = undefined;
-  private retryMutationWorkingStatus: string = 'mutation_failed';
-  private retryMutationCompletedStatus: string = 'mutation_completed';
-  private pendingUpload: PreparedTaildriveFile | undefined = undefined;
-  private pendingUploadPath: string = '';
-  private movingEntry: TaildriveEntry | undefined = undefined;
-  private lastBackRequest: number = 0;
-  private thumbnailWorkPaths: string[] = [];
-  private folderAccessGrants: string[] = [];
+  @State private fileActionGeneration: number = 0;
+  private dragViewportWidth: number = 0;
+  private dragViewportHeight: number = 0;
+  private dragPointerLocalX: number = 0;
+  private dragPointerLocalY: number = 0;
+  private dragAutoScrollTimer: number = -1;
+  private dragAutoScrollStepVp: number = 0;
+  private lastDragVibrateAtMs: number = 0;
+  private readonly thumbnailPool: LatestTaskPool<TaildriveEntry> = new LatestTaskPool<TaildriveEntry>(2);
+  @State private folderAccessGrants: string[] = [];
   private folderAccessAuthenticationInFlight: boolean = false;
   private folderPolicyAuthenticationInFlight: boolean = false;
-  private protectedFolderResumePending: boolean = false;
-  private protectedFolderResumeInFlight: boolean = false;
   private securityResumeTimer: number = -1;
+  private uiTimers: number[] = [];
+  private manualDownloadInFlight: boolean = false;
   private appForegroundListener: () => void = () => this.handleAppForeground();
+  private appBackgroundListener: () => void = () => this.handleAppBackground();
+  private readonly sessionHost: TaildriveSessionHost = {
+    isConnected: (): boolean => this.connected,
+    isStandalone: (): boolean => this.standalone,
+    isFilesTabActive: (): boolean => this.filesTabActive,
+    isBrowserVisible: (): boolean => this.browserVisible,
+    isAppInForeground: (): boolean => this.appInForeground,
+    setAppInForeground: (value: boolean): void => { this.appInForeground = value; },
+    isAppLockActive: (): boolean => this.appLockActive,
+    isFolderLockEnabled: (): boolean => this.folderLockEnabled,
+    getLockedFolderPaths: (): string[] => this.lockedFolderPaths,
+    setLockedFolderPaths: (paths: string[]): void => {
+      AppStorage.setOrCreate('taildriveLockedFolderPaths', paths);
+    },
+    getFolderAccessGrants: (): string[] => this.folderAccessGrants,
+    setFolderAccessGrants: (grants: string[]): void => { this.folderAccessGrants = grants; },
+    isFolderAccessAuthInFlight: (): boolean => this.folderAccessAuthenticationInFlight,
+    setFolderAccessAuthInFlight: (value: boolean): void => {
+      this.folderAccessAuthenticationInFlight = value;
+    },
+    isFolderPolicyAuthInFlight: (): boolean => this.folderPolicyAuthenticationInFlight,
+    setFolderPolicyAuthInFlight: (value: boolean): void => {
+      this.folderPolicyAuthenticationInFlight = value;
+    },
+
+    getTargetMachineName: (): string => this.targetMachineName,
+    getTargetTailnetName: (): string => this.targetTailnetName,
+    getTargetRequestId: (): number => this.targetRequestId,
+
+    getPath: (): string => this.path,
+    setPath: (path: string): void => { this.path = path; },
+    getEntries: (): TaildriveEntry[] => this.entries,
+    setEntries: (entries: TaildriveEntry[]): void => { this.entries = entries; },
+    getLastListedPath: (): string => this.lastListedPath,
+    setLastListedPath: (path: string): void => { this.lastListedPath = path; },
+    isLoading: (): boolean => this.loading,
+    setLoading: (value: boolean): void => { this.loading = value; },
+    isPullRefreshing: (): boolean => this.pullRefreshing,
+    setPullRefreshing: (value: boolean): void => { this.pullRefreshing = value; },
+    isBusy: (): boolean => this.busy,
+    setBusy: (value: boolean): void => { this.busy = value; },
+    getReason: (): string => this.reason,
+    setReason: (reason: string): void => { this.reason = reason; },
+    getStatus: (): string => this.status,
+    setStatus: (status: string): void => { this.status = status; },
+    showTransientStatus: (status: string): void => { this.showTransientStatus(status); },
+    isRetryAvailable: (): boolean => this.retryAvailable,
+    setRetryAvailable: (value: boolean): void => { this.retryAvailable = value; },
+
+    getSearchQuery: (): string => this.searchQuery,
+    setSearchQuery: (query: string): void => { this.searchQuery = query; },
+    isSearchVisible: (): boolean => this.searchVisible,
+    setSearchVisibleRaw: (visible: boolean): void => { this.searchVisible = visible; },
+    dismissSearchAnimated: (): void => { this.setSearchVisible(false); },
+    getSortMode: (): string => this.sortMode,
+    isSortDescending: (): boolean => this.sortDescending,
+    getGroupMode: (): string => this.groupMode,
+
+    isSelectionMode: (): boolean => this.selectionMode,
+    setSelectionMode: (value: boolean): void => { this.selectionMode = value; },
+    isDragSelecting: (): boolean => this.dragSelecting,
+    setDragSelecting: (value: boolean): void => { this.dragSelecting = value; },
+    getSelectedPaths: (): string[] => this.selectedPaths,
+    setSelectedPaths: (paths: string[]): void => { this.selectedPaths = paths; },
+
+    getFileActionGeneration: (): number => this.fileActionGeneration,
+    setFileActionGeneration: (value: number): void => { this.fileActionGeneration = value; },
+
+    isEditorVisible: (): boolean => this.editorVisible,
+    setEditorVisible: (visible: boolean): void => { this.editorVisible = visible; },
+    isEditorSubmitInFlight: (): boolean => this.editorSubmitInFlight,
+    setEditorSubmitInFlight: (value: boolean): void => { this.editorSubmitInFlight = value; },
+    getEditorName: (): string => this.editorName,
+    setEditorName: (name: string): void => { this.editorName = name; },
+    getEditorOperation: (): string => this.editorOperation,
+    setEditorOperation: (operation: string): void => { this.editorOperation = operation; },
+    getEditorPath: (): string => this.editorPath,
+    setEditorPath: (path: string): void => { this.editorPath = path; },
+
+    isFolderDialogVisible: (): boolean => this.folderDialogVisible,
+    setFolderDialogVisible: (visible: boolean): void => { this.folderDialogVisible = visible; },
+    isFolderSubmitInFlight: (): boolean => this.folderSubmitInFlight,
+    setFolderSubmitInFlight: (value: boolean): void => { this.folderSubmitInFlight = value; },
+
+    isPreviewDownloadVisible: (): boolean => this.previewDownloadVisible,
+    setPreviewDownloadVisible: (visible: boolean): void => { this.previewDownloadVisible = visible; },
+    getPreviewDownloadEntry: (): TaildriveEntry => this.previewDownloadEntry,
+
+    isDetailsVisible: (): boolean => this.detailsVisible,
+    setDetailsVisible: (visible: boolean): void => { this.detailsVisible = visible; },
+    isDetailsLoading: (): boolean => this.detailsLoading,
+    setDetailsLoading: (value: boolean): void => { this.detailsLoading = value; },
+    getDetailsReason: (): string => this.detailsReason,
+    setDetailsReason: (reason: string): void => { this.detailsReason = reason; },
+    getDetailEntry: (): TaildriveEntry => this.detailEntry,
+    setDetailEntry: (entry: TaildriveEntry): void => { this.detailEntry = entry; },
+
+    isMoveVisible: (): boolean => this.moveVisible,
+    setMoveVisible: (visible: boolean): void => { this.moveVisible = visible; },
+    getMoveOperation: (): string => this.moveOperation,
+    setMoveOperation: (operation: string): void => { this.moveOperation = operation; },
+    getMoveTargetCount: (): number => this.moveTargetCount,
+    setMoveTargetCount: (count: number): void => { this.moveTargetCount = count; },
+    isMoveLoading: (): boolean => this.moveLoading,
+    setMoveLoading: (value: boolean): void => { this.moveLoading = value; },
+    isMoveSubmitInFlight: (): boolean => this.moveSubmitInFlight,
+    setMoveSubmitInFlight: (value: boolean): void => { this.moveSubmitInFlight = value; },
+    getMoveReason: (): string => this.moveReason,
+    setMoveReason: (reason: string): void => { this.moveReason = reason; },
+    getMovePath: (): string => this.movePath,
+    setMovePath: (path: string): void => { this.movePath = path; },
+    setMoveRoot: (root: string): void => { this.moveRoot = root; },
+    getMoveEntries: (): TaildriveEntry[] => this.moveEntries,
+    setMoveEntries: (entries: TaildriveEntry[]): void => { this.moveEntries = entries; },
+
+    isSortSheetVisible: (): boolean => this.sortSheetVisible,
+    setSortSheetVisible: (visible: boolean): void => { this.sortSheetVisible = visible; },
+    closeSortPanel: (): void => { this.closeSortPanel(); },
+
+    setTransfer: (snapshot: TaildriveTransferSnapshot): void => { this.transfer = snapshot; },
+    getCachedEntries: (): TaildriveEntry[] => this.cachedEntries,
+    setCachedEntries: (entries: TaildriveEntry[]): void => { this.cachedEntries = entries; },
+    getDownloadedEntries: (): TaildriveEntry[] => this.downloadedEntries,
+    setDownloadedEntries: (entries: TaildriveEntry[]): void => { this.downloadedEntries = entries; },
+    hasGatewayCachedPreview: (entry: TaildriveEntry): boolean =>
+      this.previewGateway.cachedPreview(this.context(), entry) !== undefined,
+    clearPreviewThumbnails: (): void => { this.thumbnails = []; },
+    filterProtectedThumbnails: (matchesProtected: (remotePath: string) => boolean): void => {
+      this.thumbnails = this.thumbnails.filter(
+        (item: TaildriveThumbnailModel) => !matchesProtected(item.remotePath)
+      );
+    },
+    purgeGatewayPreviewCaches: (normalizedTargets: string[]): void => {
+      this.previewGateway.purgeProtectedPreviews(this.context(), normalizedTargets);
+    },
+    cancelThumbnailPool: (): void => { this.thumbnailPool.cancel(); },
+
+    applyListResult: (result: TaildriveListResult, fallbackPath: string): void => {
+      this.applyListResult(result, fallbackPath);
+    },
+    rebuildListDataSource: (): void => { this.rebuildListDataSource(); },
+    updateBackState: (): void => { this.updateBackState(); },
+    publishUiBackState: (): void => { this.publishUiBackState(); },
+    startRefreshPolling: (): void => { this.startRefreshPolling(); },
+    stopRefreshPolling: (): void => { this.stopRefreshPolling(); },
+    startTransferPolling: (): void => { this.startTransferPolling(); },
+    stopTransferPolling: (): void => { this.stopTransferPolling(); },
+    stopDragAutoScroll: (): void => { this.stopDragAutoScroll(); },
+    scheduleSecurityResume: (delayMs: number): void => {
+      this.clearSecurityResumeTimer();
+      this.securityResumeTimer = setTimeout((): void => {
+        this.securityResumeTimer = -1;
+        this.sessionController.onSecurityResumeTimerFired();
+      }, delayMs);
+    },
+    clearSecurityResumeTimer: (): void => { this.clearSecurityResumeTimer(); },
+    delayIndicator: (ms: number): Promise<void> =>
+      new Promise<void>((resolve: () => void) => { setTimeout(resolve, ms); }),
+    vibrateTouch: (strong: boolean = false): void => { this.vibrateTouch(strong); },
+    vibrateDragStep: (): void => { this.vibrateDragStep(); },
+    localizedNewFolderName: (): string => this.localizedNewFolderName(),
+    showConfirmationPrompt: (prompt: TaildriveConfirmationPrompt): void => {
+      this.showConfirmationPrompt(prompt);
+    },
+    pickUploadDocumentUris: (): Promise<string[]> => this.pickUploadDocumentUris(),
+    stagingRoot: (): string => this.stagingRoot(),
+    ensureStagingDirectory: (root: string): void => { fileIo.mkdirSync(root, true); },
+    authenticateFolderAccess: (): Promise<boolean> => {
+      const title: string = this.context().resourceManager.getStringSync(
+        $r('app.string.security_folder_authentication_title').id
+      );
+      return AppSecurityAuthenticator.authenticate(title);
+    },
+    authenticateFolderPolicy: (): Promise<boolean> => {
+      const title: string = this.context().resourceManager.getStringSync(
+        $r('app.string.security_settings_authentication_title').id
+      );
+      return AppSecurityAuthenticator.authenticate(title);
+    },
+    saveLockedFolderPaths: (paths: string[]): Promise<void> =>
+      AppSecurityPreferences.saveLockedFolderPaths(this.context(), paths),
+    recordSecurityDiagnostic: (event: string, phase: string, code: number = 0): void => {
+      this.recordSecurityDiagnostic(event, phase, code);
+    },
+    logTargetOpen: (route: string, durationMs: number): void => {
+      hilog.info(TAILDRIVE_LOG_DOMAIN, TAILDRIVE_LOG_TAG,
+        'target open completed. route=%{public}s durationMs=%{public}s',
+        route, durationMs.toString());
+    },
+    publishTransferCompletion: (fileName: string, success: boolean): Promise<void> =>
+      publishTaildriveCompletion(this.context(), fileName, success),
+    clearTransferProgress: (): Promise<void> => clearTaildriveProgress(),
+    retryDownload: (entry: TaildriveEntry): Promise<void> => this.download(entry),
+    retryPreviewDownload: (entry: TaildriveEntry): Promise<void> => this.downloadForPreview(entry),
+
+    gatewayList: (path: string): Promise<TaildriveListResult> => this.gateway.list(path),
+    gatewayStat: (path: string): Promise<TaildriveStatResult> => this.gateway.stat(path),
+    gatewayMutate: (request: TaildriveMutationRequest): Promise<TaildriveMutationResult> =>
+      this.gateway.mutate(request),
+    gatewayUpload: (request: TaildriveTransferRequest): Promise<TaildriveTransferSnapshot> =>
+      this.gateway.upload(request),
+    gatewayStageUpload: (uri: string, root: string, requestId: number): Promise<PreparedTaildriveFile> =>
+      this.gateway.stageUpload(uri, root, requestId),
+    gatewayCleanupStaged: (file: PreparedTaildriveFile): void => {
+      this.gateway.cleanupStaged(file);
+    }
+  };
+  private readonly sessionController: TaildriveSessionController =
+    new TaildriveSessionController(this.sessionHost);
 
   aboutToAppear(): void {
-    this.gateway.configure(this.context());
-    this.gateway.cleanupStaleStaging(this.stagingRoot());
+    const session: TaildriveSessionController = this.sessionController;
+    this.browserVisible = true;
+    this.appInForeground = true;
+    session.refreshGeneration++;
+    try {
+      this.gateway.configure(this.context());
+      this.gateway.cleanupStaleStaging(this.stagingRoot());
+    } catch (_error) {
+      // Missing scope metadata must never expose another server's staging.
+    }
     this.context().eventHub.on(APP_FOREGROUND_EVENT, this.appForegroundListener);
+    this.context().eventHub.on(APP_BACKGROUND_EVENT, this.appBackgroundListener);
     this.thumbnails = [];
     this.updateBackState();
     if (!this.connected) {
       return;
     }
     if (this.targetRequestId > 0 && this.targetMachineName.length > 0) {
-      this.requestTargetMachineOpen();
+      session.requestTargetMachineOpen();
     } else if (this.filesTabActive) {
-      this.refresh();
+      session.refresh();
     }
     if (this.filesTabActive) {
       this.startRefreshPolling();
@@ -208,128 +497,58 @@ export struct TaildriveBrowser {
   }
 
   aboutToDisappear(): void {
+    const session: TaildriveSessionController = this.sessionController;
+    this.fileActionGeneration++;
+    this.browserVisible = false;
+    this.thumbnailPool.cancel();
+    session.refreshGeneration++;
+    session.refreshPending = false;
+    this.pullRefreshing = false;
     this.context().eventHub.off(APP_FOREGROUND_EVENT, this.appForegroundListener);
+    this.context().eventHub.off(APP_BACKGROUND_EVENT, this.appBackgroundListener);
     this.clearSecurityResumeTimer();
     this.folderAccessGrants = [];
-    this.protectedFolderResumePending = false;
+    session.protectedFolderResumePending = false;
     this.cancelPreviewDownload();
+    this.finishDragSelection();
     this.stopTransferPolling();
     this.stopRefreshPolling();
     this.clearStatusTimer();
+    this.clearUiTimers();
     clearTaildriveProgress();
     AppStorage.setOrCreate('taildriveUiBackActive', false);
   }
 
-  private static emptyEntry(): TaildriveEntry {
-    return { name: '', path: '', kind: '', size: 0, modifiedAtMs: 0 };
-  }
-
-  private static idleTransfer(): TaildriveTransferSnapshot {
-    return {
-      requestId: 0, direction: '', state: 'idle', reason: '', remotePath: '', localPath: '',
-      fileName: '', bytes: 0, totalBytes: 0, startedAtMs: 0, completedAtMs: 0
-    };
-  }
-
   private onConnectedChanged(): void {
-    if (this.connected) {
-      if (this.targetRequestId > 0 && this.targetMachineName.length > 0) {
-        this.requestTargetMachineOpen();
-      } else if (this.filesTabActive) {
-        this.refresh();
-      }
-      if (this.filesTabActive) {
-        this.startRefreshPolling();
-      }
-    } else {
-      this.stopRefreshPolling();
-      this.folderAccessGrants = [];
-      this.protectedFolderResumePending = false;
-      this.entries = [];
-      this.loading = false;
-      this.searchVisible = false;
-      this.exitSelectionMode();
-      this.reason = 'backend_unavailable';
-      this.status = '';
-    }
+    this.sessionController.onConnectedChanged();
   }
 
   private onTargetRequestChanged(): void {
-    if (this.connected && this.targetRequestId > 0 && this.targetMachineName.length > 0) {
-      this.requestTargetMachineOpen();
-    }
+    this.sessionController.onTargetRequestChanged();
   }
 
   private onFilesTabActiveChanged(): void {
-    if (!this.filesTabActive) {
-      this.stopRefreshPolling();
-      this.folderAccessGrants = [];
-      if (this.protectedFolderRoot(this.path).length > 0) {
-        this.blockProtectedFolderContent();
-      }
-      return;
-    }
-    if (!this.connected) {
-      return;
-    }
-    this.startRefreshPolling();
-    if (this.protectedFolderResumePending || !this.hasFolderAccess(this.path)) {
-      this.resumeProtectedFolderAccess();
-      return;
-    }
-    if (this.targetOpenInFlight) {
-      return;
-    }
-    if (this.targetRequestId > this.lastTargetRequestId && this.targetMachineName.length > 0) {
-      this.requestTargetMachineOpen();
-    } else {
-      this.refresh();
-    }
+    this.sessionController.onFilesTabActiveChanged();
   }
 
   private onFolderLockEnabledChanged(): void {
-    this.folderAccessGrants = [];
-    if (!this.folderLockEnabled) {
-      this.protectedFolderResumePending = false;
-      if (this.filesTabActive && this.connected) {
-        this.refresh();
-      }
-      return;
-    }
-    if (this.protectedFolderRoot(this.path).length > 0) {
-      this.blockProtectedFolderContent();
-      if (this.filesTabActive) {
-        this.resumeProtectedFolderAccess();
-      }
-    }
+    this.sessionController.onFolderLockEnabledChanged();
   }
 
   private onLockedFolderPathsChanged(): void {
-    this.folderAccessGrants = [];
-    if (this.folderLockEnabled && this.protectedFolderRoot(this.path).length > 0) {
-      this.blockProtectedFolderContent();
-    }
+    this.sessionController.onLockedFolderPathsChanged();
   }
 
   private onAppLockActiveChanged(): void {
-    if (!this.appLockActive && this.protectedFolderResumePending && this.filesTabActive) {
-      this.resumeProtectedFolderAccess();
-    }
+    this.sessionController.onAppLockActiveChanged();
+  }
+
+  private handleAppBackground(): void {
+    this.sessionController.handleAppBackground();
   }
 
   private handleAppForeground(): void {
-    this.folderAccessGrants = [];
-    if (!this.folderLockEnabled || this.protectedFolderRoot(this.path).length === 0) {
-      return;
-    }
-    this.blockProtectedFolderContent();
-    this.clearSecurityResumeTimer();
-    this.securityResumeTimer = setTimeout((): void => {
-      this.securityResumeTimer = -1;
-      if (this.filesTabActive && !this.appLockActive) {
-        this.resumeProtectedFolderAccess();
-      }
-    }, 250);
+    this.sessionController.handleAppForeground();
   }
 
   private clearSecurityResumeTimer(): void {
@@ -340,23 +559,7 @@ export struct TaildriveBrowser {
   }
 
   private onBackRequestChanged(): void {
-    if (this.backRequest <= this.lastBackRequest) {
-      return;
-    }
-    this.lastBackRequest = this.backRequest;
-    if (this.folderDialogVisible) {
-      this.closeFolderDialog();
-    } else if (this.previewDownloadVisible) {
-      this.previewDownloadVisible = false;
-    } else if (this.sortSheetVisible) {
-      this.closeSortPanel();
-    } else if (this.selectionMode) {
-      this.exitSelectionMode();
-    } else if (this.searchVisible) {
-      this.setSearchVisible(false);
-    } else if (this.path !== '/') {
-      this.goUp();
-    }
+    this.sessionController.onBackRequestChanged(this.backRequest);
   }
 
   private onSortSheetVisibilityChanged(): void {
@@ -378,11 +581,51 @@ export struct TaildriveBrowser {
     }, { usage: 'touch' }).catch((): void => {});
   }
 
+  private vibrateDragStep(): void {
+    const now: number = Date.now();
+    if (now - this.lastDragVibrateAtMs < 28) {
+      return;
+    }
+    this.lastDragVibrateAtMs = now;
+    vibrator.startVibration({
+      type: 'preset',
+      effectId: vibrator.HapticFeedback.EFFECT_SHARP
+    }, { usage: 'touch' }).catch((): void => {
+      this.vibrateTouch(false);
+    });
+  }
+
   private clearStatusTimer(): void {
     if (this.statusTimer >= 0) {
       clearTimeout(this.statusTimer);
       this.statusTimer = -1;
     }
+  }
+
+  private scheduleUiTimer(task: () => void, delayMs: number): number {
+    if (typeof setTimeout !== 'function') {
+      return -1;
+    }
+    let fired: boolean = false;
+    let timer: number = -1;
+    timer = setTimeout((): void => {
+      fired = true;
+      this.uiTimers = this.uiTimers.filter((entry: number) => entry !== timer);
+      if (this.browserVisible) {
+        task();
+      }
+    }, delayMs);
+    if (!fired && timer >= 0) {
+      this.uiTimers.push(timer);
+    }
+    return timer;
+  }
+
+  private clearUiTimers(): void {
+    if (typeof clearTimeout === 'function') {
+      this.uiTimers.forEach((timer: number) => clearTimeout(timer));
+    }
+    this.uiTimers = [];
   }
 
   private showTransientStatus(status: string): void {
@@ -397,126 +640,16 @@ export struct TaildriveBrowser {
   }
 
   private stagingRoot(): string {
-    return `${this.context().cacheDir}/taildrive-staging`;
-  }
-
-  private requestTargetMachineOpen(): void {
-    if (!this.connected || this.busy || this.targetRequestId <= this.lastTargetRequestId) {
-      return;
-    }
-    if (this.loading || this.refreshInFlight || this.targetOpenInFlight) {
-      this.deferredTargetRequestId = Math.max(this.deferredTargetRequestId, this.targetRequestId);
-      return;
-    }
-    const requestId: number = this.targetRequestId;
-    this.lastTargetRequestId = requestId;
-    this.deferredTargetRequestId = 0;
-    this.openTargetMachine(requestId);
-  }
-
-  private async openTargetMachine(requestId: number): Promise<void> {
-    if (!this.connected || this.busy) {
-      return;
-    }
-    const startedAtMs: number = Date.now();
-    this.targetOpenInFlight = true;
-    this.loading = true;
-    this.reason = '';
-    this.status = '';
-    try {
-      const directPath: string = this.directTargetMachinePath();
-      if (directPath.length > 0) {
-        if (!await this.ensureFolderAccess(directPath)) {
-          return;
-        }
-        const direct: TaildriveListResult = await this.gateway.list(directPath);
-        if (direct.state === 'ready') {
-          this.applyListResult(direct, directPath);
-          this.clearRetry();
-          hilog.info(TAILDRIVE_LOG_DOMAIN, TAILDRIVE_LOG_TAG,
-            'target open completed. route=direct durationMs=%{public}s',
-            (Date.now() - startedAtMs).toString());
-          return;
-        }
-      }
-      const root: TaildriveListResult = await this.gateway.list('/');
-      if (root.state !== 'ready') {
-        this.reason = root.reason.length > 0 ? root.reason : 'list_failed';
-        this.setRetry('target');
-        return;
-      }
-      let targetPath: string = '';
-      const tailnets: TaildriveEntry[] = root.entries.filter((entry: TaildriveEntry) =>
-        entry.kind === 'directory');
-      tailnets.sort((left: TaildriveEntry, right: TaildriveEntry) =>
-        this.tailnetMatchPriority(right.name) - this.tailnetMatchPriority(left.name));
-      for (let index: number = 0; index < tailnets.length && targetPath.length === 0; index++) {
-        const tailnet: TaildriveEntry = tailnets[index];
-        const machines: TaildriveListResult = await this.gateway.list(tailnet.path);
-        if (machines.state !== 'ready') {
-          continue;
-        }
-        const target: TaildriveEntry | undefined = machines.entries.find((entry: TaildriveEntry) =>
-          entry.kind === 'directory' && this.machineNamesMatch(entry.name, this.targetMachineName));
-        if (target !== undefined) {
-          targetPath = target.path;
-        }
-      }
-      if (targetPath.length === 0) {
-        this.path = '/';
-        this.entries = root.entries;
-        this.refreshThumbnails(root.entries);
-        this.rebuildListDataSource();
-        this.status = 'target_not_found';
-        this.clearRetry();
-        return;
-      }
-      if (!await this.ensureFolderAccess(targetPath)) {
-        return;
-      }
-      this.path = targetPath;
-      this.updateBackState();
-      this.clearRetry();
-      const target: TaildriveListResult = await this.gateway.list(targetPath);
-      if (target.state !== 'ready') {
-        this.reason = target.reason.length > 0 ? target.reason : 'list_failed';
-        this.setRetry('target');
-        return;
-      }
-      this.applyListResult(target, targetPath);
-      hilog.info(TAILDRIVE_LOG_DOMAIN, TAILDRIVE_LOG_TAG,
-        'target open completed. route=fallback durationMs=%{public}s',
-        (Date.now() - startedAtMs).toString());
-    } catch (_error) {
-      this.reason = 'backend_unavailable';
-      this.setRetry('target');
-      return;
-    } finally {
-      this.loading = false;
-      this.targetOpenInFlight = false;
-      if (this.deferredTargetRequestId > requestId) {
-        this.requestTargetMachineOpen();
-      }
-    }
-  }
-
-  private directTargetMachinePath(): string {
-    const tailnetName: string = this.targetTailnetName.trim();
-    const normalizedMachine: string = this.normalizedMachineName(this.targetMachineName);
-    const machineName: string = normalizedMachine.split('.')[0];
-    if (!this.validName(tailnetName) || !this.validName(machineName)) {
-      return '';
-    }
-    return this.joinPath(this.joinPath('/', tailnetName), machineName);
-  }
-
-  private tailnetMatchPriority(name: string): number {
-    return name.trim().toLowerCase() === this.targetTailnetName.trim().toLowerCase() ? 1 : 0;
+    const context = this.context();
+    const controlURL: string = ControlServerConfig.load(context.filesDir).controlURL;
+    return `${AccountProfiles.cacheRoot(context.filesDir, context.cacheDir, controlURL,
+      AccountProfiles.current(context.filesDir, controlURL).activeId)}/taildrive-staging`;
   }
 
   private applyListResult(result: TaildriveListResult, fallbackPath: string): void {
     this.path = result.path.length > 0 ? result.path : fallbackPath;
     this.entries = result.entries;
+    this.lastListedPath = this.path;
     this.refreshThumbnails(result.entries);
     this.updateBackState();
     this.selectedPaths = this.selectedPaths.filter((path: string) =>
@@ -525,61 +658,12 @@ export struct TaildriveBrowser {
     this.reason = '';
   }
 
-  private machineNamesMatch(left: string, right: string): boolean {
-    const leftName: string = this.normalizedMachineName(left);
-    const rightName: string = this.normalizedMachineName(right);
-    return leftName === rightName || leftName.split('.')[0] === rightName.split('.')[0];
-  }
-
-  private normalizedMachineName(value: string): string {
-    let name: string = value.trim().toLowerCase();
-    while (name.endsWith('.')) {
-      name = name.substring(0, name.length - 1);
-    }
-    return name;
-  }
-
   private async refresh(minimumIndicatorMs: number = 0, silent: boolean = false): Promise<void> {
-    if (!this.connected || this.refreshInFlight || this.targetOpenInFlight) {
-      return;
-    }
-    if (!this.hasFolderAccess(this.path)) {
-      this.blockProtectedFolderContent();
-      return;
-    }
-    const startedAtMs: number = Date.now();
-    this.refreshInFlight = true;
-    if (!silent) {
-      this.loading = true;
-    }
-    this.reason = '';
-    try {
-      const result: TaildriveListResult = await this.gateway.list(this.path);
-      if (result.state === 'ready') {
-        this.applyListResult(result, this.path);
-        if (this.retryKind === 'refresh') {
-          this.clearRetry();
-        }
-      } else {
-        this.reason = result.reason.length > 0 ? result.reason : 'list_failed';
-        this.setRetry('refresh');
-      }
-    } catch (_error) {
-      this.reason = 'backend_unavailable';
-      this.setRetry('refresh');
-    } finally {
-      const remainingIndicatorMs: number = minimumIndicatorMs - (Date.now() - startedAtMs);
-      if (remainingIndicatorMs > 0) {
-        await new Promise<void>((resolve: () => void) => setTimeout(resolve, remainingIndicatorMs));
-      }
-      if (!silent) {
-        this.loading = false;
-      }
-      this.refreshInFlight = false;
-      if (this.targetRequestId > this.lastTargetRequestId && this.targetMachineName.length > 0) {
-        this.requestTargetMachineOpen();
-      }
-    }
+    await this.sessionController.refresh(minimumIndicatorMs, silent);
+  }
+
+  private async pullRefresh(): Promise<void> {
+    await this.sessionController.pullRefresh();
   }
 
   private async openEntry(entry: TaildriveEntry): Promise<void> {
@@ -587,6 +671,9 @@ export struct TaildriveBrowser {
       return;
     }
     if (this.selectionMode) {
+      if (this.dragSelecting || Date.now() < this.sessionController.dragSuppressClickUntilMs) {
+        return;
+      }
       this.toggleEntrySelection(entry);
       return;
     }
@@ -609,235 +696,65 @@ export struct TaildriveBrowser {
     await this.openFileForPreview(entry);
   }
 
-  private folderPathSegments(remotePath: string): number {
-    return remotePath.split('/').filter((segment: string) => segment.length > 0).length;
+  private canShowSetupHelp(): boolean {
+    return !this.busy && !this.previewDownloading && this.manualDownloadCount === 0 &&
+      !this.appLockActive && !this.folderAccessAuthenticationInFlight && !this.folderPolicyAuthenticationInFlight &&
+      !this.previewDownloadVisible && this.hasFolderAccess(this.path);
   }
 
-  private normalizeFolderPath(remotePath: string): string {
-    const normalized: string = remotePath.trim().replace(/\/+$/, '');
-    return normalized.length > 0 ? normalized : '/';
+  private showSetupHelp(section: string = 'taildrive'): void {
+    if (this.canShowSetupHelp()) this.onShowFeatureGuide(section);
   }
 
-  // /tailnet/device is the first lockable path. Tailnet names remain navigation-only.
-  private canLockFolder(entry: TaildriveEntry): boolean {
-    return entry.kind === 'directory' && this.folderPathSegments(entry.path) >= 2;
+  private setupHelpNotice(): string {
+    const session: TaildriveSessionController = this.sessionController;
+    return taildriveGuideNotice({ connected: this.connected,
+      loading: this.loading || session.refreshInFlight || session.targetOpenInFlight,
+      busy: !this.canShowSetupHelp(), locked: this.appLockActive, reason: this.reason,
+      listFailure: session.retryKind === 'refresh' || session.retryKind === 'target',
+      path: this.path, listedPath: this.lastListedPath,
+      entryCount: this.entries.length, search: this.searchQuery });
+  }
+
+  @Builder
+  private SetupHelpAction(title: ResourceStr, actionId: string, section: string = 'taildrive') {
+    Button(title, { buttonStyle: ButtonStyleMode.TEXTUAL, controlSize: ControlSize.NORMAL })
+      .fontSize(UiTokens.BODY_SIZE)
+      .constraintSize({ minHeight: UiTokens.ACTION_HEIGHT }).id(actionId)
+      .enabled(this.canShowSetupHelp())
+      .onClick(() => this.showSetupHelp(section))
   }
 
   private isFolderDirectlyLocked(remotePath: string): boolean {
-    const normalized: string = this.normalizeFolderPath(remotePath);
-    return this.lockedFolderPaths.some((path: string) =>
-      this.normalizeFolderPath(path) === normalized);
-  }
-
-  private pathIsWithin(remotePath: string, folderPath: string): boolean {
-    const normalizedPath: string = this.normalizeFolderPath(remotePath);
-    const normalizedFolder: string = this.normalizeFolderPath(folderPath);
-    return normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`);
-  }
-
-  private protectedFolderRoot(remotePath: string): string {
-    if (!this.folderLockEnabled) {
-      return '';
-    }
-    const matching: string[] = this.lockedFolderPaths
-      .map((path: string) => this.normalizeFolderPath(path))
-      .filter((path: string) => this.pathIsWithin(remotePath, path));
-    matching.sort((left: string, right: string) => right.length - left.length);
-    return matching.length > 0 ? matching[0] : '';
-  }
-
-  private protectedFolderRootsTouching(remotePath: string): string[] {
-    if (!this.folderLockEnabled) {
-      return [];
-    }
-    const normalized: string = this.normalizeFolderPath(remotePath);
-    return this.lockedFolderPaths
-      .map((path: string) => this.normalizeFolderPath(path))
-      .filter((path: string, index: number, paths: string[]) =>
-        paths.indexOf(path) === index &&
-        (this.pathIsWithin(normalized, path) || this.pathIsWithin(path, normalized)));
+    return this.sessionController.isFolderDirectlyLocked(remotePath);
   }
 
   private hasFolderAccess(remotePath: string): boolean {
-    const protectedRoot: string = this.protectedFolderRoot(remotePath);
-    return protectedRoot.length === 0 || this.folderAccessGrants.includes(protectedRoot);
+    return this.sessionController.hasFolderAccess(remotePath);
   }
 
-  private blockProtectedFolderContent(): void {
-    this.protectedFolderResumePending = true;
-    this.entries = [];
-    this.thumbnails = [];
-    this.thumbnailWorkPaths = [];
-    this.exitSelectionMode();
-    this.rebuildListDataSource();
+  private isSheetBlockedBySecurity(targetPath: string = this.path): boolean {
+    return this.sessionController.isSheetBlockedBySecurity(targetPath);
   }
 
-  private async resumeProtectedFolderAccess(): Promise<void> {
-    if (!this.connected || !this.filesTabActive || this.appLockActive ||
-      !this.protectedFolderResumePending || this.protectedFolderResumeInFlight) {
-      return;
-    }
-    this.protectedFolderResumeInFlight = true;
-    try {
-      const protectedRoot: string = this.protectedFolderRoot(this.path);
-      if (protectedRoot.length === 0) {
-        this.protectedFolderResumePending = false;
-        await this.refresh();
-        return;
-      }
-      const passed: boolean = await this.ensureFolderAccess(this.path);
-      if (passed) {
-        this.protectedFolderResumePending = false;
-        await this.refresh();
-        return;
-      }
-      this.protectedFolderResumePending = false;
-      this.path = this.parentPath(protectedRoot);
-      this.updateBackState();
-      await this.refresh();
-    } finally {
-      this.protectedFolderResumeInFlight = false;
-    }
+  private isEditorSheetBlockedBySecurity(): boolean {
+    return this.sessionController.isEditorSheetBlockedBySecurity();
+  }
+
+  private isMoveSheetBlockedBySecurity(): boolean {
+    return this.sessionController.isMoveSheetBlockedBySecurity();
   }
 
   private async ensureFolderAccess(remotePath: string): Promise<boolean> {
-    const protectedRoot: string = this.protectedFolderRoot(remotePath);
-    if (protectedRoot.length === 0 || this.folderAccessGrants.includes(protectedRoot)) {
-      return true;
-    }
-    if (this.folderAccessAuthenticationInFlight) {
-      return false;
-    }
-    this.folderAccessAuthenticationInFlight = true;
-    this.recordSecurityDiagnostic('folder_access_auth_started', 'protected_folder');
-    try {
-      const title: string = this.context().resourceManager.getStringSync(
-        $r('app.string.security_folder_authentication_title').id);
-      const passed: boolean = await AppSecurityAuthenticator.authenticate(title);
-      if (passed) {
-        this.folderAccessGrants = [...this.folderAccessGrants, protectedRoot];
-        this.recordSecurityDiagnostic('folder_access_auth_completed', 'passed');
-      } else {
-        this.showTransientStatus('folder_authentication_failed');
-        this.recordSecurityDiagnostic('folder_access_auth_completed', 'failed');
-      }
-      return passed;
-    } finally {
-      this.folderAccessAuthenticationInFlight = false;
-    }
-  }
-
-  private async ensureProtectedMutationAccess(remotePath: string): Promise<boolean> {
-    const protectedRoots: string[] = this.protectedFolderRootsTouching(remotePath);
-    for (let index: number = 0; index < protectedRoots.length; index++) {
-      if (!await this.ensureFolderAccess(protectedRoots[index])) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private async ensureMutationRequestAccess(request: TaildriveMutationRequest): Promise<boolean> {
-    if (!await this.ensureProtectedMutationAccess(request.path)) {
-      return false;
-    }
-    if (request.newPath === undefined) {
-      return true;
-    }
-    return await this.ensureFolderAccess(request.newPath);
-  }
-
-  private normalizeLockedFolderList(paths: string[]): string[] {
-    const normalized: string[] = [];
-    paths.map((path: string) => this.normalizeFolderPath(path))
-      .filter((path: string) => path !== '/')
-      .sort((left: string, right: string) => left.length - right.length)
-      .forEach((path: string) => {
-        if (!normalized.some((parent: string) => this.pathIsWithin(path, parent))) {
-          normalized.push(path);
-        }
-      });
-    return normalized;
-  }
-
-  private async reconcileLockedFoldersAfterMutation(request: TaildriveMutationRequest): Promise<boolean> {
-    const sourcePath: string = this.normalizeFolderPath(request.path);
-    let next: string[] = [...this.lockedFolderPaths];
-    if (request.operation === 'delete') {
-      next = next.filter((path: string) => !this.pathIsWithin(path, sourcePath));
-    } else if ((request.operation === 'rename' || request.operation === 'move') &&
-      request.newPath !== undefined) {
-      const targetPath: string = this.normalizeFolderPath(request.newPath);
-      next = next.map((path: string) => {
-        const normalizedPath: string = this.normalizeFolderPath(path);
-        if (!this.pathIsWithin(normalizedPath, sourcePath)) {
-          return normalizedPath;
-        }
-        return `${targetPath}${normalizedPath.substring(sourcePath.length)}`;
-      });
-    } else {
-      return true;
-    }
-    next = this.normalizeLockedFolderList(next);
-    const current: string[] = this.normalizeLockedFolderList(this.lockedFolderPaths);
-    if (JSON.stringify(next) === JSON.stringify(current)) {
-      return true;
-    }
-    try {
-      await AppSecurityPreferences.saveLockedFolderPaths(this.context(), next);
-      AppStorage.setOrCreate('taildriveLockedFolderPaths', next);
-      this.recordSecurityDiagnostic('folder_policy_reconciled', request.operation, next.length);
-      return true;
-    } catch (_error) {
-      // Keep the current session aligned with the already-completed remote mutation.
-      AppStorage.setOrCreate('taildriveLockedFolderPaths', next);
-      this.recordSecurityDiagnostic('folder_policy_reconcile_failed', request.operation, next.length);
-      return false;
-    }
+    return await this.sessionController.ensureFolderAccess(remotePath);
   }
 
   private toggleFolderLock(entry: TaildriveEntry): void {
-    if (!this.canChangeFolderLock(entry) || this.folderPolicyAuthenticationInFlight) {
-      return;
-    }
-    this.updateFolderLock(entry);
+    this.sessionController.toggleFolderLock(entry);
   }
 
   private canChangeFolderLock(entry: TaildriveEntry): boolean {
-    if (!this.canLockFolder(entry)) {
-      return false;
-    }
-    const protectedRoot: string = this.protectedFolderRoot(entry.path);
-    return protectedRoot.length === 0 || this.isFolderDirectlyLocked(entry.path);
-  }
-
-  private async updateFolderLock(entry: TaildriveEntry): Promise<void> {
-    this.folderPolicyAuthenticationInFlight = true;
-    const normalized: string = this.normalizeFolderPath(entry.path);
-    const operation: string = this.isFolderDirectlyLocked(normalized) ? 'unlock' : 'lock';
-    this.recordSecurityDiagnostic('folder_policy_auth_started', operation);
-    try {
-      const title: string = this.context().resourceManager.getStringSync(
-        $r('app.string.security_settings_authentication_title').id);
-      const passed: boolean = await AppSecurityAuthenticator.authenticate(title);
-      if (!passed) {
-        this.showTransientStatus('folder_authentication_failed');
-        this.recordSecurityDiagnostic('folder_policy_auth_completed', 'failed');
-        return;
-      }
-      const next: string[] = this.isFolderDirectlyLocked(normalized) ?
-        this.lockedFolderPaths.filter((path: string) => this.normalizeFolderPath(path) !== normalized) :
-        [...this.lockedFolderPaths, normalized];
-      await AppSecurityPreferences.saveLockedFolderPaths(this.context(), next);
-      AppStorage.setOrCreate('taildriveLockedFolderPaths', next);
-      this.folderAccessGrants = [];
-      this.recordSecurityDiagnostic('folder_policy_changed', operation, next.length);
-    } catch (_error) {
-      this.recordSecurityDiagnostic('folder_policy_change_failed', operation);
-      this.showTransientStatus('security_settings_save_failed');
-    } finally {
-      this.folderPolicyAuthenticationInFlight = false;
-    }
+    return this.sessionController.canChangeFolderLock(entry);
   }
 
   private recordSecurityDiagnostic(event: string, phase: string, code: number = 0): void {
@@ -907,6 +824,8 @@ export struct TaildriveBrowser {
     }
     const generation: number = ++this.previewGeneration;
     const requestId: number = this.newTransferRequestId();
+    this.activePreviewPath = entry.path;
+    this.cachedEntries = this.cachedEntries.filter((candidate: TaildriveEntry) => candidate.path !== entry.path);
     let root: string = '';
     let localPath: string = '';
     try {
@@ -916,6 +835,7 @@ export struct TaildriveBrowser {
       hilog.info(TAILDRIVE_LOG_DOMAIN, TAILDRIVE_LOG_TAG, 'download destination preparation completed');
     } catch (_error) {
       hilog.error(TAILDRIVE_LOG_DOMAIN, TAILDRIVE_LOG_TAG, 'download destination preparation failed');
+      this.activePreviewPath = '';
       this.status = 'preview_download_failed';
       this.retryPreviewEntry = entry;
       this.setRetry('preview');
@@ -962,6 +882,7 @@ export struct TaildriveBrowser {
       if (generation === this.previewGeneration) {
         this.previewRequestId = 0;
         this.previewDownloading = false;
+        this.activePreviewPath = '';
         this.stopTransferPolling();
         clearTaildriveProgress().catch(() => {});
       }
@@ -976,13 +897,8 @@ export struct TaildriveBrowser {
     }
 
     this.showTransientStatus('preview_download_completed');
-    this.previewGateway.createThumbnail(this.context(), entry, localPath)
-      .then((thumbnailPath: string) => {
-        if (thumbnailPath.length > 0) {
-          this.setThumbnail(entry, thumbnailPath);
-        }
-      })
-      .catch(() => {});
+    this.markCachedEntry(entry);
+    this.refreshThumbnails(this.entries);
     publishTaildriveCompletion(this.context(), entry.name, true).catch(() => {});
 
     if (openAfterDownload) {
@@ -1008,11 +924,12 @@ export struct TaildriveBrowser {
     this.previewGeneration++;
     this.previewRequestId = 0;
     this.previewDownloading = false;
+    this.activePreviewPath = '';
     this.stopTransferPolling();
-    if (this.status === 'preview_downloading') {
+    if (this.status === 'preview_downloading' || this.status === 'share_downloading') {
       this.status = '';
     }
-    if (this.retryKind === 'preview') {
+    if (this.sessionController.retryKind === 'preview') {
       this.clearRetry();
     }
     clearTaildriveProgress().catch(() => {});
@@ -1052,142 +969,65 @@ export struct TaildriveBrowser {
   }
 
   private goUp(): void {
-    if (this.path === '/' || this.busy) {
-      return;
-    }
-    this.path = this.parentPath(this.path);
-    this.updateBackState();
-    this.searchQuery = '';
-    this.searchVisible = false;
-    this.exitSelectionMode();
-    this.publishUiBackState();
-    this.refresh();
+    this.sessionController.goUp();
   }
 
-  private async selectUpload(): Promise<void> {
-    if (!this.connected || this.busy || !this.canModifyCurrentPath()) {
-      return;
-    }
-    if (!await this.ensureFolderAccess(this.path)) {
-      return;
-    }
+  private async pickUploadDocumentUris(): Promise<string[]> {
     const documentPicker = new picker.DocumentViewPicker(this.context());
     const options = new picker.DocumentSelectOptions();
     options.maxSelectNumber = 1;
-    let uris: string[] = [];
-    try {
-      uris = await documentPicker.select(options);
-    } catch (_error) {
-      this.status = 'file_selection_failed';
-    }
-    if (uris.length === 0) {
-      return;
-    }
-    this.discardPendingUpload();
-    const requestId: number = Date.now();
-    try {
-      fileIo.mkdirSync(this.stagingRoot(), true);
-      const staged: PreparedTaildriveFile = await this.gateway.stageUpload(uris[0], this.stagingRoot(), requestId);
-      this.pendingUpload = staged;
-      this.pendingUploadPath = this.joinPath(this.path, this.safeRemoteName(staged.name));
-      await this.executeUpload(false);
-    } catch (_error) {
-      this.status = 'upload_failed';
-      this.clearRetry();
-    }
+    return await documentPicker.select(options);
   }
 
-  private async executeUpload(overwrite: boolean): Promise<void> {
-    if (this.pendingUpload === undefined || this.pendingUploadPath.length === 0) {
-      this.status = 'file_unavailable';
-      this.clearRetry();
-      return;
-    }
-    if (!await this.ensureFolderAccess(this.pendingUploadPath)) {
-      return;
-    }
-    const staged: PreparedTaildriveFile = this.pendingUpload;
-    this.busy = true;
-    this.status = 'uploading';
-    this.clearRetry();
-    this.startTransferPolling();
-    try {
-      const result: TaildriveTransferSnapshot = await this.gateway.upload({
-        requestId: Date.now(),
-        remotePath: this.pendingUploadPath,
-        localRoot: this.stagingRoot(),
-        localPath: staged.path,
-        sourceModifiedAtMs: staged.modifiedAtMs,
-        overwrite: overwrite
-      });
-      this.transfer = result;
-      if (result.state === 'completed') {
-        this.showTransientStatus('upload_completed');
-        await publishTaildriveCompletion(this.context(), staged.name, true);
-        this.discardPendingUpload();
-        await this.refresh();
-      } else if ((result.reason === 'already_exists' || result.reason === 'file_exists') && !overwrite) {
-        this.status = result.reason;
-        this.promptUploadOverwrite(staged.name);
-      } else {
-        this.status = result.reason.length > 0 ? result.reason : 'upload_failed';
-        this.setRetry('upload');
-        await publishTaildriveCompletion(this.context(), staged.name, false);
-      }
-    } catch (_error) {
-      this.status = 'upload_failed';
-      this.setRetry('upload');
-      await publishTaildriveCompletion(this.context(), staged.name, false);
-    } finally {
-      this.busy = false;
-      this.stopTransferPolling();
-      await clearTaildriveProgress();
-    }
-  }
-
-  private promptUploadOverwrite(fileName: string): void {
+  private showConfirmationPrompt(prompt: TaildriveConfirmationPrompt): void {
+    const isDelete: boolean = prompt.kind === 'delete_single' || prompt.kind === 'delete_selected';
+    const title: Resource = isDelete ?
+      $r('app.string.taildrive_delete_title') : $r('app.string.taildrive_overwrite_title');
+    const message: ResourceStr = prompt.kind === 'delete_selected' ?
+      $r('app.string.taildrive_delete_selected_message', prompt.selectedCount) : prompt.itemName;
+    const confirmLabel: Resource = isDelete ?
+      $r('app.string.taildrive_delete_action') : $r('app.string.taildrive_replace_action');
     this.getUIContext().showAlertDialog({
-      title: $r('app.string.taildrive_overwrite_title'),
-      message: fileName,
-      autoCancel: false,
+      title: title,
+      message: message,
+      autoCancel: prompt.autoCancel,
+      cancel: () => { prompt.onDismiss(); },
+      onDidDisappear: () => { prompt.onDismiss(); },
       primaryButton: {
         value: $r('app.string.cancel_action'),
-        action: () => this.discardPendingUpload()
+        action: () => { prompt.onCancel(); }
       },
       secondaryButton: {
-        value: $r('app.string.taildrive_replace_action'),
+        value: confirmLabel,
         fontColor: $r('app.color.status_error'),
-        action: () => this.executeUpload(true)
+        action: () => { prompt.onConfirm(); }
       }
     });
   }
 
-  private discardPendingUpload(): void {
-    if (this.pendingUpload !== undefined) {
-      this.gateway.cleanupStaged(this.pendingUpload);
-    }
-    this.pendingUpload = undefined;
-    this.pendingUploadPath = '';
-    if (this.retryKind === 'upload') {
-      this.clearRetry();
-    }
+  private async selectUpload(): Promise<void> {
+    await this.sessionController.selectUpload();
   }
 
   private async download(entry: TaildriveEntry): Promise<void> {
-    if (!this.connected || entry.kind !== 'file') {
+    if (!this.connected || entry.kind !== 'file' || this.manualDownloadInFlight || this.manualDownloadCount > 0) {
       return;
     }
-    if (!await this.ensureFolderAccess(entry.path)) {
-      return;
-    }
-    const requestId: number = this.newTransferRequestId();
-    const root: string = this.stagingRoot();
-    const requestDir: string = `${root}/${requestId}`;
-    const localPath: string = `${requestDir}/download.taildrive`;
-    this.manualDownloadCount++;
-    this.status = 'downloading';
-    this.clearRetry();
+    this.manualDownloadInFlight = true;
+    let requestDir: string = '';
+    let countIncremented: boolean = false;
     try {
+      if (!await this.ensureFolderAccess(entry.path)) {
+        return;
+      }
+      const requestId: number = this.newTransferRequestId();
+      const root: string = this.stagingRoot();
+      requestDir = `${root}/${requestId}`;
+      const localPath: string = `${requestDir}/download.taildrive`;
+      this.manualDownloadCount++;
+      countIncremented = true;
+      this.status = 'downloading';
+      this.clearRetry();
       fileIo.mkdirSync(root, true);
       fileIo.mkdirSync(requestDir, true);
       const result: TaildriveTransferSnapshot = await this.gateway.download({
@@ -1213,6 +1053,7 @@ export struct TaildriveBrowser {
       }
       const exported: boolean = await this.gateway.exportFile(localPath, destinations[0], result.bytes);
       if (exported) {
+        this.markDownloadedEntry(entry);
         this.showTransientStatus('download_completed');
       } else {
         this.status = 'export_failed';
@@ -1225,25 +1066,27 @@ export struct TaildriveBrowser {
         await publishTaildriveCompletion(this.context(), entry.name, false);
       }
     } catch (_error) {
-      this.status = 'download_failed';
-      this.retryDownloadEntry = entry;
-      this.setRetry('download');
-      await publishTaildriveCompletion(this.context(), entry.name, false);
+      if (countIncremented) {
+        this.status = 'download_failed';
+        this.retryDownloadEntry = entry;
+        this.setRetry('download');
+        await publishTaildriveCompletion(this.context(), entry.name, false);
+      } else {
+        this.status = 'folder_authentication_failed';
+      }
     } finally {
-      this.cleanupDirectory(requestDir);
-      this.manualDownloadCount = Math.max(0, this.manualDownloadCount - 1);
+      if (requestDir.length > 0) {
+        this.cleanupDirectory(requestDir);
+      }
+      if (countIncremented) {
+        this.manualDownloadCount = Math.max(0, this.manualDownloadCount - 1);
+      }
+      this.manualDownloadInFlight = false;
     }
   }
 
   private createFolder(): void {
-    if (!this.connected || this.busy || !this.canModifyCurrentPath()) {
-      return;
-    }
-    this.editorOperation = 'mkdir';
-    this.editorPath = '';
-    this.editorName = this.suggestNewFolderName();
-    this.folderDialogVisible = true;
-    this.publishUiBackState();
+    this.sessionController.createFolder();
   }
 
   private localizedNewFolderName(): string {
@@ -1254,337 +1097,113 @@ export struct TaildriveBrowser {
     }
   }
 
-  private suggestNewFolderName(): string {
-    const baseName: string = this.localizedNewFolderName();
-    const existingNames: string[] = this.entries.map((entry: TaildriveEntry) => entry.name.toLowerCase());
-    if (!existingNames.includes(baseName.toLowerCase())) {
-      return baseName;
-    }
-    let suffix: number = 2;
-    while (existingNames.includes(`${baseName} (${suffix})`.toLowerCase())) {
-      suffix++;
-    }
-    return `${baseName} (${suffix})`;
-  }
-
   private closeFolderDialog(): void {
-    this.folderDialogVisible = false;
-    this.editorName = '';
-    this.publishUiBackState();
+    this.sessionController.closeFolderDialog();
   }
 
   private async submitFolderDialog(): Promise<void> {
-    const name: string = this.editorName.trim();
-    if (!this.validName(name)) {
-      this.status = 'invalid_name';
-      return;
-    }
-    if (!await this.ensureFolderAccess(this.path)) {
-      return;
-    }
-    this.folderDialogVisible = false;
-    this.editorName = '';
-    this.publishUiBackState();
-    await this.executeMutation({ operation: 'mkdir', path: this.joinPath(this.path, name) },
-      'creating_folder', 'mutation_completed');
+    await this.sessionController.submitFolderDialog();
+  }
+
+  private folderDialogContextCurrent(): boolean {
+    return this.sessionController.folderDialogContextCurrent();
   }
 
   private renameEntry(entry: TaildriveEntry): void {
-    if (!this.connected || this.busy || !this.canModifyCurrentPath()) {
-      return;
-    }
-    this.editorOperation = 'rename';
-    this.editorPath = entry.path;
-    this.editorName = entry.name;
-    this.editorVisible = true;
+    this.sessionController.renameEntry(entry);
   }
 
   private confirmDelete(entry: TaildriveEntry): void {
-    if (!this.connected || this.busy || !this.canModifyCurrentPath()) {
-      return;
-    }
-    this.getUIContext().showAlertDialog({
-      title: $r('app.string.taildrive_delete_title'),
-      message: entry.name,
-      autoCancel: true,
-      primaryButton: { value: $r('app.string.cancel_action'), action: () => {} },
-      secondaryButton: {
-        value: $r('app.string.taildrive_delete_action'),
-        fontColor: $r('app.color.status_error'),
-        action: () => this.deleteEntry(entry)
-      }
-    });
-  }
-
-  private async deleteEntry(entry: TaildriveEntry): Promise<void> {
-    await this.executeMutation({ operation: 'delete', path: entry.path }, 'deleting', 'delete_completed');
+    this.sessionController.confirmDelete(entry);
   }
 
   private confirmDeleteSelected(): void {
-    const selected: TaildriveEntry[] = this.selectedEntries();
-    if (selected.length === 0 || !this.connected || this.busy || !this.canModifyCurrentPath()) {
-      return;
-    }
-    this.getUIContext().showAlertDialog({
-      title: $r('app.string.taildrive_delete_title'),
-      message: $r('app.string.taildrive_delete_selected_message', selected.length),
-      autoCancel: true,
-      primaryButton: { value: $r('app.string.cancel_action'), action: () => {} },
-      secondaryButton: {
-        value: $r('app.string.taildrive_delete_action'),
-        fontColor: $r('app.color.status_error'),
-        action: () => this.deleteSelectedEntries(selected)
-      }
-    });
-  }
-
-  private async deleteSelectedEntries(selected: TaildriveEntry[]): Promise<void> {
-    for (let index: number = 0; index < selected.length; index++) {
-      if (!await this.ensureProtectedMutationAccess(selected[index].path)) {
-        return;
-      }
-    }
-    this.busy = true;
-    this.status = 'deleting';
-    this.clearRetry();
-    try {
-      let lockPolicySaved: boolean = true;
-      for (let index: number = 0; index < selected.length; index++) {
-        const result: TaildriveMutationResult = await this.gateway.mutate({
-          operation: 'delete',
-          path: selected[index].path
-        });
-        if (result.state !== 'completed') {
-          this.status = result.reason.length > 0 ? result.reason : 'delete_failed';
-          return;
-        }
-        lockPolicySaved = await this.reconcileLockedFoldersAfterMutation({
-          operation: 'delete', path: selected[index].path
-        }) && lockPolicySaved;
-      }
-      this.showTransientStatus(lockPolicySaved ? 'delete_completed' : 'security_settings_save_failed');
-      this.exitSelectionMode();
-      await this.refresh();
-    } catch (_error) {
-      this.status = 'delete_failed';
-    } finally {
-      this.busy = false;
-    }
+    this.sessionController.confirmDeleteSelected();
   }
 
   private async submitEditor(): Promise<void> {
-    const name: string = this.editorName.trim();
-    if (!this.validName(name)) {
-      this.status = 'invalid_name';
-      return;
-    }
-    const protectedPath: string = this.editorOperation === 'mkdir' ? this.path : this.editorPath;
-    if (!await this.ensureProtectedMutationAccess(protectedPath)) {
-      return;
-    }
-    const targetPath: string = this.editorOperation === 'mkdir' ?
-      this.joinPath(this.path, name) : this.joinPath(this.parentPath(this.editorPath), name);
-    const request: TaildriveMutationRequest = this.editorOperation === 'mkdir' ?
-      { operation: 'mkdir', path: targetPath } :
-      { operation: 'rename', path: this.editorPath, newPath: targetPath };
-    this.editorVisible = false;
-    await this.executeMutation(request,
-      this.editorOperation === 'mkdir' ? 'creating_folder' : 'renaming', 'mutation_completed');
+    await this.sessionController.submitEditor();
   }
 
-  private async executeMutation(request: TaildriveMutationRequest, workingStatus: string,
-    completedStatus: string): Promise<void> {
-    if (!await this.ensureMutationRequestAccess(request)) {
-      return;
-    }
-    this.busy = true;
-    this.status = workingStatus;
-    this.clearRetry();
-    try {
-      const result: TaildriveMutationResult = await this.gateway.mutate(request);
-      if (result.state === 'completed') {
-        const lockPolicySaved: boolean = await this.reconcileLockedFoldersAfterMutation(request);
-        this.showTransientStatus(lockPolicySaved ? completedStatus : 'security_settings_save_failed');
-        this.retryMutation = undefined;
-        await this.refresh();
-      } else if ((result.reason === 'already_exists' || result.reason === 'file_exists') &&
-        request.newPath !== undefined && request.overwrite !== true) {
-        this.status = result.reason;
-        this.promptMutationOverwrite(request, workingStatus, completedStatus);
-      } else {
-        this.status = result.reason.length > 0 ? result.reason : 'mutation_failed';
-        this.retryMutation = request;
-        this.retryMutationWorkingStatus = workingStatus;
-        this.retryMutationCompletedStatus = completedStatus;
-        this.setRetry('mutation');
-      }
-    } catch (_error) {
-      this.status = request.operation === 'delete' ? 'delete_failed' : 'mutation_failed';
-      this.retryMutation = request;
-      this.retryMutationWorkingStatus = workingStatus;
-      this.retryMutationCompletedStatus = completedStatus;
-      this.setRetry('mutation');
-    } finally {
-      this.busy = false;
-    }
+  private editorContextCurrent(): boolean {
+    return this.sessionController.editorContextCurrent();
   }
 
-  private promptMutationOverwrite(request: TaildriveMutationRequest, workingStatus: string,
-    completedStatus: string): void {
-    this.getUIContext().showAlertDialog({
-      title: $r('app.string.taildrive_overwrite_title'),
-      message: request.newPath === undefined ? '' : this.pathName(request.newPath),
-      autoCancel: false,
-      primaryButton: { value: $r('app.string.cancel_action'), action: () => {} },
-      secondaryButton: {
-        value: $r('app.string.taildrive_replace_action'),
-        fontColor: $r('app.color.status_error'),
-        action: () => this.executeMutation({
-          operation: request.operation,
-          path: request.path,
-          newPath: request.newPath,
-          overwrite: true
-        }, workingStatus, completedStatus)
-      }
-    });
+  private snapshotFileEntry(entry: TaildriveEntry): TaildriveEntry {
+    return snapshotTaildriveEntry(entry);
   }
 
   private async showDetails(entry: TaildriveEntry): Promise<void> {
-    if (!await this.ensureFolderAccess(entry.path)) {
-      return;
-    }
-    this.detailEntry = entry;
-    this.detailsVisible = true;
-    this.detailsLoading = true;
-    this.detailsReason = '';
-    try {
-      const result: TaildriveStatResult = await this.gateway.stat(entry.path);
-      if (result.state === 'ready') {
-        this.detailEntry = result.entry;
-      } else {
-        this.detailsReason = result.reason;
-      }
-    } catch (_error) {
-      this.detailsReason = 'backend_unavailable';
-    } finally {
-      this.detailsLoading = false;
-    }
+    await this.sessionController.showDetails(entry);
+  }
+
+  private detailsContextCurrent(): boolean {
+    return this.sessionController.detailsContextCurrent();
+  }
+
+  private closeDetails(): void {
+    this.sessionController.closeDetails();
+  }
+
+  private takeDetailEntry(): TaildriveEntry | undefined {
+    return this.sessionController.takeDetailEntry();
   }
 
   private async openMovePicker(entry: TaildriveEntry): Promise<void> {
-    if (!this.connected || this.busy || !this.canModifyCurrentPath()) {
-      return;
-    }
-    if (!await this.ensureProtectedMutationAccess(entry.path)) {
-      return;
-    }
-    this.movingEntry = entry;
-    this.moveRoot = this.shareRoot(entry.path);
-    this.movePath = this.moveRoot;
-    this.moveVisible = true;
-    await this.loadMoveDirectory();
+    await this.sessionController.openMovePicker(entry);
+  }
+
+  private async openDestinationPickerForEntries(entries: TaildriveEntry[], operation: string): Promise<void> {
+    await this.sessionController.openDestinationPickerForEntries(entries, operation);
+  }
+
+  private async openCopySelectedPicker(): Promise<void> {
+    await this.sessionController.openCopySelectedPicker();
+  }
+
+  private async openMoveSelectedPicker(): Promise<void> {
+    await this.sessionController.openMoveSelectedPicker();
   }
 
   private async loadMoveDirectory(): Promise<void> {
-    this.moveLoading = true;
-    try {
-      if (!await this.ensureFolderAccess(this.movePath)) {
-        this.moveEntries = [];
-        return;
-      }
-      const result: TaildriveListResult = await this.gateway.list(this.movePath);
-      this.moveEntries = result.state === 'ready' ? result.entries : [];
-      if (result.state !== 'ready') {
-        this.status = result.reason;
-      }
-    } catch (_error) {
-      this.moveEntries = [];
-      this.status = 'backend_unavailable';
-    } finally {
-      this.moveLoading = false;
-    }
+    await this.sessionController.loadMoveDirectory();
+  }
+
+  private moveContextCurrent(): boolean {
+    return this.sessionController.moveContextCurrent();
+  }
+
+  private closeMovePicker(): void {
+    this.sessionController.closeMovePicker();
   }
 
   private moveGoUp(): void {
-    if (this.movePath === this.moveRoot || this.moveLoading) {
-      return;
-    }
-    const parent: string = this.parentPath(this.movePath);
-    this.movePath = parent.length < this.moveRoot.length ? this.moveRoot : parent;
-    this.loadMoveDirectory();
+    this.sessionController.moveGoUp();
   }
 
   private openMoveDirectory(entry: TaildriveEntry): void {
-    if (entry.kind !== 'directory' || !this.validMoveDestination(entry.path)) {
-      return;
-    }
-    this.movePath = entry.path;
-    this.loadMoveDirectory();
-  }
-
-  private validMoveDestination(path: string): boolean {
-    if (this.movingEntry === undefined) {
-      return false;
-    }
-    return path !== this.movingEntry.path && !path.startsWith(`${this.movingEntry.path}/`);
+    this.sessionController.openMoveDirectory(entry);
   }
 
   private moveDestinationEntries(): TaildriveEntry[] {
-    return this.moveEntries.filter((entry: TaildriveEntry) =>
-      entry.kind === 'directory' && this.validMoveDestination(entry.path));
+    return this.sessionController.moveDestinationEntries();
   }
 
   private async confirmMove(): Promise<void> {
-    if (this.movingEntry === undefined) {
-      return;
-    }
-    if (this.parentPath(this.movingEntry.path) === this.movePath) {
-      this.status = 'same_location';
-      this.moveVisible = false;
-      return;
-    }
-    if (!await this.ensureProtectedMutationAccess(this.movingEntry.path) ||
-      !await this.ensureFolderAccess(this.movePath)) {
-      return;
-    }
-    const request: TaildriveMutationRequest = {
-      operation: 'move',
-      path: this.movingEntry.path,
-      newPath: this.joinPath(this.movePath, this.movingEntry.name)
-    };
-    this.moveVisible = false;
-    await this.executeMutation(request, 'moving', 'move_completed');
+    await this.sessionController.confirmMove();
   }
 
   private async retryLastOperation(): Promise<void> {
-    if (this.busy || !this.connected) {
-      return;
-    }
-    if (this.retryKind === 'refresh') {
-      await this.refresh();
-    } else if (this.retryKind === 'target') {
-      await this.openTargetMachine(this.targetRequestId);
-    } else if (this.retryKind === 'upload') {
-      await this.executeUpload(false);
-    } else if (this.retryKind === 'download' && this.retryDownloadEntry !== undefined) {
-      await this.download(this.retryDownloadEntry);
-    } else if (this.retryKind === 'preview' && this.retryPreviewEntry !== undefined) {
-      await this.downloadForPreview(this.retryPreviewEntry);
-    } else if (this.retryKind === 'mutation' && this.retryMutation !== undefined) {
-      const request: TaildriveMutationRequest = this.retryMutation;
-      await this.executeMutation(request, this.retryMutationWorkingStatus, this.retryMutationCompletedStatus);
-    }
+    await this.sessionController.retryLastOperation();
   }
 
   private setRetry(kind: string): void {
-    this.retryKind = kind;
-    this.retryAvailable = true;
+    this.sessionController.setRetry(kind, this.retryDownloadEntry, this.retryPreviewEntry);
   }
 
   private clearRetry(): void {
-    this.retryKind = '';
-    this.retryAvailable = false;
     this.retryPreviewEntry = undefined;
+    this.sessionController.clearRetry();
   }
 
   private startTransferPolling(): void {
@@ -1632,23 +1251,35 @@ export struct TaildriveBrowser {
   }
 
   private refreshThumbnails(entries: TaildriveEntry[]): void {
-    const next: TaildriveThumbnailModel[] = [];
-    entries.forEach((entry: TaildriveEntry) => {
-      if (entry.kind !== 'file') {
-        return;
-      }
-      const cached: TaildriveCachedPreview | undefined =
-        this.previewGateway.cachedPreview(this.context(), entry);
-      if (cached === undefined) {
-        return;
-      }
-      if (cached.thumbnailPath.length > 0) {
-        next.push({ remotePath: entry.path, uri: cached.thumbnailPath });
-      } else {
-        this.hydrateThumbnail(entry, cached.path);
-      }
+    this.thumbnails = [];
+    this.cachedEntries = [];
+    const requestPath: string = this.path;
+    const context: common.UIAbilityContext = this.context();
+    this.thumbnailPool.replace(entries, async (entry: TaildriveEntry,
+      isCurrent: () => boolean): Promise<void> => {
+      const canApply: () => boolean = () => isCurrent() && this.appInForeground && this.browserVisible && this.connected &&
+        !this.appLockActive && (!this.standalone || this.filesTabActive) && this.path === requestPath &&
+        this.hasFolderAccess(requestPath) && entry.path !== this.activePreviewPath;
+      if (entry.kind !== 'file' || !canApply()) return;
+      const cached: TaildriveCachedPreview | undefined = await this.previewGateway.cachedPreviewAsync(context, entry);
+      if (cached === undefined || !canApply()) return;
+      this.cachedEntries = [...this.cachedEntries, localTaildriveFileSnapshot(entry)];
+      const thumbnailPath: string = cached.thumbnailPath.length > 0 ? cached.thumbnailPath :
+        await this.previewGateway.createThumbnail(context, entry, cached.path);
+      if (thumbnailPath.length > 0 && canApply()) this.setThumbnail(entry, thumbnailPath);
     });
-    this.thumbnails = next;
+  }
+
+  private localFileStatus(entry: TaildriveEntry): string {
+    return this.sessionController.localFileStatus(entry);
+  }
+
+  private markCachedEntry(entry: TaildriveEntry): void {
+    this.sessionController.markCachedEntry(entry);
+  }
+
+  private markDownloadedEntry(entry: TaildriveEntry): void {
+    this.sessionController.markDownloadedEntry(entry);
   }
 
   private thumbnailUri(entry: TaildriveEntry): string {
@@ -1658,36 +1289,23 @@ export struct TaildriveBrowser {
       return '';
     }
     try {
-      return fileIo.accessSync(thumbnail.uri) ? fileUri.getUriFromPath(thumbnail.uri) : '';
+      return fileUri.getUriFromPath(thumbnail.uri);
     } catch (_error) {
       return '';
     }
   }
 
   private setThumbnail(entry: TaildriveEntry, thumbnailPath: string): void {
+    const nextThumbnail: TaildriveThumbnailModel = { remotePath: entry.path, uri: thumbnailPath };
     this.thumbnails = [
       ...this.thumbnails.filter((candidate: TaildriveThumbnailModel) =>
         candidate.remotePath !== entry.path),
-      { remotePath: entry.path, uri: thumbnailPath }
+      nextThumbnail
     ];
   }
 
-  private hydrateThumbnail(entry: TaildriveEntry, localPath: string): void {
-    if (this.thumbnailWorkPaths.includes(entry.path)) {
-      return;
-    }
-    this.thumbnailWorkPaths = [...this.thumbnailWorkPaths, entry.path];
-    this.previewGateway.createThumbnail(this.context(), entry, localPath)
-      .then((thumbnailPath: string) => {
-        if (thumbnailPath.length > 0) {
-          this.setThumbnail(entry, thumbnailPath);
-        }
-      })
-      .catch(() => {
-      })
-      .finally(() => {
-        this.thumbnailWorkPaths = this.thumbnailWorkPaths.filter((path: string) => path !== entry.path);
-      });
+  private onPathChanged(): void {
+    this.sessionController.onPathChanged();
   }
 
   private previewTypeText(entry: TaildriveEntry): string {
@@ -1728,23 +1346,11 @@ export struct TaildriveBrowser {
   }
 
   private displayEntries(): TaildriveEntry[] {
-    const query: string = this.searchQuery.trim().toLowerCase();
-    const filtered: TaildriveEntry[] = this.entries.filter((entry: TaildriveEntry) =>
-      query.length === 0 || entry.name.toLowerCase().includes(query));
-    return filtered.sort((left: TaildriveEntry, right: TaildriveEntry): number => {
-      if (left.kind !== right.kind) {
-        return left.kind === 'directory' ? -1 : 1;
-      }
-      let result: number = 0;
-      if (this.sortMode === 'modified' && left.modifiedAtMs !== right.modifiedAtMs) {
-        result = left.modifiedAtMs - right.modifiedAtMs;
-      } else if (this.sortMode === 'size' && left.size !== right.size) {
-        result = left.size - right.size;
-      } else {
-        result = left.name.toLowerCase().localeCompare(right.name.toLowerCase());
-      }
-      return this.sortDescending ? -result : result;
-    });
+    return this.sessionController.displayEntries();
+  }
+
+  private hiddenSelectedCount(): number {
+    return this.sessionController.hiddenSelectedCount();
   }
 
   private chooseSortMode(mode: string): void {
@@ -1792,22 +1398,14 @@ export struct TaildriveBrowser {
   }
 
   private groupedEntries(): TaildriveEntryGroup[] {
-    const entries: TaildriveEntry[] = this.displayEntries();
-    if (this.groupMode === 'none') {
-      return [{ key: 'all', title: '', entries: entries }];
-    }
-    const keys: string[] = this.groupMode === 'type' ?
-      ['folder', 'image', 'video', 'document', 'archive', 'other'] :
-      ['today', 'yesterday', 'week', 'earlier', 'unknown'];
-    const groups: TaildriveEntryGroup[] = [];
-    keys.forEach((key: string) => {
-      const grouped: TaildriveEntry[] = entries.filter((entry: TaildriveEntry) =>
-        (this.groupMode === 'type' ? this.typeGroupKey(entry) : this.dateGroupKey(entry)) === key);
-      if (grouped.length > 0) {
-        groups.push({ key: key, title: this.groupTitle(key), entries: grouped });
-      }
+    return this.sessionController.groupedEntryBuckets().map((bucket: TaildriveGroupedBucket): TaildriveEntryGroup => {
+      const group: TaildriveEntryGroup = {
+        key: bucket.key,
+        title: bucket.key === 'all' ? '' : this.groupTitle(bucket.key),
+        entries: bucket.entries
+      };
+      return group;
     });
-    return groups;
   }
 
   private listItems(): TaildriveListItemModel[] {
@@ -1818,7 +1416,7 @@ export struct TaildriveBrowser {
           key: `header-${group.key}`,
           header: true,
           title: group.title,
-          entry: TaildriveBrowser.emptyEntry()
+          entry: emptyTaildriveEntry()
         });
       }
       group.entries.forEach((entry: TaildriveEntry) => items.push({
@@ -1829,14 +1427,6 @@ export struct TaildriveBrowser {
       }));
     });
     return items;
-  }
-
-  private flattenedGroupedEntries(): TaildriveEntry[] {
-    const entries: TaildriveEntry[] = [];
-    this.groupedEntries().forEach((group: TaildriveEntryGroup) => {
-      group.entries.forEach((entry: TaildriveEntry) => entries.push(entry));
-    });
-    return entries;
   }
 
   private rebuildListDataSource(): void {
@@ -1859,131 +1449,166 @@ export struct TaildriveBrowser {
     }
   }
 
-  private typeGroupKey(entry: TaildriveEntry): string {
-    if (entry.kind === 'directory') {
-      return 'folder';
-    }
-    const extension: string = this.fileExtension(entry.name);
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif', 'svg'].includes(extension)) {
-      return 'image';
-    }
-    if (['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', '3gp'].includes(extension)) {
-      return 'video';
-    }
-    if (['txt', 'md', 'json', 'jsonl', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv'].includes(extension)) {
-      return 'document';
-    }
-    if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'hap', 'hsp', 'har', 'app', 'apk'].includes(extension)) {
-      return 'archive';
-    }
-    return 'other';
-  }
-
-  private dateGroupKey(entry: TaildriveEntry): string {
-    if (entry.modifiedAtMs <= 0) {
-      return 'unknown';
-    }
-    const now: Date = new Date();
-    const startToday: number = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    if (entry.modifiedAtMs >= startToday) {
-      return 'today';
-    }
-    if (entry.modifiedAtMs >= startToday - 24 * 60 * 60 * 1000) {
-      return 'yesterday';
-    }
-    if (entry.modifiedAtMs >= startToday - 7 * 24 * 60 * 60 * 1000) {
-      return 'week';
-    }
-    return 'earlier';
-  }
-
   private toggleSelectionMode(): void {
-    this.vibrateTouch();
-    if (this.selectionMode) {
-      this.exitSelectionMode();
-      return;
-    }
-    this.selectionMode = true;
-    this.selectedPaths = [];
-    this.rebuildListDataSource();
-    this.publishUiBackState();
+    this.sessionController.toggleSelectionMode();
   }
 
   private exitSelectionMode(): void {
-    this.selectionMode = false;
-    this.selectedPaths = [];
-    this.rebuildListDataSource();
-    this.publishUiBackState();
+    this.sessionController.exitSelectionMode();
   }
 
   private toggleEntrySelection(entry: TaildriveEntry): void {
-    this.vibrateTouch();
-    if (this.selectedPaths.includes(entry.path)) {
-      this.selectedPaths = this.selectedPaths.filter((path: string) => path !== entry.path);
-    } else {
-      this.selectedPaths = [...this.selectedPaths, entry.path];
+    this.sessionController.toggleEntrySelection(entry);
+  }
+
+  private resolveFlatEntryIndexForListIndex(listIndex: number): number {
+    return this.sessionController.resolveFlatEntryIndexForListIndex(
+      listIndex,
+      this.listDataSource.totalCount(),
+      (cursor: number): boolean => this.listDataSource.getData(cursor).header
+    );
+  }
+
+  private beginDragSelectionAtIndex(flatIndex: number): boolean {
+    return this.sessionController.beginDragSelectionAtIndex(flatIndex);
+  }
+
+  private updateDragSelectionToIndex(flatIndex: number): boolean {
+    return this.sessionController.updateDragSelectionToIndex(flatIndex);
+  }
+
+  private stopDragAutoScroll(): void {
+    if (this.dragAutoScrollTimer >= 0) {
+      clearInterval(this.dragAutoScrollTimer);
+      this.dragAutoScrollTimer = -1;
     }
-    this.rebuildListDataSource();
+    this.dragAutoScrollStepVp = 0;
+  }
+
+  private finishDragSelection(): void {
+    this.sessionController.finishDragSelection();
+  }
+
+  private gestureLocalPoint(event: GestureEvent): number[] | undefined {
+    const fingers: FingerInfo[] = event.fingerList;
+    if (!Array.isArray(fingers) || fingers.length === 0) {
+      return undefined;
+    }
+    for (let index: number = 0; index < fingers.length; index++) {
+      const finger: FingerInfo | undefined = fingers[index];
+      if (finger !== undefined && Number.isFinite(finger.localX) && Number.isFinite(finger.localY)) {
+        return [finger.localX, finger.localY];
+      }
+    }
+    return undefined;
+  }
+
+  private hitTestDragFlatIndex(localX: number, localY: number, allowGapProbe: boolean): number {
+    const maxX: number = Math.max(12, (this.dragViewportWidth > 0 ? this.dragViewportWidth : 340) - 12);
+    const maxY: number = Math.max(8, (this.dragViewportHeight > 0 ? this.dragViewportHeight : 600) - 8);
+    const x: number = Math.min(maxX, Math.max(12, localX));
+    const y: number = Math.min(maxY, Math.max(8, localY));
+    try {
+      const listIndex: number = this.contentScroller.getItemIndex(x, y);
+      if (listIndex >= 0) {
+        return this.resolveFlatEntryIndexForListIndex(listIndex);
+      }
+      if (allowGapProbe) {
+        const probeIndex: number = this.contentScroller.getItemIndex(x, Math.max(8, y - 14));
+        if (probeIndex >= 0) {
+          return this.resolveFlatEntryIndexForListIndex(probeIndex);
+        }
+      }
+    } catch (_error) {
+      return -1;
+    }
+    return -1;
+  }
+
+  private startDragSelectionFromGesture(event: GestureEvent): void {
+    const point: number[] | undefined = this.gestureLocalPoint(event);
+    if (point === undefined) {
+      return;
+    }
+    this.dragPointerLocalX = point[0];
+    this.dragPointerLocalY = point[1];
+    const flatIndex: number = this.hitTestDragFlatIndex(point[0], point[1], false);
+    this.beginDragSelectionAtIndex(flatIndex);
+  }
+
+  private moveDragSelectionFromGesture(event: GestureEvent): void {
+    if (!this.dragSelecting) {
+      return;
+    }
+    const point: number[] | undefined = this.gestureLocalPoint(event);
+    if (point === undefined) {
+      return;
+    }
+    this.dragPointerLocalX = point[0];
+    this.dragPointerLocalY = point[1];
+    const flatIndex: number = this.hitTestDragFlatIndex(point[0], point[1], true);
+    if (flatIndex >= 0) {
+      this.updateDragSelectionToIndex(flatIndex);
+    }
+    this.updateDragAutoScroll(point[1]);
+  }
+
+  private updateDragAutoScroll(localY: number): void {
+    const viewportH: number = this.dragViewportHeight > 0 ? this.dragViewportHeight : 600;
+    const bottomLimit: number = Math.max(120, viewportH - this.fileToolbarHeight() - 72);
+    let step: number = 0;
+    if (localY < 64) {
+      step = -Math.min(18, Math.max(4, Math.round((64 - localY) * 0.28)));
+    } else if (localY > bottomLimit) {
+      step = Math.min(18, Math.max(4, Math.round((localY - bottomLimit) * 0.28)));
+    } else {
+      this.stopDragAutoScroll();
+      return;
+    }
+    this.dragAutoScrollStepVp = step;
+    if (this.dragAutoScrollTimer < 0) {
+      this.dragAutoScrollTimer = setInterval((): void => {
+        if (!this.dragSelecting || !this.selectionMode) {
+          this.stopDragAutoScroll();
+          return;
+        }
+        try {
+          this.contentScroller.scrollBy(0, this.dragAutoScrollStepVp);
+        } catch (_error) {}
+        const idx: number = this.hitTestDragFlatIndex(this.dragPointerLocalX, this.dragPointerLocalY, true);
+        if (idx >= 0) {
+          this.updateDragSelectionToIndex(idx);
+        }
+      }, 32);
+    }
   }
 
   private selectedTotalBytes(): number {
-    let total: number = 0;
-    this.selectedEntries().forEach((entry: TaildriveEntry) => {
-      total += Math.max(0, entry.size);
-    });
-    return total;
+    return this.sessionController.selectedTotalBytes();
   }
 
   private allVisibleEntriesSelected(): boolean {
-    const visible: TaildriveEntry[] = this.displayEntries();
-    return visible.length > 0 && visible.every((entry: TaildriveEntry) => this.isSelected(entry));
+    return this.sessionController.allVisibleEntriesSelected();
   }
 
   private toggleSelectAll(): void {
-    this.vibrateTouch();
-    const visible: TaildriveEntry[] = this.displayEntries();
-    if (visible.length === 0) {
-      return;
-    }
-    if (this.allVisibleEntriesSelected()) {
-      const visiblePaths: string[] = visible.map((entry: TaildriveEntry) => entry.path);
-      this.selectedPaths = this.selectedPaths.filter((path: string) => !visiblePaths.includes(path));
-    } else {
-      const selected: string[] = [...this.selectedPaths];
-      visible.forEach((entry: TaildriveEntry) => {
-        if (!selected.includes(entry.path)) {
-          selected.push(entry.path);
-        }
-      });
-      this.selectedPaths = selected;
-    }
-    this.rebuildListDataSource();
+    this.sessionController.toggleSelectAll();
   }
 
   private selectFromContextMenu(entry: TaildriveEntry): void {
-    this.vibrateTouch();
-    if (!this.selectionMode) {
-      this.selectionMode = true;
-      this.selectedPaths = [];
-      this.publishUiBackState();
-    }
-    if (!this.selectedPaths.includes(entry.path)) {
-      this.selectedPaths = [...this.selectedPaths, entry.path];
-    }
-    this.rebuildListDataSource();
+    this.sessionController.selectFromContextMenu(entry);
   }
 
   private isSelected(entry: TaildriveEntry): boolean {
-    return this.selectedPaths.includes(entry.path);
+    return this.sessionController.isSelected(entry);
   }
 
   private selectedEntries(): TaildriveEntry[] {
-    return this.entries.filter((entry: TaildriveEntry) => this.selectedPaths.includes(entry.path));
+    return this.sessionController.selectedEntries();
   }
 
   private selectedEntry(): TaildriveEntry | undefined {
-    const selected: TaildriveEntry[] = this.selectedEntries();
-    return selected.length === 1 ? selected[0] : undefined;
+    return this.sessionController.selectedEntry();
   }
 
   private showSelectedDetails(): void {
@@ -1999,56 +1624,12 @@ export struct TaildriveBrowser {
     return $r('app.string.taildrive_group_none');
   }
 
-  private joinPath(parent: string, name: string): string {
-    const encoded: string = encodeURIComponent(name);
-    return parent === '/' ? `/${encoded}` : `${parent}/${encoded}`;
-  }
-
-  private parentPath(remotePath: string): string {
-    const slash: number = remotePath.lastIndexOf('/');
-    return slash <= 0 ? '/' : remotePath.substring(0, slash);
-  }
-
-  private pathName(remotePath: string): string {
-    const slash: number = remotePath.lastIndexOf('/');
-    const encoded: string = slash >= 0 ? remotePath.substring(slash + 1) : remotePath;
-    try {
-      return decodeURIComponent(encoded);
-    } catch (_error) {
-      return encoded;
-    }
-  }
-
-  private shareRoot(remotePath: string): string {
-    const segments: string[] = remotePath.split('/').filter((segment: string) => segment.length > 0);
-    return segments.length >= 3 ? `/${segments[0]}/${segments[1]}/${segments[2]}` : this.parentPath(remotePath);
-  }
-
   private canModifyCurrentPath(): boolean {
-    return this.path.split('/').filter((segment: string) => segment.length > 0).length >= 3;
-  }
-
-  private validName(name: string): boolean {
-    return name.length > 0 && name.length <= 255 && name !== '.' && name !== '..' &&
-      !name.includes('/') && !name.includes('\\') && !name.includes('\u0000');
-  }
-
-  private safeRemoteName(name: string): string {
-    const value: string = this.safeLocalName(name);
-    return value.length > 0 ? value : `upload-${Date.now()}`;
+    return this.sessionController.canModifyCurrentPath();
   }
 
   private safeLocalName(name: string): string {
-    let value: string = name;
-    const slash: number = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
-    if (slash >= 0) {
-      value = value.substring(slash + 1);
-    }
-    value = value.replace(/[\\/:*?"<>|]/g, '_').trim();
-    if (value === '.' || value === '..') {
-      return 'download';
-    }
-    return value.length > 0 ? value : 'download';
+    return sanitizeTaildriveLocalName(name);
   }
 
   private cleanupDirectory(directory: string): void {
@@ -2094,12 +1675,11 @@ export struct TaildriveBrowser {
   }
 
   private fileExtension(name: string): string {
-    const index: number = name.lastIndexOf('.');
-    return index >= 0 ? name.substring(index + 1).toLowerCase() : '';
+    return extractFileExtension(name);
   }
 
   private remotePathDepth(remotePath: string): number {
-    return remotePath.split('/').filter((segment: string) => segment.length > 0).length;
+    return taildrivePathDepth(remotePath);
   }
 
   private isWindowsDriveDirectory(entry: TaildriveEntry): boolean {
@@ -2174,120 +1754,11 @@ export struct TaildriveBrowser {
     if (entry.kind === 'directory') {
       return this.directoryIcon(entry);
     }
-    const extension: string = this.fileExtension(entry.name);
-    switch (extension) {
-      case '7z': return $r('app.media.ic_light_7z');
-      case 'amr': return $r('app.media.ic_light_amr');
-      case 'ape': return $r('app.media.ic_light_ape');
-      case 'app': return $r('app.media.ic_light_app');
-      case 'caj': return $r('app.media.ic_light_caj');
-      case 'ics':
-      case 'ical':
-      case 'calendar': return $r('app.media.ic_light_calendar');
-      case 'chm': return $r('app.media.ic_light_chm');
-      case 'connect':
-      case 'connection': return $r('app.media.ic_light_connect');
-      case 'crdownload':
-      case 'download':
-      case 'part':
-      case 'partial': return $r('app.media.ic_light_download');
-      case 'dwg': return $r('app.media.ic_light_dwg');
-      case 'dxf': return $r('app.media.ic_light_dxf');
-      case 'eddx': return $r('app.media.ic_light_eddx');
-      case 'eml':
-      case 'emlx':
-      case 'msg': return $r('app.media.ic_light_eml');
-      case 'emmx': return $r('app.media.ic_light_emmx');
-      case 'xls':
-      case 'xlsx':
-      case 'xlsm':
-      case 'xlsb':
-      case 'csv':
-      case 'et':
-      case 'ett':
-      case 'ods': return $r('app.media.ic_light_excel');
-      case 'exe':
-      case 'msi':
-      case 'com': return $r('app.media.ic_light_exe');
-      case 'flac': return $r('app.media.ic_light_flac');
-      case 'gz':
-      case 'gzip': return $r('app.media.ic_light_gz');
-      case 'hdoc': return $r('app.media.ic_light_hdoc');
-      case 'hinote': return $r('app.media.ic_light_hinote');
-      case 'htm': return $r('app.media.ic_light_htm');
-      case 'html':
-      case 'xhtml':
-      case 'mht':
-      case 'mhtml': return $r('app.media.ic_light_html');
-      case 'kdh': return $r('app.media.ic_light_kdh');
-      case 'log': return $r('app.media.ic_light_log');
-      case 'm4a': return $r('app.media.ic_light_m4a');
-      case 'mp3': return $r('app.media.ic_light_mp3');
-      case 'aac':
-      case 'midi':
-      case 'mid':
-      case 'ogg':
-      case 'opus': return $r('app.media.ic_light_music');
-      case 'nh': return $r('app.media.ic_light_nh');
-      case 'pdf': return $r('app.media.ic_light_pdf');
-      case 'ppt':
-      case 'pptx':
-      case 'pptm':
-      case 'pps':
-      case 'ppsx':
-      case 'dps':
-      case 'dpt':
-      case 'odp': return $r('app.media.ic_light_ppt');
-      case 'rar': return $r('app.media.ic_light_rar');
-      case 'tar': return $r('app.media.ic_light_tar');
-      case 'teb': return $r('app.media.ic_light_teb');
-      case 'txt': return $r('app.media.ic_light_txt');
-      case 'wav': return $r('app.media.ic_light_wav');
-      case 'wma': return $r('app.media.ic_light_wma');
-      case 'doc':
-      case 'docx':
-      case 'docm':
-      case 'dot':
-      case 'dotx':
-      case 'wps':
-      case 'wpt':
-      case 'odt':
-      case 'rtf': return $r('app.media.ic_light_word');
-      case 'xml':
-      case 'xsl':
-      case 'xslt': return $r('app.media.ic_light_xml');
-      case 'zip': return $r('app.media.ic_light_zip');
-      case 'bz2':
-      case 'xz':
-      case 'zst':
-      case 'lz':
-      case 'lz4':
-      case 'cab':
-      case 'iso':
-      case 'dmg': return $r('app.media.ic_light_zip_1');
-      case 'hap':
-      case 'hsp':
-      case 'har':
-      case 'apk':
-      case 'aab':
-      case 'ipa': return $r('app.media.ic_light_other_app');
-    }
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif', 'svg'].includes(extension)) {
-      return $r('app.media.ic_light_picture');
-    }
-    if (['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', '3gp'].includes(extension)) {
-      return $r('app.media.ic_light_video');
-    }
-    if (['md', 'markdown', 'json', 'jsonl', 'yaml', 'yml', 'ini', 'conf', 'cfg', 'properties', 'sql',
-      'ets', 'ts', 'tsx', 'js', 'jsx', 'java', 'kt', 'c', 'cc', 'cpp', 'h', 'hpp', 'go', 'rs', 'py',
-      'sh', 'bat', 'cmd', 'ps1'].includes(extension)) {
-      return $r('app.media.ic_light_text');
-    }
-    return extension.length === 0 ? $r('app.media.ic_light_unknow') : $r('app.media.ic_light_other');
+    return resolveFileIconResource(entry.name);
   }
 
   private directoryKindText(entry: TaildriveEntry): ResourceStr {
-    const depth: number = entry.path.split('/').filter((segment: string) => segment.length > 0).length;
+    const depth: number = this.remotePathDepth(entry.path);
     if (depth === 1) return $r('app.string.taildrive_type_tailnet');
     if (depth === 2) return $r('app.string.taildrive_type_device');
     if (depth === 3) return $r('app.string.taildrive_type_share');
@@ -2303,50 +1774,40 @@ export struct TaildriveBrowser {
     return `Taildrive  ›  ${visible.join('  ›  ')}`;
   }
 
-  private breadcrumbSegments(): string[] {
-    return this.path.split('/').filter((segment: string) => segment.length > 0).map((segment: string) => {
-      try {
-        return decodeURIComponent(segment);
-      } catch (_error) {
-        return segment;
-      }
-    });
+  private sanitizeDisplayLabel(value: string): string {
+    return this.sessionController.sanitizeDisplayLabel(value);
   }
 
-  private breadcrumbPath(index: number): string {
-    const rawSegments: string[] = this.path.split('/').filter((segment: string) => segment.length > 0);
-    let result: string = '/';
-    for (let cursor: number = 0; cursor <= index && cursor < rawSegments.length; cursor++) {
-      result = result === '/' ? `/${rawSegments[cursor]}` : `${result}/${rawSegments[cursor]}`;
-    }
-    return result;
+  private breadcrumbSegments(): string[] {
+    return this.sessionController.pathSegments(this.path);
   }
 
   private navigateToBreadcrumb(index: number): void {
-    if (this.busy) {
-      return;
-    }
-    this.vibrateTouch();
-    this.path = index < 0 ? '/' : this.breadcrumbPath(index);
-    this.searchQuery = '';
-    this.searchVisible = false;
-    this.exitSelectionMode();
-    this.updateBackState();
-    this.refresh();
+    this.sessionController.navigateToBreadcrumb(index);
+  }
+
+  private onMovePathChanged(): void {
+    this.scheduleUiTimer((): void => {
+      this.movePathScroller.scrollEdge(Edge.End);
+    }, 40);
+  }
+
+  private moveBreadcrumbSegments(): string[] {
+    return this.sessionController.pathSegments(this.movePath);
+  }
+
+  private navigateToMoveBreadcrumb(index: number): void {
+    this.sessionController.navigateToMoveBreadcrumb(index);
   }
 
   private displayPath(value: string = this.path): string {
-    try {
-      return decodeURIComponent(value);
-    } catch (_error) {
-      return value;
-    }
+    return this.sessionController.displayPath(value);
   }
 
   private updateBackState(): void {
     AppStorage.setOrCreate('taildriveCurrentPath', this.path);
     this.publishUiBackState();
-    setTimeout((): void => {
+    this.scheduleUiTimer((): void => {
       this.breadcrumbScroller.scrollEdge(Edge.End);
     }, 40);
   }
@@ -2358,6 +1819,9 @@ export struct TaildriveBrowser {
   }
 
   private refreshWithFeedback(): void {
+    if (this.busy || this.loading || this.appLockActive) {
+      return;
+    }
     this.vibrateTouch();
     this.refresh(450);
   }
@@ -2403,12 +1867,23 @@ export struct TaildriveBrowser {
   }
 
   private statusText(): ResourceStr {
-    return this.statusCodeText(this.status);
+    return this.statusCodeText(this.hasListFailure() ? this.reason : this.status);
+  }
+
+  private hasListFailure(): boolean {
+    return this.sessionController.hasListFailure();
+  }
+
+  private showRetainedListNotice(): boolean {
+    return this.sessionController.showRetainedListNotice();
   }
 
   private statusCodeText(status: string): ResourceStr {
     switch (status) {
       case 'file_selection_failed': return $r('app.string.taildrive_status_select_failed');
+      case 'preparing_upload': return $r('app.string.taildrive_status_preparing_upload');
+      case 'authorizing_file_operation': return $r('app.string.taildrive_status_authorizing_operation');
+      case 'list_failed': return $r('app.string.taildrive_list_failed');
       case 'uploading': return $r('app.string.taildrive_status_uploading');
       case 'upload_completed': return $r('app.string.taildrive_status_upload_completed');
       case 'upload_failed': return $r('app.string.taildrive_status_upload_failed');
@@ -2419,6 +1894,10 @@ export struct TaildriveBrowser {
       case 'preview_failed': return $r('app.string.taildrive_status_preview_failed');
       case 'paths_copied': return $r('app.string.taildrive_status_paths_copied');
       case 'copy_failed': return $r('app.string.taildrive_status_copy_failed');
+      case 'copying': return $r('app.string.taildrive_status_copying');
+      case 'copy_completed': return $r('app.string.taildrive_status_copy_completed');
+      case 'share_downloading': return $r('app.string.taildrive_status_share_downloading');
+      case 'share_download_failed': return $r('app.string.taildrive_status_share_download_failed');
       case 'share_failed': return $r('app.string.taildrive_status_share_failed');
       case 'select_one_for_details': return $r('app.string.taildrive_status_select_one_for_details');
       case 'export_cancelled': return $r('app.string.taildrive_status_export_cancelled');
@@ -2461,8 +1940,8 @@ export struct TaildriveBrowser {
     Stack({ alignContent: Alignment.Center }) {
       Column({ space: 0 }) {
         Text($r('app.string.taildrive_new_folder_title'))
-          .fontSize(22)
-          .fontWeight(FontWeight.Bold)
+          .fontSize(UiTokens.TITLE_SIZE)
+          .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
           .width('100%')
           .textAlign(TextAlign.Center)
@@ -2476,31 +1955,40 @@ export struct TaildriveBrowser {
           .enterKeyType(EnterKeyType.Done)
           .backgroundColor(Color.Transparent)
           .id('taildrive-folder-dialog-input')
+          .enabled(!this.folderSubmitInFlight)
           .onChange((value: string) => this.editorName = value)
           .onSubmit(() => this.submitFolderDialog())
+        if (!this.folderDialogContextCurrent()) {
+          Text($r('app.string.taildrive_folder_context_changed'))
+            .fontSize(13)
+            .lineHeight(19)
+            .fontColor($r('app.color.status_warning'))
+            .width('100%')
+            .padding({ bottom: 12 })
+            .id('taildrive-folder-context-changed')
+        }
         Divider()
           .color($r('sys.color.comp_divider'))
         Row() {
-          Text($r('app.string.cancel_action'))
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.emphasize'))
+          Button($r('app.string.cancel_action'), {
+            buttonStyle: ButtonStyleMode.TEXTUAL, controlSize: ControlSize.NORMAL
+          })
+            .fontSize(UiTokens.BODY_SIZE)
             .layoutWeight(1)
-            .height(58)
-            .textAlign(TextAlign.Center)
+            .height(UiTokens.ACTION_HEIGHT)
             .onClick(() => this.closeFolderDialog())
           Divider()
             .vertical(true)
             .height(34)
             .color($r('sys.color.comp_divider'))
-          Text($r('app.string.confirm_action'))
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.emphasize'))
+          Button($r('app.string.confirm_action'), {
+            buttonStyle: ButtonStyleMode.TEXTUAL, controlSize: ControlSize.NORMAL
+          })
+            .fontSize(UiTokens.BODY_SIZE)
             .layoutWeight(1)
-            .height(58)
-            .textAlign(TextAlign.Center)
+            .height(UiTokens.ACTION_HEIGHT)
             .id('taildrive-folder-dialog-confirm')
+            .enabled(!this.folderSubmitInFlight && !this.busy && this.folderDialogContextCurrent())
             .onClick(() => this.submitFolderDialog())
         }
         .width('100%')
@@ -2510,11 +1998,11 @@ export struct TaildriveBrowser {
       .padding({ left: 24, right: 24 })
       .backgroundColor($r('sys.color.comp_background_primary'))
       .borderRadius(28)
-      .shadow({ radius: 28, color: '#26000000', offsetY: 8 })
+      .shadow({ radius: 28, color: $r('app.color.shadow_elevated_soft'), offsetY: 8 })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#4D000000')
+    .backgroundColor($r('app.color.scrim_modal_overlay'))
     .id('taildrive-folder-dialog')
     .transition(TransitionEffect.OPACITY.animation({
       duration: MotionTokens.duration(180), curve: MotionTokens.curve()
@@ -2522,298 +2010,680 @@ export struct TaildriveBrowser {
   }
 
   @Builder
+  private SheetSecurityShield() {
+    Column() {}
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('sys.color.background_secondary'))
+      .id('taildrive-sheet-security-shield')
+  }
+
+  @Builder
   private EditorSheet() {
-    Column({ space: 12 }) {
-      Text(this.editorOperation === 'mkdir' ? $r('app.string.taildrive_new_folder_title') :
-        $r('app.string.taildrive_rename_title'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.font_primary'))
+    Stack() {
+      Column({ space: UiTokens.GROUP_GAP }) {
+        Text(this.editorOperation === 'mkdir' ? $r('app.string.taildrive_new_folder_title') :
+          $r('app.string.taildrive_rename_title'))
+          .fontSize(UiTokens.TITLE_SIZE)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .width('100%')
+        TextInput({ text: this.editorName, placeholder: $r('app.string.taildrive_name_placeholder') })
+          .width('100%')
+          .height(44)
+          .enterKeyType(EnterKeyType.Done)
+          .id('taildrive-editor-input')
+          .enabled(!this.editorSubmitInFlight)
+          .onChange((value: string) => this.editorName = value)
+          .onSubmit(() => this.submitEditor())
+        if (!this.editorContextCurrent()) {
+          Text($r('app.string.taildrive_rename_context_changed'))
+            .fontSize(13)
+            .lineHeight(19)
+            .fontColor($r('app.color.status_warning'))
+            .width('100%')
+            .id('taildrive-rename-context-changed')
+        }
+        Row({ space: UiTokens.GROUP_GAP }) {
+          Button($r('app.string.cancel_action'), {
+            buttonStyle: ButtonStyleMode.NORMAL, controlSize: ControlSize.NORMAL
+          })
+            .fontSize(UiTokens.BODY_SIZE)
+            .fontColor($r('sys.color.font_primary'))
+            .backgroundColor($r('sys.color.comp_background_primary'))
+            .layoutWeight(1)
+            .height(UiTokens.ACTION_HEIGHT)
+            .onClick(() => this.editorVisible = false)
+          Button($r('app.string.confirm_action'), {
+            buttonStyle: ButtonStyleMode.EMPHASIZED, controlSize: ControlSize.NORMAL
+          })
+            .fontSize(UiTokens.BODY_SIZE)
+            .layoutWeight(1)
+            .height(UiTokens.ACTION_HEIGHT)
+            .id('taildrive-editor-confirm')
+            .enabled(!this.editorSubmitInFlight && !this.busy && this.editorContextCurrent())
+            .onClick(() => this.submitEditor())
+        }
         .width('100%')
-      TextInput({ text: this.editorName, placeholder: $r('app.string.taildrive_name_placeholder') })
-        .width('100%')
-        .height(44)
-        .enterKeyType(EnterKeyType.Done)
-        .id('taildrive-editor-input')
-        .onChange((value: string) => this.editorName = value)
-        .onSubmit(() => this.submitEditor())
-      Row({ space: 10 }) {
-        Text($r('app.string.cancel_action'))
-          .fontColor($r('sys.color.font_secondary'))
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-          .padding(12)
-          .onClick(() => this.editorVisible = false)
-        Text($r('app.string.confirm_action'))
-          .fontColor($r('app.color.emphasize'))
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-          .padding(12)
-          .id('taildrive-editor-confirm')
-          .onClick(() => this.submitEditor())
       }
       .width('100%')
+      .padding({ left: UiTokens.PAGE_PADDING, right: UiTokens.PAGE_PADDING, top: 16, bottom: 24 })
+      if (this.isSheetBlockedBySecurity(this.sessionController.editorTargetPath()) ||
+        this.isEditorSheetBlockedBySecurity()) {
+        this.SheetSecurityShield()
+      }
     }
     .width('100%')
-    .padding({ left: 20, right: 20, top: 16, bottom: 24 })
+    .height('100%')
+  }
+
+  private localStatusLabel(entry: TaildriveEntry): ResourceStr {
+    const status: string = this.localFileStatus(entry);
+    if (status === 'cached') {
+      return $r('app.string.taildrive_cached_file');
+    }
+    if (status === 'downloaded') {
+      return $r('app.string.taildrive_downloaded_file');
+    }
+    return '';
+  }
+
+  @Builder
+  private DetailQuickAction($$: TaildriveDetailActionData) {
+    Column() {
+      Button({ type: ButtonType.ROUNDED_RECTANGLE, stateEffect: true }) {
+        Column({ space: 6 }) {
+          SymbolGlyph($$.icon)
+            .fontSize(UiTokens.ICON_NAV_BAR)
+            .fontColor([$$.destructive && $$.isEnabled ? $r('app.color.status_error') : $r('sys.color.icon_primary')])
+          Text($$.label)
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($$.destructive && $$.isEnabled ? $r('app.color.status_error') : $r('sys.color.font_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+      }
+      .id($$.actionId)
+      .width('100%')
+      .height('100%')
+      .padding({ left: 6, right: 6 })
+      .borderRadius(14)
+      .backgroundColor(Color.Transparent)
+      .enabled($$.isEnabled)
+      .onClick($$.action)
+    }
+    .layoutWeight(1)
+    .height(60)
+    .borderRadius(14)
+    .backgroundColor($r('sys.color.comp_background_tertiary'))
   }
 
   @Builder
   private DetailsSheet() {
-    Column({ space: 12 }) {
-      Text($r('app.string.taildrive_details_title'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.font_primary'))
-        .width('100%')
-      if (this.detailsLoading) {
-        LoadingProgress().width(28).height(28)
-      } else {
-        Text(this.detailEntry.name)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'))
-          .width('100%')
-        this.DetailRow($r('app.string.taildrive_details_type'),
-          this.detailEntry.kind === 'directory' ? $r('app.string.taildrive_type_folder') :
-            $r('app.string.taildrive_type_file'))
-        this.DetailRow($r('app.string.taildrive_details_path'), this.displayPath(this.detailEntry.path))
-        if (this.detailEntry.kind === 'file') {
-          this.DetailRow($r('app.string.taildrive_details_size'), this.formatSize(this.detailEntry.size))
-        }
-        this.DetailRow($r('app.string.taildrive_details_modified'),
-          this.formatModified(this.detailEntry.modifiedAtMs))
-        if (this.detailEntry.contentType !== undefined && this.detailEntry.contentType.length > 0) {
-          this.DetailRow($r('app.string.taildrive_details_content_type'), this.detailEntry.contentType)
-        }
-        if (this.detailsReason.length > 0) {
-          Text(this.statusCodeText(this.detailsReason))
-            .fontSize(12)
-            .fontColor($r('app.color.status_error'))
+    Stack() {
+      Scroll() {
+        Column({ space: UiTokens.GROUP_GAP }) {
+          if (!this.detailsContextCurrent()) {
+            Column({ space: 8 }) {
+              Text($r('app.string.taildrive_details_context_changed'))
+                .fontSize(13)
+                .lineHeight(19)
+                .fontColor($r('app.color.status_warning'))
+                .width('100%')
+                .id('taildrive-details-context-changed')
+            }
             .width('100%')
-        }
-        Row({ space: 8 }) {
-          if (this.detailEntry.kind === 'file') {
-            Text($r('app.string.taildrive_download_action'))
+            .padding(UiTokens.CARD_PADDING)
+            .backgroundColor($r('sys.color.comp_background_primary'))
+            .borderRadius(UiTokens.CARD_RADIUS)
+          } else if (this.detailsLoading) {
+            Column({ space: 10 }) {
+              LoadingProgress().width(28).height(28).id('taildrive-details-loading')
+              Text($r('app.string.taildrive_loading'))
+                .fontSize(13)
+                .fontColor($r('sys.color.font_secondary'))
+            }
+            .width('100%')
+            .padding({ top: 32, bottom: 32 })
+            .alignItems(HorizontalAlign.Center)
+          } else {
+            Column({ space: 10 }) {
+              Row({ space: 12 }) {
+                this.EntryIcon(this.detailEntry, 48)
+                Column({ space: 4 }) {
+                  Text(this.sanitizeDisplayLabel(this.detailEntry.name))
+                    .fontSize(16)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('sys.color.font_primary'))
+                    .width('100%')
+                    .wordBreak(WordBreak.BREAK_ALL)
+                    .copyOption(CopyOptions.LocalDevice)
+                    .id('taildrive-details-name')
+                  Row({ space: 6 }) {
+                    Text(this.detailEntry.kind === 'directory' ? this.directoryKindText(this.detailEntry) :
+                      this.previewTypeText(this.detailEntry))
+                      .fontSize(12)
+                      .fontColor($r('sys.color.font_secondary'))
+                      .maxLines(1)
+                    if (this.detailEntry.kind === 'file') {
+                      Text('·')
+                        .fontSize(12)
+                        .fontColor($r('sys.color.font_secondary'))
+                      Text(this.formatSize(this.detailEntry.size))
+                        .fontSize(12)
+                        .fontColor($r('sys.color.font_secondary'))
+                        .maxLines(1)
+                    }
+                  }
+                  .width('100%')
+                  if (this.localFileStatus(this.detailEntry).length > 0) {
+                    Row({ space: 4 }) {
+                      this.LocalFileStatus(this.detailEntry, 13)
+                      Text(this.localStatusLabel(this.detailEntry))
+                        .fontSize(11)
+                        .fontColor($r('sys.color.font_secondary'))
+                        .maxLines(1)
+                    }
+                    .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                    .backgroundColor($r('sys.color.comp_background_tertiary'))
+                    .borderRadius(10)
+                  }
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
+              if (this.detailsReason.length > 0) {
+                Text(this.statusCodeText(this.detailsReason))
+                  .fontSize(12)
+                  .fontColor($r('app.color.status_error'))
+                  .width('100%')
+                  .id('taildrive-details-error')
+              }
+            }
+            .width('100%')
+            .padding(UiTokens.CARD_PADDING)
+            .backgroundColor($r('sys.color.comp_background_primary'))
+            .borderRadius(UiTokens.CARD_RADIUS)
+
+            Text($r('app.string.taildrive_details_quick_actions'))
               .fontSize(13)
-              .fontColor($r('app.color.emphasize'))
-              .layoutWeight(1)
-              .textAlign(TextAlign.Center)
-              .padding({ top: 11, bottom: 11 })
-              .backgroundColor($r('app.color.surface_subtle'))
-              .borderRadius(12)
-              .onClick(() => {
-                const entry: TaildriveEntry = this.detailEntry;
-                this.detailsVisible = false;
-                this.download(entry);
-              })
-          }
-          if (this.canModifyCurrentPath()) {
-            Text($r('app.string.taildrive_rename_action'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .padding({ left: 4, top: 4 })
+            Column({ space: 8 }) {
+              Row({ space: 8 }) {
+                if (this.detailEntry.kind === 'file') {
+                  this.DetailQuickAction({
+                    icon: $r('sys.symbol.download'),
+                    label: $r('app.string.taildrive_download_action'),
+                    isEnabled: !this.busy,
+                    destructive: false,
+                    actionId: 'taildrive-details-download',
+                    action: () => {
+                      const entry: TaildriveEntry | undefined = this.takeDetailEntry();
+                      if (entry === undefined) return;
+                      this.download(entry);
+                    }
+                  })
+                  this.DetailQuickAction({
+                    icon: $r('sys.symbol.share'),
+                    label: $r('app.string.taildrive_share_action'),
+                    isEnabled: !this.busy && !this.previewDownloading,
+                    destructive: false,
+                    actionId: 'taildrive-details-share',
+                    action: () => {
+                      const entry: TaildriveEntry | undefined = this.takeDetailEntry();
+                      if (entry === undefined) return;
+                      this.shareEntries([entry]);
+                    }
+                  })
+                }
+                this.DetailQuickAction({
+                  icon: $r('sys.symbol.link'),
+                  label: $r('app.string.taildrive_copy_path_action'),
+                  isEnabled: true,
+                  destructive: false,
+                  actionId: 'taildrive-details-copy-path',
+                  action: () => {
+                    const entry: TaildriveEntry | undefined = this.takeDetailEntry();
+                    if (entry === undefined) return;
+                    this.copyEntryPath(entry);
+                  }
+                })
+              }
+              .width('100%')
+              if (this.canModifyCurrentPath()) {
+                Row({ space: 8 }) {
+                  this.DetailQuickAction({
+                    icon: $r('sys.symbol.doc_text_on_doc_text'),
+                    label: $r('app.string.taildrive_copy_action'),
+                    isEnabled: !this.busy,
+                    destructive: false,
+                    actionId: 'taildrive-details-copy',
+                    action: () => {
+                      const entry: TaildriveEntry | undefined = this.takeDetailEntry();
+                      if (entry === undefined) return;
+                      this.openDestinationPickerForEntries([entry], 'copy');
+                    }
+                  })
+                  this.DetailQuickAction({
+                    icon: $r('sys.symbol.arrow_right_folder_circle'),
+                    label: $r('app.string.taildrive_move_action'),
+                    isEnabled: !this.busy,
+                    destructive: false,
+                    actionId: 'taildrive-details-move',
+                    action: () => {
+                      const entry: TaildriveEntry | undefined = this.takeDetailEntry();
+                      if (entry === undefined) return;
+                      this.openMovePicker(entry);
+                    }
+                  })
+                  this.DetailQuickAction({
+                    icon: $r('sys.symbol.square_and_pencil'),
+                    label: $r('app.string.taildrive_rename_action'),
+                    isEnabled: !this.busy,
+                    destructive: false,
+                    actionId: 'taildrive-details-rename',
+                    action: () => {
+                      const entry: TaildriveEntry | undefined = this.takeDetailEntry();
+                      if (entry === undefined) return;
+                      this.renameEntry(entry);
+                    }
+                  })
+                  this.DetailQuickAction({
+                    icon: $r('sys.symbol.trash'),
+                    label: $r('app.string.taildrive_delete_action'),
+                    isEnabled: !this.busy,
+                    destructive: true,
+                    actionId: 'taildrive-details-delete',
+                    action: () => {
+                      const entry: TaildriveEntry | undefined = this.takeDetailEntry();
+                      if (entry === undefined) return;
+                      this.confirmDelete(entry);
+                    }
+                  })
+                }
+                .width('100%')
+              }
+            }
+            .width('100%')
+            .padding(10)
+            .backgroundColor($r('sys.color.comp_background_primary'))
+            .borderRadius(UiTokens.CARD_RADIUS)
+
+            Text($r('app.string.taildrive_details_info_section'))
               .fontSize(13)
-              .fontColor($r('app.color.emphasize'))
-              .layoutWeight(1)
-              .textAlign(TextAlign.Center)
-              .padding({ top: 11, bottom: 11 })
-              .backgroundColor($r('app.color.surface_subtle'))
-              .borderRadius(12)
-              .onClick(() => {
-                const entry: TaildriveEntry = this.detailEntry;
-                this.detailsVisible = false;
-                this.renameEntry(entry);
-              })
-            Text($r('app.string.taildrive_move_action'))
-              .fontSize(13)
-              .fontColor($r('app.color.emphasize'))
-              .layoutWeight(1)
-              .textAlign(TextAlign.Center)
-              .padding({ top: 11, bottom: 11 })
-              .backgroundColor($r('app.color.surface_subtle'))
-              .borderRadius(12)
-              .onClick(() => {
-                const entry: TaildriveEntry = this.detailEntry;
-                this.detailsVisible = false;
-                this.openMovePicker(entry);
-              })
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.font_secondary'))
+              .width('100%')
+              .padding({ left: 4, top: 4 })
+            Column({ space: 0 }) {
+              this.DetailRow($r('app.string.taildrive_details_type'),
+                this.detailEntry.kind === 'directory' ? $r('app.string.taildrive_type_folder') :
+                  $r('app.string.taildrive_type_file'))
+              if (this.detailEntry.kind === 'file') {
+                Divider()
+                  .color($r('sys.color.comp_divider'))
+                  .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
+                this.DetailRow($r('app.string.taildrive_details_size'), this.formatSize(this.detailEntry.size))
+              }
+              Divider()
+                .color($r('sys.color.comp_divider'))
+                .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
+              this.DetailRow($r('app.string.taildrive_details_modified'),
+                this.formatModified(this.detailEntry.modifiedAtMs))
+              Divider()
+                .color($r('sys.color.comp_divider'))
+                .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
+              this.DetailRow($r('app.string.taildrive_details_path'), this.displayPath(this.detailEntry.path))
+              if (this.detailEntry.contentType !== undefined && this.detailEntry.contentType.length > 0) {
+                Divider()
+                  .color($r('sys.color.comp_divider'))
+                  .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
+                this.DetailRow($r('app.string.taildrive_details_content_type'), this.detailEntry.contentType)
+              }
+              if (this.localFileStatus(this.detailEntry).length > 0) {
+                Divider()
+                  .color($r('sys.color.comp_divider'))
+                  .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
+                this.DetailRow($r('app.string.taildrive_details_local_status'), this.localStatusLabel(this.detailEntry))
+              }
+            }
+            .width('100%')
+            .backgroundColor($r('sys.color.comp_background_primary'))
+            .borderRadius(UiTokens.CARD_RADIUS)
           }
         }
         .width('100%')
-        if (this.canModifyCurrentPath()) {
-          Text($r('app.string.taildrive_delete_action'))
-            .fontSize(13)
-            .fontColor($r('app.color.status_error'))
-            .width('100%')
-            .textAlign(TextAlign.Center)
-            .padding({ top: 11, bottom: 11 })
-            .backgroundColor($r('app.color.surface_subtle'))
-            .borderRadius(12)
-            .onClick(() => {
-              const entry: TaildriveEntry = this.detailEntry;
-              this.detailsVisible = false;
-              this.confirmDelete(entry);
-            })
-        }
+        .padding({ left: UiTokens.PAGE_PADDING, right: UiTokens.PAGE_PADDING, top: 4, bottom: 24 })
+      }
+      .width('100%')
+      .height('100%')
+      .align(Alignment.TopStart)
+      .edgeEffect(EdgeEffect.Spring)
+      .scrollBar(BarState.Off)
+      .nestedScroll({
+        scrollForward: NestedScrollMode.SELF_FIRST,
+        scrollBackward: NestedScrollMode.SELF_FIRST
+      })
+      .backgroundColor(LightAppearance.supports() ? Color.Transparent : $r('sys.color.background_secondary'))
+      .id('taildrive-details-sheet')
+      if (this.isSheetBlockedBySecurity(this.detailEntry.path.length > 0 ? this.detailEntry.path : this.path)) {
+        this.SheetSecurityShield()
       }
     }
     .width('100%')
-    .padding({ left: 20, right: 20, top: 16, bottom: 24 })
-    .id('taildrive-details-sheet')
+    .height('100%')
   }
 
   @Builder
   private PreviewDownloadSheet() {
-    Column({ space: 16 }) {
-      Text($r('app.string.taildrive_preview_download_title'))
-        .fontSize(20)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.font_primary'))
-        .width('100%')
-      Column({ space: 8 }) {
-        Text(this.previewDownloadEntry.name)
-          .fontSize(16)
+    Stack() {
+      Column({ space: 16 }) {
+        Text($r('app.string.taildrive_preview_download_title'))
+          .fontSize(UiTokens.TITLE_SIZE)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
           .width('100%')
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Row({ space: 8 }) {
-          Text(this.previewTypeText(this.previewDownloadEntry))
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(this.formatSize(this.previewDownloadEntry.size))
-            .fontSize(12)
-            .fontColor($r('sys.color.font_secondary'))
-        }
-        .width('100%')
-      }
-      .width('100%')
-      .padding({ left: 14, right: 14, top: 12, bottom: 12 })
-      .backgroundColor($r('app.color.surface_subtle'))
-      .borderRadius(14)
-      Text($r('app.string.taildrive_preview_download_hint'))
-        .fontSize(13)
-        .fontColor($r('sys.color.font_secondary'))
-        .lineHeight(20)
-        .width('100%')
-      Row({ space: 12 }) {
-        Button({ type: ButtonType.Normal, stateEffect: true }) {
-          Text($r('app.string.cancel_action'))
-            .fontSize(15)
+        Column({ space: 8 }) {
+          Text(this.sanitizeDisplayLabel(this.previewDownloadEntry.name))
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_primary'))
+            .width('100%')
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Row({ space: 8 }) {
+            Text(this.previewTypeText(this.previewDownloadEntry))
+              .fontSize(12)
+              .fontColor($r('sys.color.font_secondary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(this.formatSize(this.previewDownloadEntry.size))
+              .fontSize(12)
+              .fontColor($r('sys.color.font_secondary'))
+          }
+          .width('100%')
         }
-        .layoutWeight(1)
-        .height(46)
-        .backgroundColor($r('sys.color.comp_background_tertiary'))
-        .borderRadius(14)
-        .onClick(() => this.previewDownloadVisible = false)
-        Button({ type: ButtonType.Normal, stateEffect: true }) {
-          Text($r('app.string.taildrive_preview_download_action'))
-            .fontSize(15)
-            .fontColor($r('sys.color.font_on_primary'))
+        .width('100%')
+        .padding(UiTokens.CARD_PADDING)
+        .backgroundColor($r('app.color.surface_subtle'))
+        .borderRadius(UiTokens.CARD_RADIUS)
+        Text($r('app.string.taildrive_preview_download_hint'))
+          .fontSize(13)
+          .fontColor($r('sys.color.font_secondary'))
+          .lineHeight(20)
+          .width('100%')
+        Row({ space: 12 }) {
+          Button($r('app.string.cancel_action'), {
+            buttonStyle: ButtonStyleMode.NORMAL, controlSize: ControlSize.NORMAL
+          })
+            .fontSize(UiTokens.BODY_SIZE)
+            .fontColor($r('sys.color.font_primary'))
+            .backgroundColor($r('sys.color.comp_background_primary'))
+            .layoutWeight(1)
+            .height(UiTokens.ACTION_HEIGHT)
+            .onClick(() => this.previewDownloadVisible = false)
+          Button($r('app.string.taildrive_preview_download_action'), {
+            buttonStyle: ButtonStyleMode.EMPHASIZED, controlSize: ControlSize.NORMAL
+          })
+            .fontSize(UiTokens.BODY_SIZE)
+            .layoutWeight(1)
+            .height(UiTokens.ACTION_HEIGHT)
+            .id('taildrive-preview-download-confirm')
+            .onClick(() => this.confirmPreviewDownload())
         }
-        .layoutWeight(1)
-        .height(46)
-        .backgroundColor($r('app.color.emphasize'))
-        .borderRadius(14)
-        .id('taildrive-preview-download-confirm')
-        .onClick(() => this.confirmPreviewDownload())
+        .width('100%')
       }
       .width('100%')
+      .padding({ left: UiTokens.PAGE_PADDING, right: UiTokens.PAGE_PADDING, top: 16, bottom: 24 })
+      .id('taildrive-preview-download-sheet')
+      if (this.isSheetBlockedBySecurity(this.previewDownloadEntry.path.length > 0 ?
+        this.previewDownloadEntry.path : this.path)) {
+        this.SheetSecurityShield()
+      }
     }
     .width('100%')
-    .padding({ left: 20, right: 20, top: 16, bottom: 24 })
-    .id('taildrive-preview-download-sheet')
+    .height('100%')
   }
 
   @Builder
   private DetailRow(label: ResourceStr, value: ResourceStr) {
     Row({ space: 12 }) {
       Text(label)
-        .fontSize(12)
+        .fontSize(13)
         .fontColor($r('sys.color.font_secondary'))
-        .width(92)
+        .width(88)
       Text(value)
-        .fontSize(12)
+        .fontSize(13)
         .fontColor($r('sys.color.font_primary'))
         .layoutWeight(1)
-        .maxLines(3)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .textAlign(TextAlign.Start)
+        .wordBreak(WordBreak.BREAK_ALL)
+        .copyOption(CopyOptions.LocalDevice)
     }
     .width('100%')
+    .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING, top: 12, bottom: 12 })
+    .alignItems(VerticalAlign.Top)
   }
 
   @Builder
   private MoveSheet() {
-    Column({ space: 10 }) {
-      Text($r('app.string.taildrive_move_title'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.font_primary'))
-        .width('100%')
-      Row({ space: 8 }) {
-        Text($r('app.string.taildrive_up_action'))
-          .fontSize(12)
-          .fontColor(this.movePath === this.moveRoot ? $r('sys.color.font_secondary') :
-            $r('app.color.emphasize'))
-          .onClick(() => this.moveGoUp())
-        Text(this.displayPath(this.movePath))
-          .fontSize(12)
-          .fontColor($r('sys.color.font_secondary'))
-          .layoutWeight(1)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
-      .width('100%')
-      if (this.moveLoading) {
-        LoadingProgress().width(24).height(24)
-      } else {
-        Scroll() {
-          Column({ space: 8 }) {
-            ForEach(this.moveDestinationEntries(), (entry: TaildriveEntry) => {
-              Row({ space: 8 }) {
-                this.EntryIcon(entry, 18)
-                Text(entry.name)
+    Stack() {
+      Column({ space: UiTokens.GROUP_GAP }) {
+        Row({ space: 8 }) {
+          if (this.movePath !== '/') {
+            Column() {
+              Button({ type: ButtonType.Circle, stateEffect: true }) {
+                SymbolGlyph($r('sys.symbol.chevron_left'))
+                  .fontSize(16)
+                  .fontColor([$r('sys.color.icon_primary')])
+              }
+              .width(36)
+              .height(36)
+              .backgroundColor(Color.Transparent)
+              .enabled(this.moveContextCurrent() && !this.busy && !this.moveLoading && !this.moveSubmitInFlight)
+              .accessibilityText($r('app.string.taildrive_up_action'))
+              .id('taildrive-move-up')
+              .onClick(() => this.moveGoUp())
+            }
+            .width(36)
+            .height(36)
+            .borderRadius(18)
+            .backgroundColor($r('sys.color.comp_background_primary'))
+          }
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.folder'))
+              .fontSize(15)
+              .fontColor([$r('sys.color.icon_secondary')])
+            Scroll(this.movePathScroller) {
+              Row({ space: 4 }) {
+                Text('Taildrive')
                   .fontSize(13)
-                  .fontColor($r('sys.color.font_primary'))
-                  .layoutWeight(1)
+                  .fontWeight(this.movePath === '/' ? FontWeight.Medium : FontWeight.Regular)
+                  .fontColor(this.movePath === '/' ? $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
                   .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .id('taildrive-move-breadcrumb-root')
+                  .onClick(() => this.navigateToMoveBreadcrumb(-1))
+                ForEach(this.moveBreadcrumbSegments(), (segment: string, index: number) => {
+                  Text('›')
+                    .fontSize(14)
+                    .fontColor($r('sys.color.icon_secondary'))
+                  Text(segment)
+                    .fontSize(13)
+                    .fontWeight(index === this.moveBreadcrumbSegments().length - 1 ? FontWeight.Medium : FontWeight.Regular)
+                    .fontColor(index === this.moveBreadcrumbSegments().length - 1 ?
+                      $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
+                    .maxLines(1)
+                    .id(`taildrive-move-breadcrumb-${index}`)
+                    .onClick(() => this.navigateToMoveBreadcrumb(index))
+                }, (segment: string, index: number) => `${index}-${segment}`)
+              }
+            }
+            .layoutWeight(1)
+            .align(Alignment.Start)
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.None)
+            .id('taildrive-move-path')
+            .onAppear((): void => {
+              this.scheduleUiTimer((): void => {
+                this.movePathScroller.scrollEdge(Edge.End);
+              }, 40);
+            })
+          }
+          .height(36)
+          .layoutWeight(1)
+          .padding({ left: 12, right: 12 })
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor($r('sys.color.comp_background_primary'))
+          .borderRadius(18)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        Scroll() {
+          Column({ space: UiTokens.GROUP_GAP }) {
+            if (this.moveContextCurrent() && !this.moveLoading && this.moveReason.length === 0 &&
+              this.remotePathDepth(this.movePath) < 3) {
+              Text($r('app.string.taildrive_move_select_share_hint'))
+                .fontSize(12)
+                .fontColor($r('sys.color.font_secondary'))
+                .width('100%')
+                .padding({ left: 4, right: 4 })
+                .id('taildrive-move-share-hint')
+            }
+            if (!this.moveContextCurrent()) {
+              Text($r('app.string.taildrive_move_context_changed'))
+                .fontSize(13)
+                .lineHeight(19)
+                .fontColor($r('app.color.status_warning'))
+                .width('100%')
+                .padding(UiTokens.CARD_PADDING)
+                .backgroundColor($r('sys.color.comp_background_primary'))
+                .borderRadius(UiTokens.CARD_RADIUS)
+                .id('taildrive-move-context-changed')
+            } else if (this.moveLoading) {
+              Column() {
+                LoadingProgress().width(24).height(24).id('taildrive-move-loading')
               }
               .width('100%')
-              .padding(10)
-              .backgroundColor($r('app.color.surface_subtle'))
-              .borderRadius(10)
-              .onClick(() => this.openMoveDirectory(entry))
-            }, (entry: TaildriveEntry) => entry.path)
+              .padding({ top: 24, bottom: 24 })
+              .alignItems(HorizontalAlign.Center)
+            } else if (this.moveReason.length > 0) {
+              Column({ space: 8 }) {
+                Text(this.statusCodeText(this.moveReason))
+                  .fontSize(13)
+                  .fontColor($r('app.color.status_warning'))
+                  .width('100%')
+                  .id('taildrive-move-error')
+                Button($r('app.string.taildrive_refresh_action'), {
+                  buttonStyle: ButtonStyleMode.TEXTUAL, controlSize: ControlSize.NORMAL
+                })
+                  .fontSize(UiTokens.BODY_SIZE)
+                  .constraintSize({ minHeight: UiTokens.ACTION_HEIGHT })
+                  .enabled(!this.moveSubmitInFlight && !this.busy)
+                  .id('taildrive-move-retry')
+                  .onClick(() => this.loadMoveDirectory())
+              }
+              .width('100%')
+              .padding(UiTokens.CARD_PADDING)
+              .backgroundColor($r('sys.color.comp_background_primary'))
+              .borderRadius(UiTokens.CARD_RADIUS)
+              .alignItems(HorizontalAlign.Start)
+            } else if (this.moveDestinationEntries().length === 0) {
+              Row() {
+                Text($r('app.string.taildrive_move_no_subfolders'))
+                  .fontSize(13)
+                  .fontColor($r('sys.color.font_secondary'))
+                  .width('100%')
+                  .textAlign(TextAlign.Center)
+              }
+              .width('100%')
+              .padding(UiTokens.CARD_PADDING)
+              .backgroundColor($r('sys.color.comp_background_primary'))
+              .borderRadius(12)
+            } else {
+              Column({ space: 8 }) {
+                ForEach(this.moveDestinationEntries(), (entry: TaildriveEntry) => {
+                  Row({ space: 8 }) {
+                    this.EntryIcon(entry, 20)
+                    Text(this.sanitizeDisplayLabel(entry.name))
+                      .fontSize(14)
+                      .fontColor($r('sys.color.font_primary'))
+                      .layoutWeight(1)
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    SymbolGlyph($r('sys.symbol.chevron_right'))
+                      .fontSize(UiTokens.ICON_CHEVRON)
+                      .fontColor([$r('sys.color.icon_secondary')])
+                  }
+                  .width('100%')
+                  .padding(12)
+                  .backgroundColor($r('sys.color.comp_background_primary'))
+                  .borderRadius(12)
+                  .constraintSize({ minHeight: 46 })
+                  .enabled(!this.moveSubmitInFlight && !this.busy)
+                  .id(`taildrive-move-entry-${entry.name}`)
+                  .onClick(() => this.openMoveDirectory(entry))
+                }, (entry: TaildriveEntry) => entry.path)
+              }
+              .width('100%')
+            }
           }
           .width('100%')
+          .alignItems(HorizontalAlign.Start)
         }
-        .height(220)
+        .width('100%')
+        .layoutWeight(1)
+        .align(Alignment.TopStart)
+        .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+        .scrollBar(BarState.Off)
         .nestedScroll({
-          scrollForward: NestedScrollMode.PARENT_FIRST,
+          scrollForward: NestedScrollMode.SELF_FIRST,
           scrollBackward: NestedScrollMode.SELF_FIRST
         })
-      }
-      Row({ space: 10 }) {
-        Text($r('app.string.cancel_action'))
-          .fontColor($r('sys.color.font_secondary'))
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-          .padding(12)
-          .onClick(() => this.moveVisible = false)
-        Text($r('app.string.taildrive_move_here_action'))
-          .fontColor($r('app.color.emphasize'))
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-          .padding(12)
-          .onClick(() => this.confirmMove())
+        .id('taildrive-move-content-scroll')
+        Row({ space: UiTokens.GROUP_GAP }) {
+          Button($r('app.string.cancel_action'), {
+            buttonStyle: ButtonStyleMode.NORMAL, controlSize: ControlSize.NORMAL
+          })
+            .fontSize(UiTokens.BODY_SIZE)
+            .fontColor($r('sys.color.font_primary'))
+            .backgroundColor($r('sys.color.comp_background_primary'))
+            .layoutWeight(1)
+            .height(UiTokens.ACTION_HEIGHT)
+            .id('taildrive-move-cancel')
+            .onClick(() => this.closeMovePicker())
+          Button(this.moveOperation === 'copy' ? $r('app.string.taildrive_copy_here_action') :
+            $r('app.string.taildrive_move_here_action'), {
+            buttonStyle: ButtonStyleMode.EMPHASIZED, controlSize: ControlSize.NORMAL
+          })
+            .fontSize(UiTokens.BODY_SIZE)
+            .layoutWeight(1)
+            .height(UiTokens.ACTION_HEIGHT)
+            .id('taildrive-move-confirm')
+            .enabled(this.sessionController.canConfirmMove())
+            .onClick(() => this.confirmMove())
+        }
+        .width('100%')
       }
       .width('100%')
+      .height('100%')
+      .padding({ left: UiTokens.PAGE_PADDING, right: UiTokens.PAGE_PADDING, top: 4, bottom: 24 })
+      .backgroundColor(LightAppearance.supports() ? Color.Transparent : $r('sys.color.background_secondary'))
+      if (this.isSheetBlockedBySecurity(this.movePath) || this.isMoveSheetBlockedBySecurity()) {
+        this.SheetSecurityShield()
+      }
     }
     .width('100%')
-    .padding({ left: 20, right: 20, top: 16, bottom: 24 })
+    .height('100%')
   }
 
   @Builder
@@ -2919,7 +2789,7 @@ export struct TaildriveBrowser {
               Row({ space: 8 }) {
                 this.EntryIcon(entry, 18)
                 Column({ space: 2 }) {
-                  Text(entry.name)
+                  Text(this.sanitizeDisplayLabel(entry.name))
                     .fontSize(13)
                     .fontColor($r('sys.color.font_primary'))
                     .width('100%')
@@ -2996,7 +2866,7 @@ export struct TaildriveBrowser {
       }
       if (this.status.length > 0 || this.retryAvailable) {
         Row({ space: 10 }) {
-          if (this.status.length > 0) {
+          if (this.status.length > 0 || this.hasListFailure()) {
             Text(this.statusText())
               .fontSize(11)
               .fontColor($r('sys.color.font_secondary'))
@@ -3008,10 +2878,19 @@ export struct TaildriveBrowser {
             Text($r('app.string.taildrive_retry_action'))
               .fontSize(11)
               .fontColor($r('app.color.emphasize'))
+              .height(44)
+              .padding({ left: 12, right: 12 })
+              .enabled(!this.loading && !this.busy && !this.appLockActive)
               .onClick(() => this.retryLastOperation())
           }
         }
         .width('100%')
+        if (this.showRetainedListNotice()) {
+          Text($r('app.string.taildrive_retained_list_notice'))
+            .fontSize(12)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+        }
       }
     }
     .width('100%')
@@ -3023,6 +2902,10 @@ export struct TaildriveBrowser {
 
   private startRefreshPolling(): void {
     this.stopRefreshPolling();
+    if (!this.appInForeground || !this.browserVisible || !this.connected || this.appLockActive ||
+      (this.standalone && !this.filesTabActive)) {
+      return;
+    }
     this.refreshTimer = setInterval(() => {
       if (!this.connected || this.loading || this.busy) {
         return;
@@ -3040,7 +2923,7 @@ export struct TaildriveBrowser {
 
   @Builder
   private EntryIcon(entry: TaildriveEntry, size: number) {
-    Stack() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
       if (entry.kind !== 'directory' && this.thumbnailUri(entry).length > 0) {
         Image(this.thumbnailUri(entry))
           .width(size)
@@ -3054,9 +2937,35 @@ export struct TaildriveBrowser {
           .height(size)
           .objectFit(ImageFit.Contain)
       }
+      if (this.viewMode === 'grid' && !this.selectionMode && this.localFileStatus(entry).length > 0) {
+        Row() {
+          this.LocalFileStatus(entry, 13)
+        }
+        .width(19)
+        .height(19)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor($r('sys.color.comp_background_primary'))
+        .borderRadius(10)
+        .hitTestBehavior(HitTestMode.Transparent)
+      }
     }
     .width(size)
     .height(size)
+  }
+
+  @Builder
+  private LocalFileStatus(entry: TaildriveEntry, size: number) {
+    if (this.localFileStatus(entry).length > 0) {
+      SymbolGlyph(this.localFileStatus(entry) === 'cached' ? $r('sys.symbol.arrow_down_circle') :
+        $r('sys.symbol.arrow_down_circle_badge_checkmark'))
+        .fontSize(size)
+        .fontColor([$r('sys.color.icon_secondary')])
+        .accessibilityLevel('yes')
+        .accessibilityText(this.localFileStatus(entry) === 'cached' ? $r('app.string.taildrive_cached_file') :
+          $r('app.string.taildrive_downloaded_file'))
+        .hitTestBehavior(HitTestMode.Transparent)
+        .id(`taildrive-local-status-${entry.name}`)
+    }
   }
 
   @Builder
@@ -3088,21 +2997,25 @@ export struct TaildriveBrowser {
     Row() {
       if (this.isSelected(entry)) {
         SymbolGlyph($r('sys.symbol.checkmark'))
-          .fontSize(14)
-          .fontColor([$r('sys.color.font_on_primary')])
+          .fontSize(13)
+          .fontColor([$r('app.color.selection_foreground')])
       }
     }
-    .width(24)
-    .height(24)
+    .width(22)
+    .height(22)
     .justifyContent(FlexAlign.Center)
-    .backgroundColor(this.isSelected(entry) ? $r('app.color.emphasize') : Color.Transparent)
+    .backgroundColor(this.isSelected(entry) ? $r('app.color.selection_background') : Color.Transparent)
     .border({
-      width: 1,
-      color: this.isSelected(entry) ? $r('app.color.emphasize') : $r('sys.color.comp_divider')
+      width: 1.5,
+      color: this.isSelected(entry) ? $r('app.color.selection_background') : $r('sys.color.icon_secondary')
     })
-    .borderRadius(12)
+    .borderRadius(11)
     .id(`taildrive-selection-mark-${entry.name}`)
-    .onClick(() => this.toggleEntrySelection(entry))
+    .onClick(() => {
+      if (!this.dragSelecting && Date.now() >= this.sessionController.dragSuppressClickUntilMs) {
+        this.toggleEntrySelection(entry);
+      }
+    })
   }
 
   @Builder
@@ -3110,7 +3023,7 @@ export struct TaildriveBrowser {
     Row({ space: 12 }) {
       this.EntryIcon(entry, 46)
       Column({ space: 3 }) {
-        Text(entry.name)
+        Text(this.sanitizeDisplayLabel(entry.name))
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
@@ -3134,6 +3047,8 @@ export struct TaildriveBrowser {
       if (entry.kind === 'file') {
         MenuItem({ content: $r('app.string.taildrive_download_action') })
           .onClick(() => this.download(entry))
+        MenuItem({ content: $r('app.string.taildrive_share_action') })
+          .onClick(() => this.shareEntries([entry]))
       }
       MenuItem({ content: $r('app.string.taildrive_multi_select_action') })
         .onClick(() => this.selectFromContextMenu(entry))
@@ -3143,6 +3058,8 @@ export struct TaildriveBrowser {
           .onClick(() => this.toggleFolderLock(entry))
       }
       if (this.canModifyCurrentPath()) {
+        MenuItem({ content: $r('app.string.taildrive_copy_action') })
+          .onClick(() => this.openDestinationPickerForEntries([entry], 'copy'))
         MenuItem({ content: $r('app.string.taildrive_move_action') })
           .onClick(() => this.openMovePicker(entry))
         MenuItem({ content: $r('app.string.taildrive_rename_action') })
@@ -3165,7 +3082,7 @@ export struct TaildriveBrowser {
         Row({ space: 10 }) {
           this.EntryIcon(entry, 36)
           Column({ space: 2 }) {
-            Text(entry.name)
+            Text(this.sanitizeDisplayLabel(entry.name))
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('sys.color.font_primary'))
@@ -3176,6 +3093,9 @@ export struct TaildriveBrowser {
           }
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Start)
+          if (!this.selectionMode) {
+            this.LocalFileStatus(entry, 17)
+          }
         }
         .layoutWeight(1)
         .alignItems(VerticalAlign.Center)
@@ -3185,7 +3105,7 @@ export struct TaildriveBrowser {
           this.SelectionMark(entry)
         } else if (entry.kind === 'directory') {
           SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(18)
+            .fontSize(UiTokens.ICON_CHEVRON)
             .fontColor([$r('sys.color.icon_secondary')])
             .onClick(() => this.openEntry(entry))
         }
@@ -3202,6 +3122,7 @@ export struct TaildriveBrowser {
       preview: this.EntryContextPreview(entry),
       previewBorderRadius: 22,
       borderRadius: 22,
+      systemMaterial: LightAppearance.menu(this.glowLevel),
       onAppear: (): void => this.vibrateTouch(true)
     })
   }
@@ -3211,7 +3132,7 @@ export struct TaildriveBrowser {
     Stack({ alignContent: Alignment.TopEnd }) {
       Column({ space: 2 }) {
         this.EntryIcon(entry, 42)
-        Text(entry.name)
+        Text(this.sanitizeDisplayLabel(entry.name))
           .fontSize(11)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
@@ -3234,16 +3155,13 @@ export struct TaildriveBrowser {
     .width('100%')
     .constraintSize({ minHeight: 82 })
     .backgroundColor(Color.Transparent)
-    .border({
-      width: this.isSelected(entry) ? 2 : 1,
-      color: this.isSelected(entry) ? $r('app.color.emphasize') : $r('sys.color.comp_divider')
-    })
     .borderRadius(10)
     .onClick(() => this.openEntry(entry))
     .bindContextMenu(this.EntryContextMenu(entry), ResponseType.LongPress, {
       preview: this.EntryContextPreview(entry),
       previewBorderRadius: 22,
       borderRadius: 22,
+      systemMaterial: LightAppearance.menu(this.glowLevel),
       onAppear: (): void => this.vibrateTouch(true)
     })
     .id(`taildrive-entry-${entry.name}`)
@@ -3287,6 +3205,22 @@ export struct TaildriveBrowser {
   }
 
   @Builder
+  private RefreshableEntryViewport() {
+    Refresh({ refreshing: $$this.pullRefreshing }) {
+      this.StandaloneEntryViewport()
+    }
+    .width('100%')
+    .height('100%')
+    .layoutWeight(1)
+    .pullToRefresh(this.connected && !this.busy && !this.appLockActive && this.hasFolderAccess(this.path) &&
+      !this.dragSelecting)
+    .onRefreshing(() => {
+      this.pullRefresh();
+    })
+    .id('taildrive-pull-refresh')
+  }
+
+  @Builder
   private StandaloneEntryViewport() {
     if (this.loading && this.entries.length === 0) {
       Column({ space: 10 }) {
@@ -3296,22 +3230,54 @@ export struct TaildriveBrowser {
           .fontColor($r('sys.color.font_secondary'))
       }
       .width('100%')
-      .layoutWeight(1)
+      .height('100%')
       .justifyContent(FlexAlign.Center)
     } else if (this.displayEntries().length === 0) {
-      Column({ space: 10 }) {
-        SymbolGlyph($r('sys.symbol.folder'))
-          .fontSize(42)
-          .fontColor([$r('sys.color.icon_secondary')])
-        Text(this.reason.length > 0 ? this.statusCodeText(this.reason) : $r('app.string.taildrive_empty'))
-          .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
-          .textAlign(TextAlign.Center)
-          .lineHeight(20)
+      Scroll(this.contentScroller) {
+        Column({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.folder'))
+            .fontSize(42)
+            .fontColor([$r('sys.color.icon_secondary')])
+          Text(this.reason.length > 0 ? this.statusCodeText(this.reason) :
+            this.searchQuery.trim().length > 0 ? $r('app.string.feature_guide_search_empty') :
+              this.setupHelpNotice() === 'share' ? $r('app.string.feature_guide_no_shares') : $r('app.string.taildrive_empty'))
+            .fontSize(13)
+            .fontColor($r('sys.color.font_secondary'))
+            .textAlign(TextAlign.Center)
+            .lineHeight(20)
+          if (this.searchQuery.trim().length > 0) {
+            Button($r('app.string.feature_guide_clear_search'), {
+              buttonStyle: ButtonStyleMode.TEXTUAL, controlSize: ControlSize.NORMAL
+            })
+              .fontSize(UiTokens.BODY_SIZE)
+              .constraintSize({ minHeight: UiTokens.ACTION_HEIGHT })
+              .id('taildrive-clear-empty-search')
+              .onClick(() => { this.searchQuery = ''; this.rebuildListDataSource(); })
+          } else if (this.setupHelpNotice() === 'share') {
+            this.SetupHelpAction($r('app.string.feature_guide_share_help'), 'taildrive-share-help')
+          } else if (this.setupHelpNotice() === 'permission') {
+            this.SetupHelpAction($r('app.string.feature_guide_permission_help'), 'taildrive-permission-help')
+          }
+          if (this.reason.length > 0 && this.retryAvailable &&
+            (this.sessionController.retryKind === 'refresh' || this.sessionController.retryKind === 'target')) {
+            Button($r('app.string.taildrive_refresh_action'), {
+              buttonStyle: ButtonStyleMode.TEXTUAL, controlSize: ControlSize.NORMAL
+            })
+              .fontSize(UiTokens.BODY_SIZE)
+              .constraintSize({ minHeight: UiTokens.ACTION_HEIGHT })
+              .id('taildrive-empty-retry')
+              .enabled(!this.loading && !this.busy)
+              .onClick(() => this.retryLastOperation())
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
       }
       .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
+      .height('100%')
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .id('taildrive-list-state')
     } else if (this.viewMode === 'list') {
       List({ scroller: this.contentScroller, space: 0 }) {
@@ -3331,12 +3297,55 @@ export struct TaildriveBrowser {
         }, (item: TaildriveListItemModel) => item.key)
       }
       .width('100%')
-      .layoutWeight(1)
+      .height('100%')
       .cachedCount(12)
       .contentEndOffset(this.bottomInset + 86)
-      .edgeEffect(EdgeEffect.Spring)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .scrollBar(BarState.Auto)
       .scrollBarWidth(3)
+      .enableScrollInteraction(!this.dragSelecting)
+      .onAreaChange((_oldValue: Area, newValue: Area) => {
+        this.dragViewportWidth = Number(newValue.width) || 0;
+        this.dragViewportHeight = Number(newValue.height) || 0;
+      })
+      .onTouch((event: TouchEvent) => {
+        if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+          this.finishDragSelection();
+        }
+      })
+      .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
+        if (gestureInfo.tag === 'taildrive-drag-select' &&
+          (!this.selectionMode || !this.connected || this.busy || this.loading)) {
+          return GestureJudgeResult.REJECT;
+        }
+        return GestureJudgeResult.CONTINUE;
+      })
+      .priorityGesture(
+        GestureGroup(
+          GestureMode.Sequence,
+          LongPressGesture({ repeat: false, duration: 220 })
+            .tag('taildrive-drag-select')
+            .onAction((event: GestureEvent) => {
+              this.startDragSelectionFromGesture(event);
+            }),
+          PanGesture({ fingers: 1, direction: PanDirection.All, distance: 1 })
+            .onActionStart((event: GestureEvent) => {
+              this.moveDragSelectionFromGesture(event);
+            })
+            .onActionUpdate((event: GestureEvent) => {
+              this.moveDragSelectionFromGesture(event);
+            })
+            .onActionEnd(() => {
+              this.finishDragSelection();
+            })
+            .onActionCancel(() => {
+              this.finishDragSelection();
+            })
+        )
+          .onCancel(() => {
+            this.finishDragSelection();
+          })
+      )
       .id('taildrive-list-view')
       .transition(TransitionEffect.OPACITY.animation({
         duration: MotionTokens.duration(180), curve: MotionTokens.curve()
@@ -3366,12 +3375,55 @@ export struct TaildriveBrowser {
       .columnsGap(4)
       .rowsGap(4)
       .width('100%')
-      .layoutWeight(1)
+      .height('100%')
       .cachedCount(16)
       .contentEndOffset(this.bottomInset + 86)
-      .edgeEffect(EdgeEffect.Spring)
+      .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .scrollBar(BarState.Auto)
       .scrollBarWidth(3)
+      .enableScrollInteraction(!this.dragSelecting)
+      .onAreaChange((_oldValue: Area, newValue: Area) => {
+        this.dragViewportWidth = Number(newValue.width) || 0;
+        this.dragViewportHeight = Number(newValue.height) || 0;
+      })
+      .onTouch((event: TouchEvent) => {
+        if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+          this.finishDragSelection();
+        }
+      })
+      .onGestureJudgeBegin((gestureInfo: GestureInfo, _event: BaseGestureEvent): GestureJudgeResult => {
+        if (gestureInfo.tag === 'taildrive-drag-select' &&
+          (!this.selectionMode || !this.connected || this.busy || this.loading)) {
+          return GestureJudgeResult.REJECT;
+        }
+        return GestureJudgeResult.CONTINUE;
+      })
+      .priorityGesture(
+        GestureGroup(
+          GestureMode.Sequence,
+          LongPressGesture({ repeat: false, duration: 220 })
+            .tag('taildrive-drag-select')
+            .onAction((event: GestureEvent) => {
+              this.startDragSelectionFromGesture(event);
+            }),
+          PanGesture({ fingers: 1, direction: PanDirection.All, distance: 1 })
+            .onActionStart((event: GestureEvent) => {
+              this.moveDragSelectionFromGesture(event);
+            })
+            .onActionUpdate((event: GestureEvent) => {
+              this.moveDragSelectionFromGesture(event);
+            })
+            .onActionEnd(() => {
+              this.finishDragSelection();
+            })
+            .onActionCancel(() => {
+              this.finishDragSelection();
+            })
+        )
+          .onCancel(() => {
+            this.finishDragSelection();
+          })
+      )
       .id('taildrive-grid-view')
       .transition(TransitionEffect.OPACITY.animation({
         duration: MotionTokens.duration(180), curve: MotionTokens.curve()
@@ -3382,10 +3434,9 @@ export struct TaildriveBrowser {
   @Builder
   private SearchField() {
     Row({ space: 8 }) {
-      Image($r('app.media.taildrive_search'))
-        .width(20)
-        .height(20)
-        .fillColor($r('sys.color.icon_secondary'))
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(20)
+        .fontColor([$r('sys.color.icon_secondary')])
       TextInput({ text: this.searchQuery, placeholder: $r('app.string.taildrive_search_placeholder') })
         .height(44)
         .layoutWeight(1)
@@ -3466,88 +3517,93 @@ export struct TaildriveBrowser {
 
   @Builder
   private SortSheet() {
-    Scroll() {
-      Column({ space: 0 }) {
-        Text($r('app.string.taildrive_sort_section'))
-          .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-          .padding({ top: 4, bottom: 6 })
-        this.SortModeChoice($r('app.string.taildrive_sort_name'), 'name', 'taildrive-sort-name')
-        Divider().color($r('sys.color.comp_divider'))
-        this.SortModeChoice($r('app.string.taildrive_sort_modified'), 'modified', 'taildrive-sort-modified')
-        Divider().color($r('sys.color.comp_divider'))
-        this.SortModeChoice($r('app.string.taildrive_sort_size'), 'size', 'taildrive-sort-size')
-        Text($r('app.string.taildrive_sort_direction_section'))
-          .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-          .padding({ top: 18, bottom: 6 })
-        Row() {
-          Text($r('app.string.taildrive_sort_ascending'))
-            .fontSize(15)
-            .fontColor($r('sys.color.font_primary'))
-            .layoutWeight(1)
-          if (!this.sortDraftDescending) {
-            SymbolGlyph($r('sys.symbol.checkmark'))
-              .fontSize(18)
-              .fontColor([$r('app.color.emphasize')])
+    Stack() {
+      Scroll() {
+        Column({ space: 0 }) {
+          Text($r('app.string.taildrive_sort_section'))
+            .fontSize(13)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .padding({ top: 4, bottom: 6 })
+          this.SortModeChoice($r('app.string.taildrive_sort_name'), 'name', 'taildrive-sort-name')
+          Divider().color($r('sys.color.comp_divider'))
+          this.SortModeChoice($r('app.string.taildrive_sort_modified'), 'modified', 'taildrive-sort-modified')
+          Divider().color($r('sys.color.comp_divider'))
+          this.SortModeChoice($r('app.string.taildrive_sort_size'), 'size', 'taildrive-sort-size')
+          Text($r('app.string.taildrive_sort_direction_section'))
+            .fontSize(13)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .padding({ top: 18, bottom: 6 })
+          Row() {
+            Text($r('app.string.taildrive_sort_ascending'))
+              .fontSize(15)
+              .fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1)
+            if (!this.sortDraftDescending) {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(18)
+                .fontColor([$r('app.color.emphasize')])
+            }
           }
+          .width('100%')
+          .height(48)
+          .padding({ left: 8, right: 8 })
+          .onClick(() => this.sortDraftDescending = false)
+          Divider().color($r('sys.color.comp_divider'))
+          Row() {
+            Text($r('app.string.taildrive_sort_descending'))
+              .fontSize(15)
+              .fontColor($r('sys.color.font_primary'))
+              .layoutWeight(1)
+            if (this.sortDraftDescending) {
+              SymbolGlyph($r('sys.symbol.checkmark'))
+                .fontSize(18)
+                .fontColor([$r('app.color.emphasize')])
+            }
+          }
+          .width('100%')
+          .height(48)
+          .padding({ left: 8, right: 8 })
+          .onClick(() => this.sortDraftDescending = true)
+          Text($r('app.string.taildrive_group_section'))
+            .fontSize(13)
+            .fontColor($r('sys.color.font_secondary'))
+            .width('100%')
+            .padding({ top: 18, bottom: 6 })
+          this.GroupModeChoice($r('app.string.taildrive_group_none'), 'none', 'taildrive-group-none')
+          Divider().color($r('sys.color.comp_divider'))
+          this.GroupModeChoice($r('app.string.taildrive_group_by_type'), 'type', 'taildrive-group-type')
+          Divider().color($r('sys.color.comp_divider'))
+          this.GroupModeChoice($r('app.string.taildrive_group_by_date'), 'date', 'taildrive-group-date')
+          Button($r('app.string.confirm_action'), {
+            buttonStyle: ButtonStyleMode.EMPHASIZED, controlSize: ControlSize.NORMAL
+          })
+            .fontSize(UiTokens.BODY_SIZE)
+            .width('100%')
+            .height(UiTokens.ACTION_HEIGHT)
+            .margin({ top: 20, bottom: 12 })
+            .id('taildrive-sort-confirm')
+            .onClick(() => this.confirmSortPanel())
         }
         .width('100%')
-        .height(48)
-        .padding({ left: 8, right: 8 })
-        .onClick(() => this.sortDraftDescending = false)
-        Divider().color($r('sys.color.comp_divider'))
-        Row() {
-          Text($r('app.string.taildrive_sort_descending'))
-            .fontSize(15)
-            .fontColor($r('sys.color.font_primary'))
-            .layoutWeight(1)
-          if (this.sortDraftDescending) {
-            SymbolGlyph($r('sys.symbol.checkmark'))
-              .fontSize(18)
-              .fontColor([$r('app.color.emphasize')])
-          }
-        }
-        .width('100%')
-        .height(48)
-        .padding({ left: 8, right: 8 })
-        .onClick(() => this.sortDraftDescending = true)
-        Text($r('app.string.taildrive_group_section'))
-          .fontSize(13)
-          .fontColor($r('sys.color.font_secondary'))
-          .width('100%')
-          .padding({ top: 18, bottom: 6 })
-        this.GroupModeChoice($r('app.string.taildrive_group_none'), 'none', 'taildrive-group-none')
-        Divider().color($r('sys.color.comp_divider'))
-        this.GroupModeChoice($r('app.string.taildrive_group_by_type'), 'type', 'taildrive-group-type')
-        Divider().color($r('sys.color.comp_divider'))
-        this.GroupModeChoice($r('app.string.taildrive_group_by_date'), 'date', 'taildrive-group-date')
-        Text($r('app.string.confirm_action'))
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_on_primary'))
-          .width('100%')
-          .textAlign(TextAlign.Center)
-          .padding({ top: 13, bottom: 13 })
-          .backgroundColor($r('app.color.emphasize'))
-          .borderRadius(14)
-          .margin({ top: 20, bottom: 12 })
-          .id('taildrive-sort-confirm')
-          .onClick(() => this.confirmSortPanel())
+        .padding({ left: UiTokens.PAGE_PADDING, right: UiTokens.PAGE_PADDING, bottom: UiTokens.GROUP_GAP })
       }
       .width('100%')
-      .padding({ left: 20, right: 20, bottom: 12 })
+      .height('100%')
+      .align(Alignment.TopStart)
+      .scrollBar(BarState.Auto)
+      .nestedScroll({
+        scrollForward: NestedScrollMode.PARENT_FIRST,
+        scrollBackward: NestedScrollMode.SELF_FIRST
+      })
+      .id('taildrive-sort-panel')
+      if (this.isSheetBlockedBySecurity()) {
+        this.SheetSecurityShield()
+      }
     }
     .width('100%')
     .height('100%')
-    .scrollBar(BarState.Auto)
-    .nestedScroll({
-      scrollForward: NestedScrollMode.PARENT_FIRST,
-      scrollBackward: NestedScrollMode.SELF_FIRST
-    })
-    .id('taildrive-sort-panel')
   }
 
   @Builder
@@ -3564,6 +3620,7 @@ export struct TaildriveBrowser {
           dragBar: true,
           showClose: true,
           enableOutsideInteractive: false,
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
           onDisappear: () => {
             this.editorVisible = false;
           }
@@ -3573,14 +3630,17 @@ export struct TaildriveBrowser {
         .height(0)
         .id('taildrive-details-sheet-host')
         .bindSheet($$this.detailsVisible, this.DetailsSheet(), {
-          height: '60%',
+          detents: ['66%', '86%'],
           preferType: SheetType.BOTTOM,
           mode: SheetMode.OVERLAY,
+          scrollSizeMode: ScrollSizeMode.CONTINUOUS,
           dragBar: true,
           showClose: true,
           enableOutsideInteractive: false,
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
+          title: { title: $r('app.string.taildrive_details_title') },
           onDisappear: () => {
-            this.detailsVisible = false;
+            this.closeDetails();
           }
         })
       Row()
@@ -3594,6 +3654,7 @@ export struct TaildriveBrowser {
           dragBar: true,
           showClose: true,
           enableOutsideInteractive: false,
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
           onDisappear: () => {
             this.previewDownloadVisible = false;
           }
@@ -3603,14 +3664,24 @@ export struct TaildriveBrowser {
         .height(0)
         .id('taildrive-move-sheet-host')
         .bindSheet($$this.moveVisible, this.MoveSheet(), {
-          height: '62%',
+          detents: ['62%', '82%'],
           preferType: SheetType.BOTTOM,
           mode: SheetMode.OVERLAY,
+          scrollSizeMode: ScrollSizeMode.CONTINUOUS,
           dragBar: true,
           showClose: true,
           enableOutsideInteractive: false,
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
+          title: this.moveTargetCount > 1 ? {
+            title: this.moveOperation === 'copy' ? $r('app.string.taildrive_copy_to_title') :
+              $r('app.string.taildrive_move_title'),
+            subtitle: $r('app.string.taildrive_selected_count', this.moveTargetCount)
+          } : {
+            title: this.moveOperation === 'copy' ? $r('app.string.taildrive_copy_to_title') :
+              $r('app.string.taildrive_move_title')
+          },
           onDisappear: () => {
-            this.moveVisible = false;
+            this.closeMovePicker();
           }
         })
       Row()
@@ -3625,6 +3696,7 @@ export struct TaildriveBrowser {
           dragBar: true,
           showClose: true,
           enableOutsideInteractive: false,
+          systemMaterial: LightAppearance.sheet(this.glowLevel),
           title: { title: $r('app.string.taildrive_sort_group_title') },
           onDisappear: () => {
             this.sortSheetVisible = false;
@@ -3637,21 +3709,50 @@ export struct TaildriveBrowser {
   }
 
   @Builder
+  private SelectionSearchSummary() {
+    if (this.selectionMode && this.searchVisible) {
+      Row({ space: 10 }) {
+        Text(this.hiddenSelectedCount() > 0 ?
+          $r('app.string.taildrive_selected_search_scope', this.selectedEntries().length, this.hiddenSelectedCount()) :
+          $r('app.string.taildrive_selected_count', this.selectedEntries().length))
+          .fontSize(13)
+          .fontColor($r('sys.color.font_secondary'))
+          .layoutWeight(1)
+          .id('taildrive-selection-search-count')
+        Text(this.allVisibleEntriesSelected() ? $r('app.string.taildrive_deselect_all_action') :
+          $r('app.string.taildrive_select_all_action'))
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .constraintSize({ minWidth: 64, minHeight: 44 })
+          .padding({ left: 12, right: 12 })
+          .textAlign(TextAlign.Center)
+          .backgroundColor($r('sys.color.comp_background_tertiary'))
+          .borderRadius(22)
+          .id('taildrive-select-search-results')
+          .accessibilityText(this.allVisibleEntriesSelected() ?
+            $r('app.string.taildrive_deselect_search_results') : $r('app.string.taildrive_select_search_results'))
+          .enabled(!this.busy && this.displayEntries().length > 0)
+          .onClick(() => this.toggleSelectAll())
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
   private TopControls() {
     Row({ space: 6 }) {
       if (this.searchVisible) {
         Row() {
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(20)
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(18)
             .fontColor([$r('sys.color.icon_primary')])
-            .rotate({ angle: 180 })
         }
-        .width(46)
-        .height(46)
+        .width(38)
+        .height(38)
         .justifyContent(FlexAlign.Center)
         .backgroundColor($r('sys.color.comp_background_tertiary'))
-        .border({ width: 1, color: $r('sys.color.comp_divider') })
-        .borderRadius(23)
+        .borderRadius(19)
         .id('taildrive-search-back')
         .onClick(() => this.setSearchVisible(false))
         this.SearchField()
@@ -3691,11 +3792,11 @@ export struct TaildriveBrowser {
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
-          .height(42)
+          .height(44)
           .padding({ left: 17, right: 17 })
           .backgroundColor($r('sys.color.comp_background_tertiary'))
           .border({ width: 1, color: $r('sys.color.comp_divider') })
-          .borderRadius(21)
+          .borderRadius(22)
           .id('taildrive-select-all')
           .onClick(() => this.toggleSelectAll())
       }
@@ -3738,22 +3839,23 @@ export struct TaildriveBrowser {
 
   @Builder
   private PathBar() {
-    Row({ space: 5 }) {
+    Row({ space: 6 }) {
       if (this.path !== '/') {
         Row() {
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(17)
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(15)
             .fontColor([$r('sys.color.icon_primary')])
-            .rotate({ angle: 180 })
             .id('taildrive-back-icon')
         }
-        .width(40)
-        .height(40)
+        .width(34)
+        .height(34)
         .justifyContent(FlexAlign.Center)
-          .backgroundColor($r('sys.color.comp_background_tertiary'))
-        .border({ width: 1, color: $r('sys.color.comp_divider') })
-        .borderRadius(20)
+        .backgroundColor(Color.Transparent)
+        .borderRadius(17)
+        .systemMaterial(LightAppearance.toolbarButton(this.glowLevel))
         .id('taildrive-back')
+        .accessibilityText($r('app.string.taildrive_up_action'))
+        .enabled(!this.busy && !this.appLockActive)
         .onClick(() => this.goUp())
       }
       Row({ space: 2 }) {
@@ -3761,79 +3863,169 @@ export struct TaildriveBrowser {
         Row() {
           if (this.loading) {
             LoadingProgress()
-              .width(18)
-              .height(18)
+              .width(15)
+              .height(15)
               .id('taildrive-refresh-loading')
           } else {
             SymbolGlyph($r('sys.symbol.arrow_clockwise'))
-              .fontSize(17)
+              .fontSize(15)
               .fontColor([$r('sys.color.icon_secondary')])
           }
         }
         .width(30)
-        .height(36)
+        .height(30)
         .justifyContent(FlexAlign.Center)
-        .opacity(this.busy ? 0.45 : 1)
+        .opacity(this.busy || this.appLockActive ? 0.45 : 1)
         .id('taildrive-refresh')
+        .accessibilityText($r('app.string.taildrive_refresh_action'))
+        .enabled(!this.busy && !this.loading && !this.appLockActive)
         .onClick(() => this.refreshWithFeedback())
       }
-      .height(42)
+      .height(34)
       .layoutWeight(1)
-      .padding({ left: 12, right: 4 })
-      .backgroundColor($r('sys.color.comp_background_tertiary'))
-      .border({ width: 1, color: $r('sys.color.comp_divider') })
-      .borderRadius(20)
+      .padding({ left: 12, right: 3 })
+      .backgroundColor(Color.Transparent)
+      .borderRadius(17)
+      .systemMaterial(LightAppearance.toolbarButton(this.glowLevel))
     }
     .width('100%')
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private NavigationPathBar() {
+    Column() {
+      if (this.connected) {
+        this.PathBar()
+      }
+    }
+    .width('100%')
+    .height(40)
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: this.titleBarPadding, right: this.titleBarPadding, bottom: 4 })
+    .id('taildrive-navigation-path-bar')
+  }
+
+  private isTransferBannerVisible(): boolean {
+    return (this.busy || this.previewDownloading) &&
+      (this.transfer.state === 'queued' || this.transfer.state === 'transferring');
+  }
+
+  private isOperationBannerVisible(): boolean {
+    return !this.isTransferBannerVisible() && (this.status.length > 0 || this.retryAvailable);
+  }
+
+  private floatingCapsuleSideMargin(): number {
+    return this.standalone ? Math.max(0, TAILDRIVE_TOOLBAR_SIDE_MARGIN - this.titleBarPadding) : 0;
   }
 
   @Builder
   private TransferStatus() {
-    Row({ space: 8 }) {
-      LoadingProgress().width(18).height(18)
-      Text(this.transfer.fileName.length > 0 ? this.transfer.fileName :
-        $r('app.string.taildrive_transfer_in_progress'))
-        .fontSize(13)
-        .fontColor($r('sys.color.font_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-      Text(this.transferProgress())
-        .fontSize(12)
-        .fontColor($r('sys.color.font_secondary'))
-      Text($r('app.string.cancel_action'))
-        .fontSize(12)
-        .fontColor($r('app.color.status_error'))
-        .onClick(() => this.cancelVisibleTransfer())
+    Row({ space: 10 }) {
+      LoadingProgress()
+        .width(18)
+        .height(18)
+        .color($r('app.color.emphasize'))
+      Column({ space: 1 }) {
+        Text(this.transfer.fileName.length > 0 ? this.transfer.fileName :
+          $r('app.string.taildrive_transfer_in_progress'))
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Text(this.status.length > 0 ? this.statusText() : $r('app.string.taildrive_transfer_in_progress'))
+          .fontSize(11)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      if (this.transferProgress().length > 0) {
+        Text(this.transferProgress())
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.emphasize'))
+      }
+      Button({ type: ButtonType.Circle, stateEffect: true }) {
+        SymbolGlyph($r('sys.symbol.xmark'))
+          .fontSize(14)
+          .fontColor([$r('sys.color.icon_primary')])
+      }
+      .width(30)
+      .height(30)
+      .backgroundColor($r('sys.color.comp_background_tertiary'))
+      .accessibilityText($r('app.string.cancel_action'))
+      .id('taildrive-transfer-cancel')
+      .onClick(() => this.cancelVisibleTransfer())
     }
-    .width('100%')
-    .padding(14)
-    .backgroundColor($r('sys.color.comp_background_primary'))
-    .borderRadius(16)
+    .width(this.standalone ? `calc(100% - ${this.floatingCapsuleSideMargin() * 2}vp)` : '100%')
+    .constraintSize({ minHeight: 50 })
+    .padding({ left: 16, right: 10, top: 7, bottom: 7 })
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor(this.standalone ? Color.Transparent : $r('sys.color.comp_background_primary'))
+    .backgroundBlurStyle(this.standalone ? BlurStyle.COMPONENT_THICK : BlurStyle.NONE)
+    .border({ width: this.standalone ? 1 : 0, color: $r('sys.color.comp_divider') })
+    .shadow({
+      radius: this.standalone ? 20 : 0,
+      color: this.standalone ? $r('app.color.shadow_floating_capsule') : Color.Transparent,
+      offsetY: this.standalone ? 6 : 0
+    })
+    .borderRadius(25)
   }
 
   @Builder
   private OperationStatus() {
-    Row({ space: 10 }) {
-      if (this.status.length > 0) {
-        Text(this.statusText())
-          .fontSize(12)
-          .fontColor($r('sys.color.font_secondary'))
-          .layoutWeight(1)
-      } else {
-        Blank().layoutWeight(1)
+    Column({ space: 4 }) {
+      Row({ space: 10 }) {
+        if (this.status.length > 0 || this.hasListFailure()) {
+          Text(this.statusText())
+            .fontSize(13)
+            .lineHeight(18)
+            .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1)
+        } else {
+          Blank().layoutWeight(1)
+        }
+        if (this.retryAvailable) {
+          Button($r('app.string.taildrive_retry_action'), {
+            buttonStyle: ButtonStyleMode.TEXTUAL, controlSize: ControlSize.SMALL
+          })
+            .fontSize(13)
+            .height(32)
+            .enabled(!this.loading && !this.busy && !this.appLockActive)
+            .id('taildrive-operation-retry')
+            .onClick(() => this.retryLastOperation())
+        }
       }
-      if (this.retryAvailable) {
-        Text($r('app.string.taildrive_retry_action'))
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      if (this.showRetainedListNotice()) {
+        Text($r('app.string.taildrive_retained_list_notice'))
           .fontSize(12)
-          .fontColor($r('app.color.emphasize'))
-          .onClick(() => this.retryLastOperation())
+          .lineHeight(18)
+          .fontColor($r('sys.color.font_secondary'))
+          .width('100%')
+          .id('taildrive-retained-list-notice')
+      }
+      if ((this.status === 'permission_denied' || this.reason === 'permission_denied') && this.canShowSetupHelp()) {
+        this.SetupHelpAction($r('app.string.feature_guide_permission_help'), 'taildrive-operation-permission-help')
       }
     }
-    .width('100%')
-    .padding({ left: 14, right: 14, top: 12, bottom: 12 })
-    .backgroundColor($r('sys.color.comp_background_primary'))
-    .borderRadius(14)
+    .width(this.standalone ? `calc(100% - ${this.floatingCapsuleSideMargin() * 2}vp)` : '100%')
+    .padding({ left: 16, right: 14, top: 9, bottom: 9 })
+    .backgroundColor(this.standalone ? Color.Transparent : $r('sys.color.comp_background_primary'))
+    .backgroundBlurStyle(this.standalone ? BlurStyle.COMPONENT_THICK : BlurStyle.NONE)
+    .border({ width: this.standalone ? 1 : 0, color: $r('sys.color.comp_divider') })
+    .shadow({
+      radius: this.standalone ? 20 : 0,
+      color: this.standalone ? $r('app.color.shadow_floating_capsule') : Color.Transparent,
+      offsetY: this.standalone ? 6 : 0
+    })
+    .borderRadius(22)
   }
 
   private saveSelectedEntry(): void {
@@ -3845,43 +4037,166 @@ export struct TaildriveBrowser {
     this.download(entry);
   }
 
-  private copySelectedPaths(): void {
-    const selected: TaildriveEntry[] = this.selectedEntries();
-    if (selected.length === 0) {
+  private copyEntryPath(entry: TaildriveEntry): void {
+    if (this.appLockActive || !this.hasFolderAccess(this.path) || !this.hasFolderAccess(entry.path)) {
       return;
     }
-    const data: pasteboard.PasteData = pasteboard.createData(
-      pasteboard.MIMETYPE_TEXT_PLAIN, selected.map((entry: TaildriveEntry) => entry.path).join('\n'));
+    const data: pasteboard.PasteData = createLocalTextPasteData(entry.path);
     pasteboard.getSystemPasteboard().setData(data)
       .then(() => this.showTransientStatus('paths_copied'))
       .catch(() => this.status = 'copy_failed');
   }
 
-  private async shareSelectedEntry(): Promise<void> {
-    const entry: TaildriveEntry | undefined = this.selectedEntry();
-    if (entry === undefined || entry.kind !== 'file') {
-      this.status = 'select_one_for_details';
+  private canShareSelected(): boolean {
+    if (this.busy || this.previewDownloading) {
+      return false;
+    }
+    const selected: TaildriveEntry[] = this.selectedEntries();
+    return selected.length > 0 && selected.every((entry: TaildriveEntry) => entry.kind === 'file');
+  }
+
+  private shareUtdForEntry(entry: TaildriveEntry): string {
+    const extension: string = this.fileExtension(entry.name);
+    if (extension.length > 0) {
+      try {
+        const utd: string = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(`.${extension}`);
+        if (utd !== undefined && utd.length > 0) {
+          return utd;
+        }
+      } catch (_error) {}
+    }
+    return uniformTypeDescriptor.UniformDataType.FILE;
+  }
+
+  private async shareSelectedEntries(): Promise<void> {
+    const selected: TaildriveEntry[] = this.selectedEntries();
+    if (selected.length === 0) {
+      this.status = 'file_unavailable';
       return;
     }
-    if (!await this.ensureFolderAccess(entry.path)) {
+    if (!selected.every((entry: TaildriveEntry) => entry.kind === 'file')) {
+      this.status = 'file_unavailable';
       return;
     }
-    const cached: TaildriveCachedPreview | undefined =
-      this.previewGateway.cachedPreview(this.context(), entry);
-    if (cached === undefined) {
-      this.promptPreviewDownload(entry);
+    await this.shareEntries(selected);
+  }
+
+  private async shareEntries(entries: TaildriveEntry[]): Promise<void> {
+    const targets: TaildriveEntry[] = entries
+      .filter((entry: TaildriveEntry) => entry.kind === 'file')
+      .map((entry: TaildriveEntry) => this.snapshotFileEntry(entry));
+    if (!this.connected || this.busy || this.previewDownloading || targets.length === 0) {
       return;
+    }
+    for (let index: number = 0; index < targets.length; index++) {
+      if (!await this.ensureFolderAccess(targets[index].path)) {
+        return;
+      }
+    }
+    await this.cancelPreviewDownload();
+    if (!this.connected) {
+      return;
+    }
+    const generation: number = ++this.previewGeneration;
+    const prepared: Array<TaildriveSharePreparedFile> = [];
+    let downloadedAny: boolean = false;
+    let pollingStarted: boolean = false;
+    try {
+      for (let index: number = 0; index < targets.length; index++) {
+        const entry: TaildriveEntry = targets[index];
+        let cached: TaildriveCachedPreview | undefined = this.previewGateway.cachedPreview(this.context(), entry);
+        if (cached === undefined) {
+          let root: string = '';
+          let localPath: string = '';
+          try {
+            root = this.previewGateway.root(this.context());
+            localPath = this.previewGateway.prepareDownload(this.context(), entry);
+          } catch (_error) {
+            if (generation === this.previewGeneration) {
+              this.status = 'share_download_failed';
+            }
+            return;
+          }
+          const requestId: number = this.newTransferRequestId();
+          this.activePreviewPath = entry.path;
+          this.cachedEntries = this.cachedEntries.filter((candidate: TaildriveEntry) => candidate.path !== entry.path);
+          this.previewRequestId = requestId;
+          this.previewDownloading = true;
+          this.status = 'share_downloading';
+          this.clearRetry();
+          if (!pollingStarted) {
+            this.startTransferPolling();
+            pollingStarted = true;
+          }
+          downloadedAny = true;
+          const result: TaildriveTransferSnapshot = await this.gateway.download({
+            requestId: requestId,
+            remotePath: entry.path,
+            localRoot: root,
+            localPath: localPath
+          });
+          if (generation !== this.previewGeneration) {
+            return;
+          }
+          this.transfer = result;
+          if (result.state !== 'completed') {
+            this.status = result.reason.length > 0 ? result.reason : 'share_download_failed';
+            return;
+          }
+          this.markCachedEntry(entry);
+          cached = this.previewGateway.cachedPreview(this.context(), entry);
+          if (cached === undefined) {
+            this.status = 'share_download_failed';
+            return;
+          }
+        }
+        prepared.push({ entry: entry, localPath: cached.path });
+      }
+    } catch (_error) {
+      if (generation === this.previewGeneration) {
+        this.status = 'share_download_failed';
+      }
+      return;
+    } finally {
+      if (generation === this.previewGeneration) {
+        this.previewRequestId = 0;
+        this.previewDownloading = false;
+        this.activePreviewPath = '';
+        if (pollingStarted) {
+          this.stopTransferPolling();
+          clearTaildriveProgress().catch(() => {});
+        }
+      }
+    }
+    if (generation !== this.previewGeneration || !this.connected || !this.browserVisible ||
+      this.appLockActive || prepared.length === 0) {
+      return;
+    }
+    if (this.status === 'share_downloading') {
+      this.status = '';
+    }
+    if (downloadedAny) {
+      this.refreshThumbnails(this.entries);
     }
     try {
-      const sharedData: systemShare.SharedData = new systemShare.SharedData({
-        utd: uniformTypeDescriptor.UniformDataType.FILE,
-        uri: fileUri.getUriFromPath(cached.path),
-        title: entry.name
-      });
+      const records: Array<systemShare.SharedRecord> = prepared.map(
+        (item: TaildriveSharePreparedFile): systemShare.SharedRecord => {
+          const record: systemShare.SharedRecord = {
+            utd: this.shareUtdForEntry(item.entry),
+            uri: fileUri.getUriFromPath(item.localPath),
+            title: item.entry.name
+          };
+          return record;
+        }
+      );
+      const sharedData: systemShare.SharedData = new systemShare.SharedData(records[0]);
+      for (let index: number = 1; index < records.length; index++) {
+        sharedData.addRecord(records[index]);
+      }
       const controller: systemShare.ShareController = new systemShare.ShareController(sharedData);
       await controller.show(this.context(), {
         previewMode: systemShare.SharePreviewMode.DEFAULT,
-        selectionMode: systemShare.SelectionMode.SINGLE
+        selectionMode: records.length > 1 ? systemShare.SelectionMode.BATCH : systemShare.SelectionMode.SINGLE
       });
     } catch (_error) {
       this.status = 'share_failed';
@@ -3889,48 +4204,50 @@ export struct TaildriveBrowser {
   }
 
   private showMoreSelected(): void {
-    if (this.selectedEntry() === undefined) {
-      this.status = 'select_one_for_details';
+    const selected: TaildriveEntry[] = this.selectedEntries();
+    if (selected.length !== 1) {
       return;
     }
-    this.showSelectedDetails();
+    this.showDetails(selected[0]);
   }
 
   @Builder
-  private SelectionAction(icon: Resource, label: ResourceStr, enabled: boolean, action: () => void) {
-    Button({ type: ButtonType.Normal, stateEffect: true }) {
-      Column({ space: 3 }) {
-        SymbolGlyph(icon)
-          .fontSize(22)
+  private SelectionAction($$: TaildriveSelectionActionData) {
+    Button({ type: ButtonType.ROUNDED_RECTANGLE, stateEffect: true }) {
+      Column({ space: 2 }) {
+        SymbolGlyph($$.icon)
+          .fontSize(UiTokens.ICON_INLINE_ACTION)
+          .fontColor([$$.destructive && $$.isEnabled ? $r('app.color.status_error') : $r('sys.color.icon_primary')])
+        Text($$.label)
+          .fontSize(10)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($$.destructive && $$.isEnabled ? $r('app.color.status_error') : $r('sys.color.font_primary'))
+          .maxLines(1)
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+    }
+    .id($$.actionId)
+    .layoutWeight(1)
+    .height(44)
+    .padding({ left: 4, right: 4 })
+    .borderRadius(22)
+    .backgroundColor(Color.Transparent)
+    .enabled($$.isEnabled)
+    .onClick($$.action)
+  }
+
+  @Builder
+  private SelectionMoreAction($$: TaildriveSelectionMoreData) {
+    Button({ type: ButtonType.ROUNDED_RECTANGLE, stateEffect: true }) {
+      Column({ space: 2 }) {
+        SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+          .fontSize(UiTokens.ICON_INLINE_ACTION)
           .fontColor([$r('sys.color.icon_primary')])
-        Text(label)
-          .fontSize(11)
-          .fontColor($r('sys.color.font_primary'))
-          .maxLines(1)
-      }
-      .width('100%')
-      .height('100%')
-      .justifyContent(FlexAlign.Center)
-    }
-    .layoutWeight(1)
-    .height(58)
-    .padding(0)
-    .backgroundColor(Color.Transparent)
-    .enabled(enabled)
-    .opacity(enabled ? 1 : 0.38)
-    .onClick(action)
-  }
-
-  @Builder
-  private SelectionMoreAction(enabled: boolean, action: () => void) {
-    Button({ type: ButtonType.Normal, stateEffect: true }) {
-      Column({ space: 3 }) {
-        Image($r('app.media.taildrive_more'))
-          .width(22)
-          .height(22)
-          .fillColor($r('sys.color.icon_primary'))
         Text($r('app.string.taildrive_more_action'))
-          .fontSize(11)
+          .fontSize(10)
+          .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
           .maxLines(1)
       }
@@ -3938,128 +4255,152 @@ export struct TaildriveBrowser {
       .height('100%')
       .justifyContent(FlexAlign.Center)
     }
+    .id($$.actionId)
     .layoutWeight(1)
-    .height(58)
-    .padding(0)
+    .height(44)
+    .padding({ left: 4, right: 4 })
+    .borderRadius(22)
     .backgroundColor(Color.Transparent)
-    .enabled(enabled)
-    .opacity(enabled ? 1 : 0.38)
-    .onClick(action)
+    .enabled($$.isEnabled)
+    .onClick($$.action)
   }
 
   @Builder
   private NormalBottomToolbar() {
     Row({ space: 6 }) {
       Button({ type: ButtonType.Circle, stateEffect: true }) {
-        Stack() {
-          SymbolGlyph($r('sys.symbol.folder'))
-            .fontSize(22)
-            .fontColor([$r('sys.color.icon_primary')])
-          Text('+')
-            .fontSize(11)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('sys.color.font_primary'))
-            .offset({ x: 8, y: 6 })
-        }
-        .width(28)
-        .height(28)
+        SymbolGlyph($r('sys.symbol.folder_badge_plus'))
+          .fontSize(22)
+          .fontColor([$r('sys.color.icon_primary')])
       }
       .width(42)
       .height(42)
       .backgroundColor(Color.Transparent)
-      .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
-      .border({ width: 1, color: $r('sys.color.comp_divider') })
       .borderRadius(21)
-      .opacity(this.canModifyCurrentPath() && !this.busy ? 1 : 0.38)
+      .systemMaterial(LightAppearance.toolbarButton(this.glowLevel))
+      .enabled(this.canModifyCurrentPath() && !this.busy)
       .id('taildrive-new-folder')
+      .accessibilityText($r('app.string.taildrive_new_folder_action'))
       .onClick(() => this.createFolder())
       Button({ type: ButtonType.Circle, stateEffect: true }) {
-        Image($r('app.media.tab_transfer'))
-          .width(22)
-          .height(22)
-          .fillColor($r('sys.color.icon_primary'))
+        SymbolGlyph($r('sys.symbol.doc_text_badge_arrow_up'))
+          .fontSize(22)
+          .fontColor([$r('sys.color.icon_primary')])
       }
       .width(42)
       .height(42)
       .backgroundColor(Color.Transparent)
-      .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
-      .border({ width: 1, color: $r('sys.color.comp_divider') })
       .borderRadius(21)
-      .opacity(this.canModifyCurrentPath() && !this.busy ? 1 : 0.38)
+      .systemMaterial(LightAppearance.toolbarButton(this.glowLevel))
+      .enabled(this.canModifyCurrentPath() && !this.busy)
       .id('taildrive-upload')
+      .accessibilityText($r('app.string.taildrive_upload_action'))
       .onClick(() => this.selectUpload())
       Button({ type: ButtonType.ROUNDED_RECTANGLE, stateEffect: true }) {
         Row({ space: 7 }) {
+          SymbolGlyph($r('sys.symbol.sort'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.icon_primary')])
           Text(this.sortModeText())
-            .fontSize(14)
+            .fontSize(13)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1)
             .maxLines(1)
-          SymbolGlyph($r('sys.symbol.chevron_down'))
-            .fontSize(14)
-            .fontColor([$r('sys.color.icon_primary')])
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
       }
-      // Keep the content Row inside a concrete button width. With only a
-      // constraintSize, the native Button content can resolve 100% against
-      // the pre-constrained parent and overflow into the view toggle.
-      .width(136)
+      .layoutWeight(1)
       .height(42)
-      .padding({ left: 14, right: 14 })
+      .padding({ left: 10, right: 10 })
       .backgroundColor(Color.Transparent)
-      .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
-      .border({ width: 1, color: $r('sys.color.comp_divider') })
       .borderRadius(21)
+      .systemMaterial(LightAppearance.toolbarButton(this.glowLevel))
       .id('taildrive-sort')
+      .accessibilityText($r('app.string.taildrive_sort_group_title'))
       .onClick(() => this.openSortPanel())
       Button({ type: ButtonType.Circle, stateEffect: true }) {
-        Image(this.viewMode === 'list' ? $r('app.media.taildrive_grid') : $r('app.media.taildrive_list'))
-          .width(22)
-          .height(22)
-          .fillColor($r('sys.color.icon_primary'))
+        SymbolGlyph(this.viewMode === 'list' ? $r('sys.symbol.square_grid_2x2') : $r('sys.symbol.list_bullet'))
+          .fontSize(22)
+          .fontColor([$r('sys.color.icon_primary')])
       }
       .width(42)
       .height(42)
       .backgroundColor(Color.Transparent)
-      .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
-      .border({ width: 1, color: $r('sys.color.comp_divider') })
       .borderRadius(21)
+      .systemMaterial(LightAppearance.toolbarButton(this.glowLevel))
       .id('taildrive-view-toggle')
+      .accessibilityText(this.viewMode === 'list' ? $r('app.string.taildrive_grid_view_action') :
+        $r('app.string.taildrive_list_view_action'))
       .onClick(() => this.toggleViewMode())
     }
-    .width('calc(100% - 60vp)')
-    .height(52)
-    .justifyContent(FlexAlign.Center)
+    .width(`calc(100% - ${TAILDRIVE_TOOLBAR_SIDE_MARGIN * 2}vp)`)
+    .height(TAILDRIVE_TOOLBAR_HEIGHT)
+    .justifyContent(FlexAlign.SpaceBetween)
     .margin({
-      left: 30,
-      right: 30,
+      left: TAILDRIVE_TOOLBAR_SIDE_MARGIN,
+      right: TAILDRIVE_TOOLBAR_SIDE_MARGIN,
       bottom: this.standalone ? Math.max(0, this.bottomInset - 16) : 14
     })
   }
 
   @Builder
   private SelectionBottomToolbar() {
-    Row({ space: 0 }) {
-      this.SelectionAction($r('sys.symbol.save'), $r('app.string.taildrive_share_action'),
-        this.selectedPaths.length > 0, () => this.shareSelectedEntry())
-      this.SelectionAction($r('sys.symbol.text_clipboard'), $r('app.string.taildrive_copy_action'),
-        this.selectedPaths.length > 0, () => this.copySelectedPaths())
-      this.SelectionAction($r('sys.symbol.trash'), $r('app.string.taildrive_delete_action'),
-        this.selectedPaths.length > 0 && this.canModifyCurrentPath(),
-        () => this.confirmDeleteSelected())
-      this.SelectionMoreAction(this.selectedPaths.length > 0, () => this.showMoreSelected())
+    Row({ space: 2 }) {
+      this.SelectionAction({
+        icon: $r('sys.symbol.share'),
+        label: $r('app.string.taildrive_share_action'),
+        isEnabled: this.canShareSelected(),
+        destructive: false,
+        actionId: 'taildrive-selection-share',
+        action: () => this.shareSelectedEntries()
+      })
+      this.SelectionAction({
+        icon: $r('sys.symbol.doc_text_on_doc_text'),
+        label: $r('app.string.taildrive_copy_action'),
+        isEnabled: this.selectedEntries().length > 0 && !this.busy && this.canModifyCurrentPath(),
+        destructive: false,
+        actionId: 'taildrive-selection-copy',
+        action: () => this.openCopySelectedPicker()
+      })
+      this.SelectionAction({
+        icon: $r('sys.symbol.arrow_right_folder_circle'),
+        label: $r('app.string.taildrive_move_action'),
+        isEnabled: this.selectedEntries().length > 0 && !this.busy && this.canModifyCurrentPath(),
+        destructive: false,
+        actionId: 'taildrive-selection-move',
+        action: () => this.openMoveSelectedPicker()
+      })
+      this.SelectionAction({
+        icon: $r('sys.symbol.trash'),
+        label: $r('app.string.taildrive_delete_action'),
+        isEnabled: this.selectedEntries().length > 0 && !this.busy && this.canModifyCurrentPath(),
+        destructive: true,
+        actionId: 'taildrive-selection-delete',
+        action: () => this.confirmDeleteSelected()
+      })
+      this.SelectionMoreAction({
+        isEnabled: this.selectedEntries().length === 1 && !this.busy,
+        actionId: 'taildrive-selection-more',
+        action: () => this.showMoreSelected()
+      })
     }
-    .width('calc(100% - 44vp)')
-    .height(64)
+    .width(`calc(100% - ${TAILDRIVE_TOOLBAR_SIDE_MARGIN * 2}vp)`)
+    .height(TAILDRIVE_SELECTION_TOOLBAR_HEIGHT)
+    .padding({ left: 4, right: 4 })
+    .alignItems(VerticalAlign.Center)
     .justifyContent(FlexAlign.SpaceEvenly)
     .backgroundColor(Color.Transparent)
-    .backgroundBlurStyle(BlurStyle.COMPONENT_THICK)
-    .border({ width: 1, color: $r('sys.color.comp_divider') })
-    .borderRadius(26)
-    .margin({ bottom: this.standalone ? Math.max(0, this.bottomInset - 16) : 16 })
+    .borderRadius(TAILDRIVE_SELECTION_TOOLBAR_HEIGHT / 2)
+    .systemMaterial(LightAppearance.toolbarGroup(this.glowLevel))
+    .margin({
+      left: TAILDRIVE_TOOLBAR_SIDE_MARGIN,
+      right: TAILDRIVE_TOOLBAR_SIDE_MARGIN,
+      bottom: this.standalone ? Math.max(0, this.bottomInset - 16) : 16
+    })
   }
 
   @Builder
@@ -4069,6 +4410,30 @@ export struct TaildriveBrowser {
     } else {
       this.NormalBottomToolbar()
     }
+  }
+
+  private fileToolbarHeight(): number {
+    if (!this.connected) {
+      return 0;
+    }
+    const toolbarHeight: number = this.selectionMode ? TAILDRIVE_SELECTION_TOOLBAR_HEIGHT :
+      TAILDRIVE_TOOLBAR_HEIGHT;
+    return toolbarHeight + Math.max(0, this.bottomInset - 16);
+  }
+
+  @Builder
+  private FileToolbarHost() {
+    Column() {
+      if (this.connected) {
+        this.BottomToolbar()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.End)
+    .backgroundColor(Color.Transparent)
+    .accessibilityLevel('no')
+    .id('taildrive-material-toolbar')
   }
 
   @Builder
@@ -4084,12 +4449,10 @@ export struct TaildriveBrowser {
         end: LengthMetrics.vp(this.titleBarPadding)
       },
       style: {
-        // Keep the compact file title bar opaque and disable HDS blur/material effects.
-        blurStrategy: BlurStrategy.DISABLE,
+        blurStrategy: LightAppearance.blurStrategy(this.glowLevel),
         originalStyle: {
           backgroundStyle: {
-            backgroundColor: this.transparentBackground ? Color.Transparent :
-              $r('sys.color.background_secondary')
+            backgroundColor: Color.Transparent
           },
           contentStyle: {
             titleStyle: {
@@ -4097,22 +4460,66 @@ export struct TaildriveBrowser {
               subTitleColor: $r('sys.color.font_secondary')
             },
             menuStyle: {
-              backgroundColor: $r('sys.color.comp_background_tertiary'),
               iconColor: $r('sys.color.icon_primary'),
               textColor: $r('sys.color.font_primary')
             }
           }
+        },
+        systemMaterialEffect: {
+          materialType: LightAppearance.hdsType(this.glowLevel),
+          materialLevel: LightAppearance.hdsLevel(this.glowLevel)
         }
       },
       content: {
         divider: { showType: DividerShowType.OFF },
+        bottomBuilder: this.connected && !this.selectionMode && !this.searchVisible ? {
+          builder: (): void => { this.NavigationPathBar(); },
+          height: 40
+        } : undefined,
         title: {
-          mainTitle: $r('app.string.tab_files'),
-          subTitle: $r('app.string.taildrive_subtitle')
+          mainTitle: this.selectionMode ?
+            (this.selectedPaths.length === 0 ? $r('app.string.taildrive_selection_empty') :
+              $r('app.string.taildrive_selected_count', this.selectedPaths.length)) :
+            $r('app.string.tab_files'),
+          subTitle: this.selectionMode ?
+            (this.selectedPaths.length > 0 ?
+              $r('app.string.taildrive_selected_total', this.formatSize(this.selectedTotalBytes())) :
+              $r('app.string.taildrive_subtitle')) :
+            $r('app.string.taildrive_subtitle')
         },
         menu: {
           maxCount: 2,
-          value: !this.connected || this.searchVisible || this.selectionMode ? [] : [
+          value: this.searchVisible ? [] : this.selectionMode ? [
+            {
+              content: {
+                label: this.allVisibleEntriesSelected() ? $r('app.string.taildrive_deselect_all_action') :
+                  $r('app.string.taildrive_select_all_action'),
+                type: TextStyleMode.NORMAL,
+                isEnabled: this.displayEntries().length > 0,
+                componentId: 'taildrive-select-all',
+                action: () => this.toggleSelectAll()
+              }
+            },
+            {
+              content: {
+                label: $r('app.string.native_settings_close'),
+                icon: new SymbolGlyphModifier($r('sys.symbol.xmark'))
+                  .fontColor([$r('sys.color.icon_primary')]),
+                type: IconStyleMode.SMALL,
+                isEnabled: true,
+                componentId: 'taildrive-selection-close',
+                action: () => this.exitSelectionMode()
+              }
+            }
+          ] : !this.connected ? [{
+            content: {
+              label: $r('app.string.feature_guide_connect_help'),
+              type: TextStyleMode.NORMAL,
+              isEnabled: this.canShowSetupHelp(),
+              componentId: 'taildrive-connection-help-menu',
+              action: () => this.showSetupHelp('connect')
+            }
+          }] : [
             {
               content: {
                 label: $r('app.string.taildrive_multi_select_action'),
@@ -4125,10 +4532,20 @@ export struct TaildriveBrowser {
             {
               content: {
                 label: $r('app.string.taildrive_search_action'),
-                icon: $r('app.media.taildrive_search'),
+                icon: new SymbolGlyphModifier($r('sys.symbol.magnifyingglass'))
+                  .fontColor([$r('sys.color.icon_primary')]),
                 isEnabled: true,
                 componentId: 'taildrive-search-trigger',
                 action: () => this.setSearchVisible(true)
+              }
+            },
+            {
+              content: {
+                label: $r('app.string.feature_guide_taildrive_help'),
+                type: TextStyleMode.NORMAL,
+                isEnabled: this.canShowSetupHelp(),
+                componentId: 'taildrive-setup-help-menu',
+                action: () => this.showSetupHelp()
               }
             }
           ]
@@ -4150,43 +4567,71 @@ export struct TaildriveBrowser {
 
   @Builder
   private StandaloneBrowser() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      Column({ space: 6 }) {
-        if (this.connected) {
-          if (this.searchVisible || this.selectionMode) {
-            this.TopControls()
+    Tabs({ barPosition: BarPosition.End }) {
+      TabContent() {
+        Column({ space: 6 }) {
+          if (this.connected) {
+            if (this.searchVisible) {
+              this.TopControls()
+            }
+            this.SelectionSearchSummary()
+            Stack() {
+              this.RefreshableEntryViewport()
+              if (this.isTransferBannerVisible() || this.isOperationBannerVisible()) {
+                Column({ space: 6 }) {
+                  if (this.isTransferBannerVisible()) {
+                    this.TransferStatus()
+                  } else if (this.isOperationBannerVisible()) {
+                    this.OperationStatus()
+                  }
+                }
+                .width('100%')
+                .alignItems(HorizontalAlign.Center)
+                .hitTestBehavior(HitTestMode.Transparent)
+                .margin({ bottom: this.fileToolbarHeight() + 8 })
+                .id('taildrive-floating-status-host')
+              }
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .alignContent(Alignment.Bottom)
+          } else {
+            Column({ space: 10 }) {
+              SymbolGlyph($r('sys.symbol.folder'))
+                .fontSize(42)
+                .fontColor([$r('sys.color.icon_secondary')])
+              Text($r('app.string.taildrive_connect_first'))
+                .fontSize(14)
+                .fontColor($r('sys.color.font_secondary'))
+                .textAlign(TextAlign.Center)
+              Button(this.connectionActionText, {
+                buttonStyle: ButtonStyleMode.EMPHASIZED, controlSize: ControlSize.NORMAL
+              })
+                .fontSize(UiTokens.BODY_SIZE).id('taildrive-connect-action')
+                .constraintSize({ minHeight: UiTokens.ACTION_HEIGHT })
+                .enabled(this.connectionActionAvailable && !this.appLockActive)
+                .onClick(() => this.onRequestConnection())
+              this.SetupHelpAction($r('app.string.feature_guide_connect_help'), 'taildrive-connect-help', 'connect')
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
           }
-          this.PathBar()
-          this.StandaloneEntryViewport()
-          if ((this.busy || this.previewDownloading) &&
-            (this.transfer.state === 'queued' || this.transfer.state === 'transferring')) {
-            this.TransferStatus()
-          }
-          if (this.status.length > 0 || this.retryAvailable) {
-            this.OperationStatus()
-          }
-        } else {
-          Column({ space: 10 }) {
-            SymbolGlyph($r('sys.symbol.folder'))
-              .fontSize(42)
-              .fontColor([$r('sys.color.icon_secondary')])
-            Text($r('app.string.taildrive_connect_first'))
-              .fontSize(14)
-              .fontColor($r('sys.color.font_secondary'))
-              .textAlign(TextAlign.Center)
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
         }
+        .width('100%')
+        .height('100%')
+        .padding({ left: this.titleBarPadding, right: this.titleBarPadding })
       }
-      .width('100%')
-      .height('100%')
-      .padding({ left: 16, right: 16 })
-      if (this.connected) {
-        this.BottomToolbar()
-      }
+      .tabBar(this.FileToolbarHost)
     }
+    .vertical(false)
+    .scrollable(false)
+    .barMode(BarMode.Fixed)
+    .barOverlap(true)
+    .barHeight(this.fileToolbarHeight(), true)
+    .barBackgroundColor(Color.Transparent)
+    .barBackgroundBlurStyle(BlurStyle.NONE)
+    .animationDuration(0)
     .width('100%')
     .height('100%')
     .id('taildrive-browser')
@@ -4227,6 +4672,7 @@ export struct TaildriveBrowser {
         if (this.searchVisible) {
           this.SearchField()
         }
+        this.SelectionSearchSummary()
         if (this.loading) {
           Column({ space: 10 }) {
             LoadingProgress().width(28).height(28)
@@ -4253,12 +4699,11 @@ export struct TaildriveBrowser {
         } else {
           this.EntryGroups()
         }
-        if ((this.busy || this.previewDownloading) &&
-          (this.transfer.state === 'queued' || this.transfer.state === 'transferring')) {
+        if (this.isTransferBannerVisible()) {
           this.TransferStatus()
         }
       }
-      if (this.status.length > 0 || this.retryAvailable) {
+      if (this.isOperationBannerVisible()) {
         this.OperationStatus()
       }
     }

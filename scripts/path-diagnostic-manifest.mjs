@@ -1,0 +1,26 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+const { verifyEngineInputs } = createRequire(import.meta.url)('./verify-engine-inputs.cjs');
+const engineInputs = verifyEngineInputs();
+
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const output=process.argv[2];
+if(!output)throw new Error('Provide an output manifest path.');
+const hash=b=>createHash('sha256').update(b).digest('hex');
+const git=(dir,...args)=>execFileSync('git',['--no-optional-locks','-C',dir,...args],{encoding:'utf8',maxBuffer:32*1024*1024}).trim();
+const head=git(root,'rev-parse','HEAD'),coreRoot=engineInputs.vendorRoot;
+const candidates=git(root,'ls-files','-c','-o','--exclude-standard','--','AppScope','common','entry/src/main','native/go_bridge','native/engine-lock.json','patches/experimental','scripts','hvigor','hvigorfile.ts','oh-package.json5','build-profile.example.json5').split('\n');
+const files=[...new Set(candidates)].filter(p=>p && !/(?:^|\/)(?:build|dist|\.hvigor|oh_modules|node_modules)(?:\/|$)/.test(p) && !/^common\/BuildProfile\.ets$/.test(p) && !/\.(?:so|hap|app|p12|p7b|cer)$/.test(p)).sort();
+const entries=files.map(name=>({path:name,sha256:hash(fs.readFileSync(path.join(root,name)))}));
+const coreDiff=execFileSync('git',['-C',coreRoot,'diff','HEAD','--'],{maxBuffer:32*1024*1024});
+const patch=fs.readFileSync(path.join(root,'native/engine-lock.json'));
+const identity={schema:1,head,coreHead:git(coreRoot,'rev-parse','HEAD'),dependencyPatchSHA256:hash(patch),coreTrackedDiffSHA256:hash(coreDiff),files:entries};
+const sourceID=hash(Buffer.from(JSON.stringify(identity)));
+const version=JSON.parse(fs.readFileSync(path.join(root,'AppScope/app.json5'),'utf8')).app;
+const manifest={...identity,sourceID,dependencyIdentity:'native/engine-lock.json',dirty:git(root,'status','--porcelain').length>0,versionName:version.versionName,versionCode:version.versionCode,core:engineInputs.engineVersion,go:engineInputs.goVersion.replace(/^go/,''),sdk:'26.0.0.105',api:26,abi:'arm64-v8a',generatedAt:new Date().toISOString(),scope:'Diagnostic candidate; no store upload or device verification. Signing secrets and generated BuildProfile are excluded; product/debug metadata is independently checked in the HAP.'};
+fs.mkdirSync(path.dirname(path.resolve(output)),{recursive:true});fs.writeFileSync(output,JSON.stringify(manifest,null,2)+'\n');
+process.stdout.write(sourceID+'\n');

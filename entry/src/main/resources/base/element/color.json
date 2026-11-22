@@ -1,5 +1,6 @@
 {
   "color": [
+    { "name": "background_running_highlight", "value": "#334478FF" },
     {
       "name": "start_window_background",
       "value": "#F7F8FA"
@@ -26,7 +27,7 @@
     },
     {
       "name": "status_probe_pending",
-      "value": "#667085"
+      "value": "#626B7A"
     },
     {
       "name": "status_streaming_available",
@@ -59,6 +60,22 @@
     {
       "name": "badge_background_pending",
       "value": "#EEF1F5"
+    },
+    {
+      "name": "badge_background_warning",
+      "value": "#FFF1DE"
+    },
+    {
+      "name": "badge_background_error",
+      "value": "#FEECEB"
+    },
+    {
+      "name": "selection_background",
+      "value": "#2558D9"
+    },
+    {
+      "name": "selection_foreground",
+      "value": "#FFFFFF"
     },
     {
       "name": "badge_background_media",
@@ -155,6 +172,62 @@
     {
       "name": "tab_bar_gradient_mask",
       "value": "#66F1F3F5"
+    },
+    {
+      "name": "pip_traffic_download",
+      "value": "#73AEFF"
+    },
+    {
+      "name": "pip_traffic_upload",
+      "value": "#C4A4FF"
+    },
+    {
+      "name": "pip_traffic_baseline",
+      "value": "#475065"
+    },
+    {
+      "name": "pip_traffic_surface",
+      "value": "#141A27"
+    },
+    {
+      "name": "preview_accent_teal",
+      "value": "#2F8F70"
+    },
+    {
+      "name": "preview_accent_amber",
+      "value": "#D8862C"
+    },
+    {
+      "name": "shadow_card_soft",
+      "value": "#24000000"
+    },
+    {
+      "name": "shadow_elevated_soft",
+      "value": "#26000000"
+    },
+    {
+      "name": "shadow_floating_capsule",
+      "value": "#33000000"
+    },
+    {
+      "name": "scrim_modal_overlay",
+      "value": "#4D000000"
+    },
+    {
+      "name": "immersive_tint_transfer",
+      "value": "#426F45E8"
+    },
+    {
+      "name": "immersive_tint_transition",
+      "value": "#38F59E0B"
+    },
+    {
+      "name": "immersive_tint_connected",
+      "value": "#3437B77A"
+    },
+    {
+      "name": "immersive_tint_idle",
+      "value": "#30415FEB"
     }
   ]
 }

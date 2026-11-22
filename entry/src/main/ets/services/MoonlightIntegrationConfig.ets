@@ -3,13 +3,14 @@ export interface MoonlightIntegrationConfig {
   abilityName: string;
   moduleName: string;
   protocolVersion: number;
+  capabilityUri: string;
 }
 
-// MoonlightOH must publish its stable Want contract before these values are enabled.
-// Do not substitute a guessed bundle name, Ability name, or URI scheme here.
+// The v1 capability is advertised only by Moonlight builds that accept this Want.
 export const MOONLIGHT_INTEGRATION_CONFIG: MoonlightIntegrationConfig = {
-  bundleName: '',
-  abilityName: '',
-  moduleName: '',
-  protocolVersion: 1
+  bundleName: 'com.alkaidlab.sdream',
+  abilityName: 'EntryAbility',
+  moduleName: 'entry',
+  protocolVersion: 1,
+  capabilityUri: 'moonlight-mesharc://host'
 };

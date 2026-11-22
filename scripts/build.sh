@@ -48,6 +48,8 @@ export OHOS_SDK_HOME="$sdk_home"
 export HVIGOR_USER_HOME="$ROOT/.hvigor-user"
 export NODE_PATH="$ROOT/.tooling/node_modules:$hvigor_home/node_modules:$deveco_home/tools/hvigor/hvigor-ohos-plugin/node_modules"
 
+node "$ROOT/scripts/verify-sdk-baseline.cjs" "$ROOT/build-profile.json5"
+
 "$ROOT/scripts/build-go.sh"
 
 if [[ -f "$hvigor_wrapper" ]]; then

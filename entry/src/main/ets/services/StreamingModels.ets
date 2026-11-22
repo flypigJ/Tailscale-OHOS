@@ -45,4 +45,5 @@ export interface MoonlightLaunchRequest {
   relayRegion?: string;
   latencyMs?: number;
   streamProfile: StreamLaunchProfile;
+  adaptiveBitrate?: boolean;
 }

@@ -15,22 +15,27 @@ export class MoonlightLauncher {
       return false;
     }
     try {
-      await bundleManager.getBundleInfo(MOONLIGHT_INTEGRATION_CONFIG.bundleName,
-        bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
-      return true;
+      return bundleManager.canOpenLink(MOONLIGHT_INTEGRATION_CONFIG.capabilityUri);
     } catch (_error) {
       return false;
     }
   }
 
   async launch(request: MoonlightLaunchRequest): Promise<void> {
+    if (!await this.isAvailable()) {
+      throw new Error('moonlight_integration_unavailable');
+    }
     const want: Want = {
       bundleName: MOONLIGHT_INTEGRATION_CONFIG.bundleName,
       moduleName: MOONLIGHT_INTEGRATION_CONFIG.moduleName,
       abilityName: MOONLIGHT_INTEGRATION_CONFIG.abilityName,
+      uri: MOONLIGHT_INTEGRATION_CONFIG.capabilityUri,
+      action: 'ohos.want.action.viewData',
       parameters: {
         protocolVersion: request.protocolVersion,
         action: request.action,
+        autoStream: true,
+        adaptiveBitrate: request.adaptiveBitrate !== false,
         source: request.source,
         host: request.host,
         displayName: request.displayName,

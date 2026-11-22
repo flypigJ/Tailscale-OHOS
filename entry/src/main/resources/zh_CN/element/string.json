@@ -1,650 +1,3177 @@
 {
   "string": [
-    { "name": "taildrive_title", "value": "\u8fdc\u7a0b\u6587\u4ef6" },
-    { "name": "taildrive_subtitle", "value": "\u6d4f\u89c8 Tailnet \u8bbe\u5907\u5171\u4eab\u7684\u6587\u4ef6\u5939" },
-    { "name": "taildrive_connect_first", "value": "\u8bf7\u5148\u8fde\u63a5 Tailscale \u4ee5\u6d4f\u89c8\u8fdc\u7a0b\u6587\u4ef6" },
-    { "name": "taildrive_refresh_action", "value": "\u5237\u65b0" },
-    { "name": "taildrive_up_action", "value": "\u4e0a\u4e00\u7ea7" },
-    { "name": "taildrive_new_folder_action", "value": "\u65b0\u5efa\u6587\u4ef6\u5939" },
-    { "name": "taildrive_new_folder_default_name", "value": "\u65b0\u5efa\u6587\u4ef6\u5939" },
-    { "name": "taildrive_upload_action", "value": "\u4e0a\u4f20" },
-    { "name": "taildrive_download_action", "value": "\u4e0b\u8f7d" },
-    { "name": "taildrive_details_action", "value": "\u8be6\u60c5" },
-    { "name": "taildrive_move_action", "value": "\u79fb\u52a8" },
-    { "name": "taildrive_search_placeholder", "value": "\u641c\u7d22\u5f53\u524d\u6587\u4ef6\u5939" },
-    { "name": "taildrive_search_action", "value": "\u641c\u7d22" },
-    { "name": "taildrive_multi_select_action", "value": "\u591a\u9009" },
-    { "name": "taildrive_done_action", "value": "\u5b8c\u6210" },
-    { "name": "taildrive_selected_count", "value": "\u5df2\u9009\u62e9 %d \u9879" },
-    { "name": "taildrive_selection_empty", "value": "\u672a\u9009\u62e9" },
-    { "name": "taildrive_selected_total", "value": "\u5171 %s" },
-    { "name": "taildrive_select_all_action", "value": "\u5168\u9009" },
-    { "name": "taildrive_deselect_all_action", "value": "\u53d6\u6d88\u5168\u9009" },
-    { "name": "taildrive_share_action", "value": "\u5206\u4eab" },
-    { "name": "taildrive_copy_action", "value": "\u590d\u5236" },
-    { "name": "taildrive_more_action", "value": "\u66f4\u591a" },
-    { "name": "taildrive_preview_download_title", "value": "\u4e0b\u8f7d\u540e\u9884\u89c8" },
-    { "name": "taildrive_preview_download_message", "value": "\u9884\u89c8\u201c%s\u201d\u524d\u9700\u8981\u5148\u4e0b\u8f7d\u5230\u5e94\u7528\u79c1\u6709\u6587\u4ef6\u5939\u3002\\n\u7c7b\u578b\uff1a%s\\n\u5927\u5c0f\uff1a%s" },
-    { "name": "taildrive_preview_download_action", "value": "\u4e0b\u8f7d" },
-    { "name": "taildrive_preview_download_hint", "value": "\u8be5\u6587\u4ef6\u4e3a 5 MB \u6216\u66f4\u5927\uff0c\u4e0b\u8f7d\u540e\u624d\u80fd\u9884\u89c8" },
-    { "name": "taildrive_loading", "value": "\u6b63\u5728\u8bfb\u53d6\u6587\u4ef6\u2026" },
-    { "name": "taildrive_sort_name", "value": "\u6309\u540d\u79f0\u6392\u5e8f" },
-    { "name": "taildrive_sort_modified", "value": "\u6309\u65f6\u95f4\u6392\u5e8f" },
-    { "name": "taildrive_sort_size", "value": "\u6309\u5927\u5c0f\u6392\u5e8f" },
-    { "name": "taildrive_sort_group_title", "value": "\u6392\u5e8f\u4e0e\u5206\u7ec4" },
-    { "name": "taildrive_arrangement_action", "value": "\u6392\u5217\u65b9\u5f0f" },
-    { "name": "taildrive_sort_section", "value": "\u6392\u5e8f\u65b9\u5f0f" },
-    { "name": "taildrive_sort_direction_section", "value": "\u6392\u5e8f\u987a\u5e8f" },
-    { "name": "taildrive_sort_ascending", "value": "\u5347\u5e8f" },
-    { "name": "taildrive_sort_descending", "value": "\u964d\u5e8f" },
-    { "name": "taildrive_group_section", "value": "\u5206\u7ec4\u65b9\u5f0f" },
-    { "name": "taildrive_group_none", "value": "\u4e0d\u5206\u7ec4" },
-    { "name": "taildrive_group_by_type", "value": "\u6309\u7c7b\u578b\u5206\u7ec4" },
-    { "name": "taildrive_group_by_date", "value": "\u6309\u65e5\u671f\u5206\u7ec4" },
-    { "name": "taildrive_group_folders", "value": "\u6587\u4ef6\u5939" },
-    { "name": "taildrive_group_images", "value": "\u56fe\u7247" },
-    { "name": "taildrive_group_videos", "value": "\u89c6\u9891" },
-    { "name": "taildrive_group_documents", "value": "\u6587\u6863" },
-    { "name": "taildrive_group_archives", "value": "\u538b\u7f29\u5305\u4e0e\u5e94\u7528" },
-    { "name": "taildrive_group_other", "value": "\u5176\u4ed6" },
-    { "name": "taildrive_group_today", "value": "\u4eca\u5929" },
-    { "name": "taildrive_group_yesterday", "value": "\u6628\u5929" },
-    { "name": "taildrive_group_this_week", "value": "\u8fd1 7 \u5929" },
-    { "name": "taildrive_group_earlier", "value": "\u66f4\u65e9" },
-    { "name": "taildrive_group_unknown_date", "value": "\u65e0\u65e5\u671f\u4fe1\u606f" },
-    { "name": "taildrive_retry_action", "value": "\u91cd\u8bd5" },
-    { "name": "taildrive_details_title", "value": "\u6587\u4ef6\u8be6\u60c5" },
-    { "name": "taildrive_details_type", "value": "\u7c7b\u578b" },
-    { "name": "taildrive_details_path", "value": "\u8def\u5f84" },
-    { "name": "taildrive_details_size", "value": "\u5927\u5c0f" },
-    { "name": "taildrive_details_modified", "value": "\u4fee\u6539\u65f6\u95f4" },
-    { "name": "taildrive_details_content_type", "value": "\u5185\u5bb9\u7c7b\u578b" },
-    { "name": "taildrive_type_folder", "value": "\u6587\u4ef6\u5939" },
-    { "name": "taildrive_type_tailnet", "value": "Tailnet" },
-    { "name": "taildrive_type_device", "value": "\u8fdc\u7a0b\u8bbe\u5907" },
-    { "name": "taildrive_type_share", "value": "\u5171\u4eab\u6587\u4ef6\u5939" },
-    { "name": "taildrive_type_file", "value": "\u6587\u4ef6" },
-    { "name": "taildrive_move_title", "value": "\u9009\u62e9\u76ee\u6807\u6587\u4ef6\u5939" },
-    { "name": "taildrive_move_here_action", "value": "\u79fb\u52a8\u5230\u8fd9\u91cc" },
-    { "name": "taildrive_overwrite_title", "value": "\u66ff\u6362\u5df2\u6709\u9879\uff1f" },
-    { "name": "taildrive_replace_action", "value": "\u66ff\u6362" },
-    { "name": "taildrive_empty", "value": "\u8fd9\u91cc\u6ca1\u6709\u5171\u4eab\u6587\u4ef6\u6216\u6587\u4ef6\u5939" },
-    { "name": "taildrive_list_failed", "value": "\u65e0\u6cd5\u8bfb\u53d6\u5f53\u524d\u6587\u4ef6\u5939\uff0c\u8bf7\u68c0\u67e5 Taildrive \u6743\u9650\u540e\u91cd\u8bd5" },
-    { "name": "taildrive_rename_action", "value": "\u91cd\u547d\u540d" },
-    { "name": "taildrive_delete_action", "value": "\u5220\u9664" },
-    { "name": "taildrive_delete_title", "value": "\u5220\u9664\u8fdc\u7a0b\u9879\uff1f" },
-    { "name": "taildrive_delete_selected_message", "value": "\u786e\u5b9a\u5220\u9664\u5df2\u9009\u62e9\u7684 %d \u9879\u5417\uff1f\u6b64\u64cd\u4f5c\u65e0\u6cd5\u64a4\u9500" },
-    { "name": "taildrive_new_folder_title", "value": "\u65b0\u5efa\u6587\u4ef6\u5939" },
-    { "name": "taildrive_rename_title", "value": "\u91cd\u547d\u540d" },
-    { "name": "taildrive_name_placeholder", "value": "\u540d\u79f0" },
-    { "name": "confirm_action", "value": "\u786e\u5b9a" },
-    { "name": "taildrive_transfer_in_progress", "value": "\u6b63\u5728\u4f20\u8f93\u6587\u4ef6" },
-    { "name": "taildrive_status_select_failed", "value": "\u65e0\u6cd5\u6253\u5f00\u6587\u4ef6\u9009\u62e9\u5668" },
-    { "name": "taildrive_status_uploading", "value": "\u6b63\u5728\u4e0a\u4f20\u2026" },
-    { "name": "taildrive_status_upload_completed", "value": "\u4e0a\u4f20\u5b8c\u6210" },
-    { "name": "taildrive_status_upload_failed", "value": "\u4e0a\u4f20\u5931\u8d25" },
-    { "name": "taildrive_status_downloading", "value": "\u6b63\u5728\u4e0b\u8f7d\u2026" },
-    { "name": "taildrive_status_export_cancelled", "value": "\u5df2\u53d6\u6d88\u4fdd\u5b58" },
-    { "name": "taildrive_status_download_completed", "value": "\u6587\u4ef6\u5df2\u4fdd\u5b58" },
-    { "name": "taildrive_status_export_failed", "value": "\u65e0\u6cd5\u4fdd\u5b58\u4e0b\u8f7d\u6587\u4ef6" },
-    { "name": "taildrive_status_deleting", "value": "\u6b63\u5728\u5220\u9664\u2026" },
-    { "name": "taildrive_status_delete_completed", "value": "\u5df2\u5220\u9664" },
-    { "name": "taildrive_status_delete_failed", "value": "\u5220\u9664\u5931\u8d25" },
-    { "name": "taildrive_status_creating_folder", "value": "\u6b63\u5728\u521b\u5efa\u6587\u4ef6\u5939\u2026" },
-    { "name": "taildrive_status_renaming", "value": "\u6b63\u5728\u91cd\u547d\u540d\u2026" },
-    { "name": "taildrive_status_moving", "value": "\u6b63\u5728\u79fb\u52a8\u2026" },
-    { "name": "taildrive_status_move_completed", "value": "\u79fb\u52a8\u5b8c\u6210" },
-    { "name": "taildrive_status_mutation_completed", "value": "\u64cd\u4f5c\u5b8c\u6210" },
-    { "name": "taildrive_status_mutation_failed", "value": "\u65e0\u6cd5\u4fee\u6539\u8fdc\u7a0b\u9879" },
-    { "name": "taildrive_status_invalid_name", "value": "\u8bf7\u8f93\u5165\u6709\u6548\u7684\u6587\u4ef6\u6216\u6587\u4ef6\u5939\u540d\u79f0" },
-    { "name": "taildrive_status_same_location", "value": "\u8be5\u9879\u5df2\u5728\u5f53\u524d\u6587\u4ef6\u5939\u4e2d" },
-    { "name": "taildrive_status_target_not_found", "value": "\u672a\u627e\u5230\u8be5\u8bbe\u5907\u7684 Taildrive \u5171\u4eab\uff0c\u5df2\u663e\u793a\u5168\u90e8\u5171\u4eab" },
-    { "name": "taildrive_status_permission_denied", "value": "Taildrive \u6743\u9650\u88ab\u62d2\u7edd" },
-    { "name": "taildrive_status_not_found", "value": "\u8fdc\u7a0b\u9879\u5df2\u4e0d\u53ef\u7528" },
-    { "name": "taildrive_status_already_exists", "value": "\u5df2\u5b58\u5728\u540c\u540d\u9879" },
-    { "name": "taildrive_status_backend_unavailable", "value": "\u8bf7\u8fde\u63a5 Tailscale \u540e\u91cd\u8bd5" },
-    { "name": "taildrive_status_busy", "value": "\u53e6\u4e00\u4e2a Taildrive \u4f20\u8f93\u4ecd\u5728\u8fdb\u884c" },
-    { "name": "taildrive_status_cancelled", "value": "\u4f20\u8f93\u5df2\u53d6\u6d88" },
-    { "name": "taildrive_status_timeout", "value": "\u8fdc\u7a0b\u64cd\u4f5c\u8d85\u65f6" },
-    { "name": "taildrive_status_no_space", "value": "\u5b58\u50a8\u7a7a\u95f4\u4e0d\u8db3" },
-    { "name": "taildrive_status_remote_unavailable", "value": "\u8fdc\u7a0b\u8bbe\u5907\u4e0d\u53ef\u7528" },
-    { "name": "taildrive_status_network_interrupted", "value": "\u7f51\u7edc\u4f20\u8f93\u5df2\u4e2d\u65ad" },
-    { "name": "taildrive_status_file_unavailable", "value": "\u6240\u9009\u6587\u4ef6\u5df2\u4e0d\u53ef\u7528" },
-    { "name": "taildrive_status_transfer_failed", "value": "Taildrive \u64cd\u4f5c\u5931\u8d25" },
-    { "name": "taildrive_status_preview_downloading", "value": "\u6b63\u5728\u4e0b\u8f7d\u4ee5\u4fbf\u9884\u89c8\u2026" },
-    { "name": "taildrive_status_preview_download_completed", "value": "\u4e0b\u8f7d\u5b8c\u6210\uff0c\u6b63\u5728\u6253\u5f00\u9884\u89c8\u2026" },
-    { "name": "taildrive_status_preview_download_failed", "value": "\u65e0\u6cd5\u4e0b\u8f7d\u6587\u4ef6\u4ee5\u4fbf\u9884\u89c8" },
-    { "name": "taildrive_status_preview_failed", "value": "\u6ca1\u6709\u53ef\u7528\u7684\u7cfb\u7edf\u9884\u89c8\u5e94\u7528" },
-    { "name": "taildrive_status_paths_copied", "value": "\u8fdc\u7a0b\u8def\u5f84\u5df2\u590d\u5236" },
-    { "name": "taildrive_status_copy_failed", "value": "\u65e0\u6cd5\u590d\u5236\u8fdc\u7a0b\u8def\u5f84" },
-    { "name": "taildrive_status_share_failed", "value": "\u65e0\u6cd5\u6253\u5f00\u5206\u4eab\u9762\u677f" },
-    { "name": "taildrive_status_select_one_for_details", "value": "\u8bf7\u9009\u62e9\u4e00\u4e2a\u6587\u4ef6\u4f7f\u7528\u6b64\u64cd\u4f5c" },
-    { "name": "notification_taildrive_uploading_title", "value": "\u6b63\u5728\u4e0a\u4f20\u8fdc\u7a0b\u6587\u4ef6" },
-    { "name": "notification_taildrive_downloading_title", "value": "\u6b63\u5728\u4e0b\u8f7d\u8fdc\u7a0b\u6587\u4ef6" },
-    { "name": "notification_taildrive_completed_title", "value": "\u8fdc\u7a0b\u6587\u4ef6\u4f20\u8f93\u5b8c\u6210" },
-    { "name": "notification_taildrive_failed_title", "value": "\u8fdc\u7a0b\u6587\u4ef6\u4f20\u8f93\u5931\u8d25" },
-    { "name": "transfer_send_interrupted", "value": "网络传输中断，自动续传仍未完成，请重试" },
-    { "name": "transfer_detecting_title", "value": "正在发现可传输设备" },
-    { "name": "transfer_detecting_description", "value": "正在从 VPN 后端读取 Taildrop 能力与设备列表" },
-    { "name": "transfer_admin_disabled_title", "value": "Taildrop 尚未启用" },
-    { "name": "transfer_admin_disabled_description", "value": "请在 Tailscale 管理控制台中启用文件发送功能" },
-    { "name": "transfer_unavailable_title", "value": "Taildrop 暂时不可用" },
-    { "name": "transfer_unavailable_description", "value": "暂时无法读取可发送设备，请稍后重试" },
-    { "name": "transfer_targets_ready_title", "value": "%d 台设备在线" },
-    { "name": "transfer_targets_ready_description", "value": "点击在线设备发送文件，或保存收件箱中的文件" },
-    { "name": "transfer_targets_title", "value": "可发送设备" },
-    { "name": "transfer_no_targets_description", "value": "暂未发现可用于发送文件的设备" },
-    { "name": "transfer_send_file_action", "value": "发送文件" },
-    { "name": "transfer_send_completed", "value": "文件已发送" },
-    { "name": "transfer_send_failed", "value": "文件传输失败，请重试" },
-    { "name": "transfer_send_target_unavailable", "value": "所选设备当前不可用" },
-    { "name": "transfer_send_disconnected", "value": "传输完成前 Tailscale 已断开连接" },
-    { "name": "transfer_send_permission_denied", "value": "无法读取所选文件" },
-    { "name": "transfer_send_no_space", "value": "存储空间不足，无法准备本次传输" },
-    { "name": "transfer_send_file_unavailable", "value": "所选文件已不可用" },
-    { "name": "transfer_send_file_changed", "value": "所选文件在发送前发生变化" },
-    { "name": "transfer_send_backend_unavailable", "value": "VPN 后端尚未准备好处理本次传输" },
-    { "name": "transfer_busy_message", "value": "已有传输正在进行" },
-    { "name": "transfer_file_selection_failed", "value": "无法打开文件选择器" },
-    { "name": "transfer_file_copy_failed", "value": "无法准备所选文件" },
-    { "name": "transfer_send_action", "value": "发送" },
-    { "name": "transfer_source_title", "value": "选择发送内容" },
-    { "name": "transfer_source_message", "value": "发送到 %s" },
-    { "name": "transfer_method_title", "value": "选择传输方式" },
-    { "name": "transfer_method_message", "value": "选择发送到 %s 的方式" },
-    { "name": "transfer_method_tailsend_title", "value": "Taildrop" },
-    { "name": "transfer_method_tailsend_description", "value": "应用内置Tailrdrop传输" },
-    { "name": "transfer_method_localsend_title", "value": "捷传" },
-    { "name": "transfer_method_localsend_description", "value": "通过捷传向远端 LocalSend 发送文件" },
-    { "name": "transfer_method_remembered", "value": "两种协议都在线时每次都会询问" },
-    { "name": "media_method_title", "value": "媒体播放" },
-    { "name": "media_method_message", "value": "使用 HosPlayer 添加 %s 并播放媒体" },
-    { "name": "media_method_hosplayer_title", "value": "HosPlayer" },
-    { "name": "media_method_hosplayer_description", "value": "使用 HosPlayer 进行服务器添加与媒体播放" },
-    { "name": "transfer_protocol_online", "value": "%s 在线" },
-    { "name": "transfer_protocol_checking", "value": "%s 检测中" },
-    { "name": "transfer_protocol_offline", "value": "%s 离线" },
-    { "name": "transfer_localsend_open_hint", "value": "请打开 LocalSend 继续发送" },
-    { "name": "transfer_file_action", "value": "文件" },
-    { "name": "transfer_photo_action", "value": "图片与视频" },
-    { "name": "transfer_text_action", "value": "文本" },
-    { "name": "transfer_text_editor_title", "value": "发送文本" },
-    { "name": "transfer_text_preview_title", "value": "文本预览" },
-    { "name": "transfer_preview_action", "value": "预览" },
-    { "name": "transfer_collapse_action", "value": "收起" },
-    { "name": "transfer_text_placeholder", "value": "请输入要发送的文字" },
-    { "name": "transfer_cancel_failed", "value": "无法取消本次传输" },
-    { "name": "transfer_cancelling", "value": "正在取消" },
-    { "name": "transfer_send_cancelled", "value": "文件传输已取消" },
-    { "name": "transfer_preparing", "value": "正在准备文件" },
-    { "name": "transfer_sending_to", "value": "正在发送到 %s" },
-    { "name": "transfer_waiting_for_backend", "value": "正在等待 VPN 后端" },
-    { "name": "transfer_calculating_speed", "value": "正在计算传输速度" },
-    { "name": "transfer_speed_eta", "value": "%s · 剩余 %s" },
-    { "name": "transfer_receive_picker_failed", "value": "无法选择文件保存位置" },
-    { "name": "transfer_receive_completed", "value": "文件已保存" },
-    { "name": "transfer_image_saved", "value": "图片已保存到图库" },
-    { "name": "transfer_text_copied", "value": "文本已复制到剪贴板" },
-    { "name": "transfer_receive_unavailable", "value": "收到的文件已不可用" },
-    { "name": "transfer_receive_no_space", "value": "存储空间不足，无法保存此文件" },
-    { "name": "transfer_receive_delete_failed", "value": "内容已处理，但无法移除收件箱副本" },
-    { "name": "transfer_receive_failed", "value": "无法保存收到的文件，请重试" },
-    { "name": "transfer_save_timeout", "value": "保存超时，可直接重试，无需重启应用" },
-    { "name": "transfer_receive_cancelled", "value": "已取消保存，可以重新尝试" },
-    { "name": "transfer_media_ready_to_save", "value": "媒体文件已准备好保存" },
-    { "name": "transfer_media_save_failed", "value": "无法保存到图库，请重试" },
-    { "name": "transfer_media_save_authorization_failed", "value": "未获得保存到图库的临时授权" },
-    { "name": "transfer_gallery_failed", "value": "无法将图片保存到图库，请重试" },
-    { "name": "transfer_text_copy_failed", "value": "无法复制收到的文本，请重试" },
-    { "name": "transfer_content_image", "value": "图片" },
-    { "name": "transfer_content_video", "value": "视频" },
-    { "name": "transfer_content_text", "value": "文本" },
-    { "name": "transfer_content_file", "value": "文件" },
-    { "name": "transfer_save_action", "value": "保存" },
-    { "name": "transfer_copy_text_action", "value": "复制" },
-    { "name": "transfer_discard_action", "value": "丢弃" },
-    { "name": "transfer_discard_confirm_title", "value": "丢弃此文件？" },
-    { "name": "transfer_discard_confirm_message", "value": "此操作会从 Taildrop 收件箱中永久移除“%s”" },
-    { "name": "transfer_discard_completed", "value": "文件已丢弃" },
-    { "name": "transfer_discard_failed", "value": "无法丢弃此文件，请重试" },
-    { "name": "transfer_retry_action", "value": "重试" },
-    { "name": "transfer_retry_choose_content", "value": "请选择要重新发送的内容" },
-    { "name": "transfer_sent_status", "value": "已发送" },
-    { "name": "transfer_received_status", "value": "已接收" },
-    { "name": "transfer_failed_status", "value": "失败" },
-    { "name": "transfer_inbox_title", "value": "收到的文件" },
-    { "name": "transfer_inbox_unavailable", "value": "Taildrop 收件箱暂时不可用" },
-    { "name": "transfer_inbox_empty", "value": "其它设备发送到本机的文件会显示在这里" },
-    { "name": "transfer_clear_cache_action", "value": "清除缓存" },
-    { "name": "transfer_clear_cache_confirm_title", "value": "清除收到的文件缓存？" },
-    { "name": "transfer_clear_cache_confirm_message", "value": "此操作会永久删除应用私有目录中缓存的全部收到文件" },
-    { "name": "transfer_clearing_cache", "value": "正在清除收到的文件缓存" },
-    { "name": "transfer_cache_cleared", "value": "收到的文件缓存已清除" },
-    { "name": "transfer_clear_cache_failed", "value": "未能清除全部收到的文件缓存，请重试" },
-    { "name": "module_desc", "value": "MeshArc for HarmonyOS NEXT" },
-    { "name": "entryability_desc", "value": "MeshArc 鸿蒙主程序" },
-    { "name": "entryability_label", "value": "MeshArc" },
-    { "name": "app_title", "value": "MeshArc" },
-    { "name": "app_tagline", "value": "安全连接你的设备" },
-    { "name": "tab_home", "value": "设备" },
-    { "name": "tab_transfer", "value": "传输" },
-    { "name": "tab_files", "value": "文件" },
-    { "name": "tab_settings", "value": "设置" },
-    { "name": "transfer_subtitle", "value": "设备统一展示，需要时再选择传输通道" },
-    { "name": "transfer_send_files_title", "value": "发送文件" },
-    { "name": "transfer_localsend_description", "value": "通过 Tailscale 发现 MeshSend 设备，文件由 LocalSend 服务完成发送" },
-    { "name": "transfer_localsend_device_count", "value": "已发现 %d 台 MeshSend 设备" },
-    { "name": "transfer_localsend_checking_description", "value": "正在检测 MeshSend 设备" },
-    { "name": "transfer_localsend_empty_description", "value": "暂未发现可用的 MeshSend 设备" },
-    { "name": "transfer_taildrop_title", "value": "MeshSend" },
-    { "name": "transfer_taildrop_description", "value": "使用 Tailscale Taildrop 的 MeshSend 传输文件、图片和文本" },
-    { "name": "transfer_connected_title", "value": "可以开始接入传输" },
-    { "name": "transfer_connected_description", "value": "向在线设备发送文件，并保存本机收到的文件" },
-    { "name": "transfer_connect_first_title", "value": "请先连接 Tailscale" },
-    { "name": "transfer_connect_first_description", "value": "连接 Tailscale 后才能发送与接收；已有的收到文件和传输记录仍可在下方查看" },
-    { "name": "transfer_remote_cached_title", "value": "MeshArc 尚未连接" },
-    { "name": "transfer_remote_cached_description", "value": "已缓存的远程设备仍会显示，发送时再按需恢复连接" },
-    { "name": "transfer_remote_devices_title", "value": "远程设备" },
-    { "name": "transfer_remote_devices_description", "value": "来自 MeshArc 的设备缓存；发送时优先尝试 LocalSend" },
-    { "name": "transfer_remote_cached_badge", "value": "MeshArc" },
-    { "name": "transfer_remote_localsend_port", "value": "LocalSend · 端口 %d" },
-    { "name": "transfer_remote_port_label", "value": "端口 %d" },
-    { "name": "transfer_remote_port_action", "value": "指定端口" },
-    { "name": "transfer_remote_port_title", "value": "LocalSend 端口" },
-    { "name": "transfer_remote_port_message", "value": "默认尝试 53317；如果目标设备使用自定义 LocalSend 端口，可以在这里记住" },
-    { "name": "transfer_remote_port_placeholder", "value": "53317" },
-    { "name": "transfer_remote_port_save", "value": "保存端口" },
-    { "name": "transfer_remote_port_invalid", "value": "请输入 1–65535 范围内的端口" },
-    { "name": "transfer_remote_port_saved", "value": "已记住此设备的 LocalSend 端口" },
-    { "name": "transfer_remote_waiting_description", "value": "等待 LocalSend 检测" },
-    { "name": "transfer_remote_waiting_connection", "value": "在线 · 等待连接" },
-    { "name": "transfer_remote_service_unavailable_description", "value": "上次检测未发现 LocalSend" },
-    { "name": "transfer_history_title", "value": "发送记录" },
-    { "name": "transfer_clear_history_action", "value": "清除记录" },
-    { "name": "transfer_history_cleared", "value": "传输记录已清除" },
-    { "name": "transfer_empty_title", "value": "还没有发送记录" },
-    { "name": "transfer_empty_description", "value": "启用 Taildrop 后，发送和接收的文件会显示在这里" },
-    { "name": "glow_title", "value": "沉浸光感" },
-    { "name": "glow_description", "value": "调整按钮与底栏的光感响应强度" },
-    { "name": "glow_exquisite", "value": "精美" },
-    { "name": "glow_gentle", "value": "轻柔" },
-    { "name": "glow_smooth", "value": "流畅" },
-    { "name": "glow_adaptive", "value": "自适应" },
-    { "name": "connection_connected", "value": "已连接" },
-    { "name": "connection_connecting", "value": "正在连接" },
-    { "name": "device_connection_connecting", "value": "连接中" },
-    { "name": "device_connection_waiting", "value": "在线 · 等待连接" },
-    { "name": "connection_recovering", "value": "连接恢复中" },
-    { "name": "connection_problem", "value": "连接遇到问题" },
-    { "name": "connection_login_required", "value": "需要登录" },
-    { "name": "connection_disconnected", "value": "未连接" },
-    { "name": "connection_starting", "value": "初始化后端中" },
-    { "name": "connection_approval_required", "value": "设备待审批" },
-    { "name": "connection_key_expired", "value": "设备密钥已到期" },
-    { "name": "description_connected", "value": "此设备已加入你的 Tailscale 私有网络" },
-    { "name": "description_connecting", "value": "正在建立系统 VPN，请稍候" },
-    { "name": "description_login_required", "value": "先在系统浏览器中完成 Tailscale 登录" },
-    { "name": "description_problem", "value": "打开工程诊断可查看错误详情" },
-    { "name": "description_tls_problem", "value": "安全控制连接校验失败，请检查系统时间和网络后重试" },
-    { "name": "description_network_problem", "value": "暂时无法访问 Tailscale 网络，请检查 Wi-Fi 或移动数据后重试" },
-    { "name": "description_vpn_permission_problem", "value": "系统 VPN 启动失败，请允许 VPN 请求后重新连接" },
-    { "name": "description_vpn_conflict_problem", "value": "请先在系统中断开其它 VPN，再重新连接" },
-    { "name": "vpn_conflict_title", "value": "请先断开其它 VPN" },
-    { "name": "vpn_conflict_message", "value": "请断开其它 VPN 以连接 Tailscale" },
-    { "name": "vpn_conflict_confirm_action", "value": "确定" },
-    { "name": "description_status_problem", "value": "暂时无法读取 VPN 状态，请重新打开应用后重试" },
-    { "name": "description_disconnected", "value": "连接后可通过Tailscale访问其它设备" },
-    { "name": "description_starting", "value": "正在准备 Tailscale，请稍候" },
-    { "name": "description_approval_required", "value": "请前往 Tailscale 管理控制台批准此设备" },
-    { "name": "description_key_expired", "value": "重新登录 Tailscale 以更新设备密钥" },
-    { "name": "action_connect", "value": "连接 Tailscale" },
-    { "name": "action_connecting", "value": "正在连接…" },
-    { "name": "action_starting", "value": "初始化后端中" },
-    { "name": "action_disconnect", "value": "断开连接" },
-    { "name": "traffic_download", "value": "本次连接下载" },
-    { "name": "traffic_upload", "value": "本次连接上传" },
-    { "name": "action_login", "value": "登录 Tailscale" },
-    { "name": "login_loading", "value": "正在加载登录，请稍等" },
-    { "name": "login_browser_prompt", "value": "请在浏览器中完成登录" },
-    { "name": "exit_node_title", "value": "出口节点" },
-    { "name": "exit_node_description", "value": "通过另一台设备访问互联网" },
-    { "name": "exit_node_empty", "value": "当前网络没有可用的出口节点" },
-    { "name": "exit_node_none", "value": "不使用出口节点" },
-    { "name": "exit_node_login_required", "value": "登录后可查看并选择当前网络的出口节点" },
-    { "name": "exit_node_disconnect_first", "value": "断开连接以更改出口节点" },
-    { "name": "devices_title", "value": "设备" },
-    { "name": "devices_empty", "value": "当前没有其他设备" },
-    { "name": "devices_count", "value": "%d 台在线，共 %d 台" },
-    { "name": "peer_online", "value": "在线" },
-    { "name": "peer_offline", "value": "离线" },
-    { "name": "peer_exit_node", "value": "可用作出口节点" },
-    { "name": "peer_connectivity_action", "value": "测试连通性" },
-    { "name": "peer_connectivity_testing", "value": "正在测试…" },
-    { "name": "peer_connectivity_summary", "value": "%d/%d 次响应 · 平均 %d 毫秒 · 丢包 %d%%" },
-    { "name": "peer_connectivity_latency_range", "value": "延迟范围 %d–%d 毫秒" },
-    { "name": "peer_copy_ip", "value": "复制 IP" },
-    { "name": "peer_ip_copied", "value": "设备 IP 已复制" },
-    { "name": "device_copy_unavailable", "value": "此设备没有可复制的信息" },
-    { "name": "device_copy_failed", "value": "复制失败，请重试" },
-    { "name": "device_approval_required", "value": "待审批" },
-    { "name": "device_key_expired", "value": "密钥已到期" },
-    { "name": "device_key_expiring", "value": "密钥将在 %d 天后到期" },
-    { "name": "local_device_badge", "value": "本机" },
-    { "name": "account_title", "value": "账户" },
-    { "name": "account_signed_in", "value": "此设备已登录 Tailscale" },
-    { "name": "account_signed_out", "value": "登录后可管理此设备并连接你的私有网络" },
-    { "name": "account_profile_unavailable", "value": "登录以使用 Tailscale" },
-    { "name": "account_tailnet", "value": "所属网络" },
-    { "name": "account_device", "value": "当前设备" },
-    { "name": "about_title", "value": "关于" },
-    { "name": "welcome_dialog_title", "value": "感谢体验本应用 🎉" },
-    { "name": "welcome_dialog_message", "value": "本应用目前仍处于早期开发阶段，部分功能可能尚未完善，使用过程中可能会遇到异常或兼容性问题\n\n如果您遇到问题，欢迎通过 设置 > 关于 > 反馈 联系我们，您的建议将帮助应用持续改进\n\n感谢您的理解与支持！" },
-    { "name": "welcome_dialog_action", "value": "我知道了" },
-    { "name": "feedback_label", "value": "反馈" },
-    { "name": "feedback_open_failed", "value": "无法打开邮件应用" },
-    { "name": "app_version_label", "value": "应用版本" },
-    { "name": "tailscale_version_label", "value": "Tailscale 内核" },
-    { "name": "logout_description", "value": "退出后，此设备需要重新登录才能连接" },
-    { "name": "logout_disconnect_first", "value": "请先断开 Tailscale，再退出登录" },
-    { "name": "logout_action", "value": "退出登录" },
-    { "name": "logout_failed", "value": "退出登录失败，请稍后重试" },
-    { "name": "logout_confirm_title", "value": "退出 Tailscale？" },
-    { "name": "logout_confirm_message", "value": "此设备将从当前 Tailscale 网络注销，以后使用时需要重新登录" },
-    { "name": "cancel_action", "value": "取消" },
-    { "name": "continue_action", "value": "继续" },
-    { "name": "diagnostics_expand", "value": "展开工程诊断" },
-    { "name": "diagnostics_collapse", "value": "收起工程诊断" },
-    { "name": "diagnostics_title", "value": "工程诊断" },
-    { "name": "diagnostics_description", "value": "用于排查问题的技术状态" },
-    { "name": "diagnostics_unlocked_toast", "value": "工程模式已开启，已定位到工程诊断" },
-    { "name": "diagnostic_report_title", "value": "诊断报告" },
-    { "name": "diagnostic_report_description", "value": "生成经过隐私脱敏的 ZIP，包含所选功能的状态、计数、设置及近期结构化事件；不会收集原始日志、身份信息、网络地址或本地路径" },
-    { "name": "diagnostic_report_action", "value": "生成并分享报告" },
-    { "name": "diagnostic_report_generating", "value": "正在生成诊断报告…" },
-    { "name": "diagnostic_report_failed", "value": "诊断报告生成或分享失败" },
-    { "name": "diagnostic_feature_options_title", "value": "新增功能诊断选项" },
-    { "name": "diagnostic_feature_options_description", "value": "选择要在工程诊断页和脱敏报告中显示的模块；开关变化和自检结果会写入结构化事件与 HiLog" },
-    { "name": "diagnostic_enabled_modules_title", "value": "已启用模块" },
-    { "name": "diagnostic_quick_transfer_option_title", "value": "捷传与 HosPlayer 联动" },
-    { "name": "diagnostic_quick_transfer_option_description", "value": "查看 LocalSend、MeshArc 接收端、媒体服务识别和 HosPlayer 参数协议状态" },
-    { "name": "diagnostic_service_monitoring_option_title", "value": "服务在线状态监测" },
-    { "name": "diagnostic_service_monitoring_option_description", "value": "查看轮询、捷传、媒体、Sunshine 与 Taildrop 的在线状态汇总" },
-    { "name": "diagnostic_security_option_title", "value": "应用锁与安全文件夹" },
-    { "name": "diagnostic_security_option_description", "value": "查看脱敏配置状态，并可触发一次不修改设置的系统身份认证自检" },
-    { "name": "diagnostic_appearance_option_title", "value": "外观与布局" },
-    { "name": "diagnostic_appearance_option_description", "value": "查看背景、沉浸取色、流光等级、主页布局和导航配置摘要" },
-    { "name": "diagnostic_localsend_status_title", "value": "LocalSend / 捷传" },
-    { "name": "diagnostic_mesharc_receiver_status_title", "value": "MeshArc 接收端" },
-    { "name": "diagnostic_hosplayer_status_title", "value": "媒体与 HosPlayer" },
-    { "name": "diagnostic_service_monitoring_title", "value": "服务在线状态监测" },
-    { "name": "diagnostic_service_monitoring_description", "value": "显示脱敏后的在线数量、探测进度与后台轮询状态；状态变化会写入日志" },
-    { "name": "diagnostic_service_polling_status_title", "value": "后台轮询" },
-    { "name": "diagnostic_media_service_status_title", "value": "媒体服务" },
-    { "name": "diagnostic_sunshine_service_status_title", "value": "Sunshine 服务" },
-    { "name": "diagnostic_taildrop_service_status_title", "value": "Taildrop 服务" },
-    { "name": "diagnostic_refresh_feature_services_action", "value": "刷新新增功能服务状态" },
-    { "name": "diagnostic_feature_refresh_status_title", "value": "刷新结果" },
-    { "name": "diagnostic_security_title", "value": "应用安全诊断" },
-    { "name": "diagnostic_security_description", "value": "仅检查应用锁与安全文件夹状态；认证自检不会保存凭据或更改开关" },
-    { "name": "diagnostic_app_lock_status_title", "value": "应用锁" },
-    { "name": "diagnostic_folder_lock_status_title", "value": "安全文件夹" },
-    { "name": "diagnostic_security_self_test_action", "value": "测试系统身份认证" },
-    { "name": "diagnostic_security_self_test_status_title", "value": "身份认证自检" },
-    { "name": "diagnostic_appearance_title", "value": "外观诊断" },
-    { "name": "diagnostic_appearance_description", "value": "只显示外观配置是否启用及数值摘要，不记录背景图片 URI 或文件路径" },
-    { "name": "diagnostic_appearance_background_status_title", "value": "背景效果" },
-    { "name": "diagnostic_appearance_layout_status_title", "value": "布局与导航" },
-    { "name": "diagnostic_device_list_verification_title", "value": "设备列表滚动验证" },
-    { "name": "diagnostic_device_list_verification_description", "value": "复现较长的主页设备列表，验证第 6 台以后的设备仍可滚动到并点击" },
-    { "name": "diagnostic_device_list_fixture_title", "value": "显示 8 台测试设备" },
-    { "name": "diagnostic_device_list_fixture_description", "value": "仅在本次启动临时追加离线测试行，不修改账户或设备数据" },
-    { "name": "diagnostic_device_list_open_action", "value": "打开主页验证" },
-    { "name": "diagnostic_device_list_last_clicked_title", "value": "最近点击的测试设备" },
-    { "name": "settings_subtitle", "value": "账户、网络和外观" },
-    { "name": "settings_title", "value": "网络设置" },
-    { "name": "network_settings_description", "value": "选择此设备使用私有网络的方式" },
-    { "name": "setting_subnet_routes", "value": "接受子网路由" },
-    { "name": "setting_subnet_routes_description", "value": "访问其他设备共享的网络" },
-    { "name": "setting_exit_node", "value": "出口节点" },
-    { "name": "setting_exit_node_lan", "value": "使用出口节点时允许访问局域网" },
-    { "name": "setting_exit_node_lan_description", "value": "使用出口节点时仍可访问附近设备" },
-    { "name": "network_settings_disconnect_first", "value": "断开连接后可更改网络设置" },
-    { "name": "network_setting_failed", "value": "设置未能保存，请重试" },
-    { "name": "setting_enabled", "value": "已开启" },
-    { "name": "setting_disabled", "value": "已关闭" },
-    { "name": "setting_unavailable", "value": "暂不可用" },
-    { "name": "control_server_title", "value": "后端服务器" },
-    { "name": "control_server_description", "value": "填入后端服务器地址以继续，若不知道这是什么，请使用默认地址，确认前应用不会联网" },
-    { "name": "control_server_confirmed", "value": "已确认" },
-    { "name": "control_server_not_confirmed", "value": "未确认" },
-    { "name": "control_server_save", "value": "确认后端服务器" },
-    { "name": "control_server_http_risk_title", "value": "HTTP 后端连接风险" },
-    { "name": "control_server_http_risk_message", "value": "该地址使用未加密的 HTTP，登录和连接流量可能被网络读取或篡改，只有在信任此网络和服务器时才保存" },
-    { "name": "control_server_http_risk_cancel", "value": "取消" },
-    { "name": "control_server_http_risk_confirm", "value": "仍然保存 HTTP 后端" },
-    { "name": "control_server_saved", "value": "后端服务器已保存，现在可以登录" },
-    { "name": "control_server_invalid", "value": "请输入有效的 HTTP 或 HTTPS 控制服务器地址，且不要包含查询参数" },
-    { "name": "control_server_save_failed", "value": "控制服务器保存失败，请重试" },
-    { "name": "control_server_disconnect_first", "value": "请先断开连接，再更改后端服务器" },
-    { "name": "control_server_guide_title", "value": "选择控制服务器" },
-    { "name": "control_server_guide_message", "value": "在你确认地址之前，Tailscale OHOS 不会连接任何服务器，设置页已预填 Tailscale 官方地址，你也可以填写自建 Headscale 地址" },
-    { "name": "control_server_later", "value": "稍后" },
-    { "name": "control_server_configure", "value": "现在配置" },
-    { "name": "control_server_required_to_connect", "value": "请先在账户设置中确认后端服务器" },
-    { "name": "connection_server_required", "value": "需要配置后端服务器" },
-    { "name": "description_server_required", "value": "选择并确认后端服务器后，Tailscale 才会启动" },
-    { "name": "control_server_first_run_tip", "value": "请先填写后端服务器地址并登录" },
-    { "name": "diagnostic_first_run_tools_description", "value": "用于测试首次使用流程和系统 VPN 意外断开的工程操作，每次操作都会写入诊断事件日志" },
-    { "name": "diagnostic_reset_first_run_action", "value": "清除数据并模拟首次打开" },
-    { "name": "diagnostic_reset_first_run_confirm_title", "value": "模拟首次打开应用？" },
-    { "name": "diagnostic_reset_first_run_confirm_message", "value": "将清除已确认的后端服务器和本地 Tailscale 账户状态，然后回到首次使用引导" },
-    { "name": "diagnostic_reset_first_run_completed", "value": "已恢复首次使用状态" },
-    { "name": "diagnostic_reset_first_run_failed", "value": "未能完整清除首次使用数据" },
-    { "name": "diagnostic_force_vpn_stop_action", "value": "手动切断系统 VPN 连接" },
-    { "name": "diagnostic_force_vpn_stop_completed", "value": "已手动切断系统 VPN" },
-    { "name": "diagnostic_force_vpn_stop_failed", "value": "未能切断系统 VPN" },
-    { "name": "diagnostic_simulate_crash_action", "value": "模拟应用闪退" },
-    { "name": "diagnostic_simulate_crash_confirm_title", "value": "模拟应用闪退？" },
-    { "name": "diagnostic_simulate_crash_confirm_message", "value": "此工程测试会停止系统 VPN、保留一份新鲜的“已连接”状态快照，然后异常终止应用，重新打开后，应用应短暂核验这份旧状态，并在约 2.5 秒内显示“未连接”" },
-    { "name": "diagnostic_simulate_crash_failed", "value": "未能准备闪退模拟" },
-    { "name": "diagnostic_action_status", "value": "工程操作" },
-    { "name": "diagnostic_probe_title", "value": "诊断检查" },
-    { "name": "diagnostic_probe_description", "value": "检查应用和控制面状态，不会修改数据" },
-    { "name": "diagnostic_refresh_status_action", "value": "刷新状态" },
-    { "name": "diagnostic_probe_engine_action", "value": "检查引擎" },
-    { "name": "diagnostic_probe_control_tls_action", "value": "检查控制面 TLS" },
-    { "name": "diagnostic_control_plane_status_title", "value": "控制面" },
-    { "name": "diagnostic_vpn_extension_status_title", "value": "VPN 扩展" },
-    { "name": "diagnostic_dangerous_title", "value": "危险操作" },
-    { "name": "diagnostic_dangerous_description", "value": "以下操作可能清除数据、停止服务或模拟故障，请确认影响后再执行" },
-    { "name": "diagnostic_fake_media_online_title", "value": "伪装媒体服务在线" },
-    { "name": "diagnostic_fake_media_online_description", "value": "仅本次启动临时将 Jellyfin 显示为可用" },
-    { "name": "diagnostic_media_integration_title", "value": "媒体服务联动验证" },
-    { "name": "diagnostic_media_integration_description", "value": "检查捷传接收链路、媒体服务识别，并使用内置样本验证 Jellyfin、Emby、Plex 与 HosPlayer 参数联动" },
-    { "name": "diagnostic_media_self_test_action", "value": "运行媒体服务离线自检" },
-    { "name": "diagnostic_hosplayer_copy_action", "value": "复制 HosPlayer 导入链接" },
-    { "name": "diagnostic_media_self_test_status", "value": "媒体联动自检" },
-    { "name": "settings_appearance_title", "value": "外观" },
-    { "name": "settings_storage_title", "value": "存储" },
-    { "name": "settings_cache_title", "value": "缓存" },
-    { "name": "settings_cache_description", "value": "（7天后自动清理）" },
-    { "name": "settings_cache_calculating", "value": "正在计算" },
-    { "name": "settings_cache_clearing", "value": "正在清除" },
-    { "name": "settings_clear_cache_action", "value": "清理所有本地文件" },
-    { "name": "settings_clear_cache_confirm_title", "value": "清理所有本地文件？" },
-    { "name": "settings_clear_cache_confirm_message", "value": "将删除预览缓存和应用私有目录中已收到的文件，不会影响账户、连接设置或发送记录" },
-    { "name": "settings_clear_cache_busy", "value": "当前有任务正在使用缓存，请稍后再试" },
-    { "name": "settings_cache_cleared", "value": "缓存已清除" },
-    { "name": "settings_all_local_files_cleared", "value": "所有本地文件已清理" },
-    { "name": "settings_clear_cache_failed", "value": "部分缓存未能清除，请稍后重试" },
-    { "name": "settings_all_local_files_clear_failed", "value": "部分本地文件未能清理，请稍后重试" }
-    ,{ "name": "notification_taildrop_receiving_title", "value": "\u6b63\u5728\u63a5\u6536\u6587\u4ef6" }
-    ,{ "name": "notification_taildrop_receiving_indeterminate", "value": "\u6b63\u5728\u63a5\u6536" }
-    ,{ "name": "notification_taildrop_received_title", "value": "\u5df2\u63a5\u6536\u6587\u4ef6" }
-    ,{ "name": "notification_taildrop_received_message", "value": "\u9009\u62e9\u4fdd\u5b58\u65b9\u5f0f" }
-    ,{ "name": "notification_taildrop_save_action", "value": "\u4fdd\u5b58" }
-    ,{ "name": "notification_taildrop_open_action", "value": "\u6253\u5f00" }
-    ,{ "name": "notification_taildrop_copy_action", "value": "\u590d\u5236" }
-    ,{ "name": "notification_taildrop_later_action", "value": "\u7a0d\u540e" }
-    ,{ "name": "device_connection_status", "value": "\u8fde\u63a5\u72b6\u6001" }
-    ,{ "name": "device_connection_path", "value": "\u8fde\u63a5\u65b9\u5f0f" }
-    ,{ "name": "localsend_label", "value": "MeshSend" }
-    ,{ "name": "localsend_available", "value": "\u5df2\u53d1\u73b0" }
-    ,{ "name": "localsend_checking", "value": "正在检测 MeshSend" }
-    ,{ "name": "localsend_unavailable", "value": "暂未发现 MeshSend" }
-    ,{ "name": "device_probe_checking", "value": "\u6b63\u5728\u68c0\u6d4b" }
-    ,{ "name": "device_path_direct", "value": "\u76f4\u8fde · %d ms" }
-    ,{ "name": "device_path_relay", "value": "\u4e2d\u7ee7 · %d ms" }
-    ,{ "name": "device_path_peer_relay", "value": "\u70b9\u5bf9\u70b9\u4e2d\u7ee7 · %d ms" }
-    ,{ "name": "device_path_derp_relay", "value": "DERP \u4e2d\u7ee7 · %d ms" }
-    ,{ "name": "device_path_unreachable", "value": "\u5f53\u524d\u4e0d\u53ef\u8fbe" }
-    ,{ "name": "device_status_unknown", "value": "\u5c1a\u672a\u786e\u8ba4" }
-    ,{ "name": "device_detail_service_unavailable", "value": "\u4e0d\u53ef\u7528" }
-    ,{ "name": "streaming_label", "value": "\u8fdc\u7a0b\u4e32\u6d41" }
-    ,{ "name": "sunshine_available", "value": "Sunshine \u53ef\u7528" }
-    ,{ "name": "sunshine_checking", "value": "Sunshine \u68c0\u6d4b\u4e2d" }
-    ,{ "name": "sunshine_timeout", "value": "Sunshine \u68c0\u6d4b\u8d85\u65f6" }
-    ,{ "name": "sunshine_unavailable", "value": "\u672a\u68c0\u6d4b\u5230 Sunshine" }
-    ,{ "name": "sunshine_failed", "value": "Sunshine \u68c0\u6d4b\u5931\u8d25" }
-    ,{ "name": "media_services_label", "value": "\u5f71\u97f3\u670d\u52a1" }
-    ,{ "name": "media_services_checking", "value": "\u5f71\u97f3\u670d\u52a1\u68c0\u6d4b\u4e2d" }
-    ,{ "name": "media_services_available", "value": "%s \u53ef\u7528" }
-    ,{ "name": "media_services_unavailable", "value": "\u672a\u53d1\u73b0\u652f\u6301\u7684\u5f71\u97f3\u670d\u52a1" }
-    ,{ "name": "media_services_timeout", "value": "\u68c0\u6d4b\u8d85\u65f6" }
-    ,{ "name": "media_services_failed", "value": "\u68c0\u6d4b\u5931\u8d25" }
-    ,{ "name": "device_group_local", "value": "本机" }
-    ,{ "name": "device_group_online", "value": "在线" }
-    ,{ "name": "device_group_offline", "value": "离线" }
-    ,{ "name": "device_detail_services_title", "value": "可用服务" }
-    ,{ "name": "device_detail_refresh_services", "value": "重新检查可用服务" }
-    ,{ "name": "device_detail_desktop_title", "value": "桌面" }
-    ,{ "name": "device_detail_desktop_description", "value": "Sunshine · 使用 Moonlight 打开" }
-    ,{ "name": "device_detail_media_title", "value": "媒体" }
-    ,{ "name": "device_detail_transfer_title", "value": "发送文件" }
-    ,{ "name": "device_detail_transfer_tailsend_description", "value": "MeshSend · 内置 Tailscale 传输" }
-    ,{ "name": "device_detail_transfer_localsend_description", "value": "MeshSend · LocalSend 扩展" }
-    ,{ "name": "device_detail_transfer_both_description", "value": "可选择 MeshSend 传输方式" }
-    ,{ "name": "device_detail_localsend_description", "value": "此设备已发现 MeshSend（LocalSend）服务" }
-    ,{ "name": "device_detail_taildrop_description", "value": "使用 MeshSend 向设备发送文件、图片或文本" }
-    ,{ "name": "device_detail_taildrop_offline", "value": "设备上线后即可使用 MeshSend" }
-    ,{ "name": "device_detail_taildrop_connect", "value": "连接 Tailscale 后即可开始 MeshSend 传输" }
-    ,{ "name": "device_detail_services_checking", "value": "正在检查可用服务…" }
-    ,{ "name": "device_detail_services_empty", "value": "暂未发现可直接打开的服务" }
-    ,{ "name": "device_detail_services_offline", "value": "设备当前离线，仍可在下方查看网络信息" }
-    ,{ "name": "device_detail_network_title", "value": "网络" }
-    ,{ "name": "device_detail_exit_node_available", "value": "可用" }
-    ,{ "name": "device_detail_device_title", "value": "设备信息" }
-    ,{ "name": "device_detail_system_label", "value": "系统" }
-    ,{ "name": "device_detail_model_label", "value": "型号" }
-    ,{ "name": "network_sheet_title", "value": "网络" }
-    ,{ "name": "network_sheet_network_title", "value": "Tailscale 网络" }
-    ,{ "name": "network_sheet_device_label", "value": "当前设备" }
-    ,{ "name": "network_sheet_local_address", "value": "设备IP" }
-    ,{ "name": "network_sheet_not_used", "value": "未使用" }
-    ,{ "name": "network_sheet_not_used_available", "value": "未使用 · %d 可用" }
-    ,{ "name": "network_sheet_tailnet_default", "value": "Tailnet 默认" }
-    ,{ "name": "network_sheet_lan_access", "value": "局域网访问" }
-    ,{ "name": "network_sheet_on", "value": "开启" }
-    ,{ "name": "network_sheet_off", "value": "关闭" }
-    ,{ "name": "network_sheet_traffic_title", "value": "流量" }
-    ,{ "name": "network_sheet_duration", "value": "连接时长" }
-    ,{ "name": "network_sheet_current_rate", "value": "当前速率" }
-    ,{ "name": "network_sheet_session_traffic", "value": "本次连接" }
-    ,{ "name": "update_changelog_title", "value": "\u66f4\u65b0\u65e5\u5fd7" }
-    ,{ "name": "update_changelog_only_on_update", "value": "\u4ec5\u66f4\u65b0\u65f6\u663e\u793a" }
-    ,{ "name": "update_changelog_section", "value": "\u672c\u6b21\u66f4\u65b0" }
-    ,{ "name": "navigation_settings_title", "value": "\u5e95\u90e8\u5bfc\u822a\u680f" }
-    ,{ "name": "navigation_settings_description", "value": "\u9009\u62e9\u663e\u793a\u54ea\u4e9b\u6807\u7b7e\uff0c\u5e76\u8c03\u6574\u663e\u793a\u987a\u5e8f" }
-    ,{ "name": "navigation_position_title", "value": "\u5bfc\u822a\u680f\u4f4d\u7f6e" }
-    ,{ "name": "navigation_position_description", "value": "\u4e0a\u4e0b\u62d6\u52a8\u8c03\u6574\u6d6e\u52a8\u5bfc\u822a\u680f\u7684\u9ad8\u5ea6" }
-    ,{ "name": "navigation_always_one_visible", "value": "\u81f3\u5c11\u4fdd\u7559\u4e00\u4e2a\u53ef\u89c1\u6807\u7b7e" }
-    ,{ "name": "navigation_move_up", "value": "\u4e0a\u79fb\u6807\u7b7e" }
-    ,{ "name": "navigation_move_down", "value": "\u4e0b\u79fb\u6807\u7b7e" }
-    ,{ "name": "settings_network_connection_title", "value": "\u7f51\u7edc\u4e0e\u8fde\u63a5" }
-    ,{ "name": "settings_network_preferences_title", "value": "\u8fde\u63a5\u504f\u597d" }
-    ,{ "name": "settings_appearance_navigation_title", "value": "\u5916\u89c2\u4e0e\u5bfc\u822a" }
-    ,{ "name": "settings_storage_cache_title", "value": "\u5b58\u50a8\u4e0e\u7f13\u5b58" }
-    ,{ "name": "settings_about_help_title", "value": "\u5173\u4e8e\u4e0e\u5e2e\u52a9" }
-    ,{ "name": "settings_animation_summary", "value": "\u65f6\u957f\u3001\u5e45\u5ea6\u4e0e\u5f39\u6027\u54cd\u5e94" }
-    ,{ "name": "native_settings_title", "value": "\u8bbe\u7f6e" }
-    ,{ "name": "native_settings_profile_default", "value": "MeshArc" }
-    ,{ "name": "native_settings_vip", "value": "MeshArc VIP" }
-    ,{ "name": "native_settings_vip_action", "value": "\u89e3\u9501\u66f4\u591a\u80fd\u529b" }
-    ,{ "name": "native_settings_system_follow", "value": "\u8ddf\u968f\u7cfb\u7edf" }
-    ,{ "name": "native_settings_transfer_section", "value": "\u4e92\u4f20\u4e0e\u7a7a\u95f4" }
-    ,{ "name": "native_settings_appearance_section", "value": "\u5916\u89c2\u4e0e\u4e2a\u6027\u5316" }
-    ,{ "name": "native_settings_help_section", "value": "\u5173\u4e8e\u4e0e\u5e2e\u52a9" }
-    ,{ "name": "native_settings_transfer", "value": "\u4e92\u4f20\u8bbe\u7f6e" }
-    ,{ "name": "native_settings_storage", "value": "\u7a7a\u95f4\u7ba1\u7406" }
-    ,{ "name": "native_settings_storage_total", "value": "\u603b\u5360\u7528\u7a7a\u95f4" }
-    ,{ "name": "native_settings_storage_app_data", "value": "\u5e94\u7528\u914d\u7f6e\u4e0e\u6570\u636e" }
-    ,{ "name": "native_settings_storage_received", "value": "\u5df2\u63a5\u6536\u6587\u4ef6\u4e0e\u5a92\u4f53" }
-    ,{ "name": "native_settings_storage_temporary", "value": "\u4e34\u65f6\u4f20\u8f93\u4e0e\u9884\u89c8\u7f13\u5b58" }
-    ,{ "name": "native_settings_storage_clear_cache", "value": "\u6e05\u9664\u7f13\u5b58" }
-    ,{ "name": "native_settings_storage_clear_cache_description", "value": "\u4ec5\u6e05\u9664\u7f29\u7565\u56fe\u548c\u9884\u89c8\u7f13\u5b58\uff0c\u7f13\u5b58\u5c06\u57287\u5929\u540e\u81ea\u52a8\u6e05\u7406" }
-    ,{ "name": "native_settings_storage_clear", "value": "\u6e05\u7406\u6240\u6709\u672c\u5730\u6587\u4ef6" }
-    ,{ "name": "native_settings_storage_clear_description", "value": "\u6e05\u7406\u9884\u89c8\u7f13\u5b58\u4ee5\u53ca\u5e94\u7528\u79c1\u6709\u76ee\u5f55\u4e2d\u5df2\u6536\u5230\u7684\u6587\u4ef6" }
-    ,{ "name": "native_settings_storage_clear_action", "value": "\u6e05\u7406" }
-    ,{ "name": "native_settings_theme", "value": "\u4e3b\u9898\u8272\u548c\u98ce\u683c" }
-    ,{ "name": "native_settings_color_mode", "value": "\u989c\u8272\u6a21\u5f0f" }
-    ,{ "name": "native_settings_background_material", "value": "\u80cc\u666f\u56fe\u548c\u6750\u8d28" }
-    ,{ "name": "native_settings_animation", "value": "\u52a8\u753b\u6548\u679c" }
-    ,{ "name": "native_settings_usage", "value": "\u4f7f\u7528\u8bf4\u660e" }
-    ,{ "name": "native_settings_choose_background", "value": "\u9009\u62e9\u80cc\u666f\u56fe\u7247" }
-    ,{ "name": "native_settings_clear_background", "value": "\u6e05\u7a7a\u80cc\u666f\u56fe\u7247" }
-    ,{ "name": "native_settings_choose_background_desc", "value": "\u4ece\u76f8\u518c\u9009\u62e9\u4e00\u5f20\u56fe\u7247" }
-    ,{ "name": "native_settings_immersive_color", "value": "\u6c89\u6d78\u8272\u5f69\u80cc\u666f" }
-    ,{ "name": "native_settings_immersive_color_desc", "value": "\u6839\u636e\u8fde\u63a5\u4e0e\u4f20\u8f93\u72b6\u6001\u53e0\u52a0\u73af\u5883\u8272\uff0c\u4e00\u773c\u611f\u77e5\u5f53\u524d\u72b6\u6001" }
-    ,{ "name": "native_settings_immersive_light", "value": "\u6c89\u6d78\u5149\u611f" }
-    ,{ "name": "native_settings_immersive_light_desc", "value": "\u4f53\u9a8c HarmonyOS Design \u7684\u6700\u65b0\u6750\u8d28\u5149\u611f\uff08\u4f1a\u589e\u52a0\u529f\u8017\u4e14\u5bb9\u6613\u6389\u5e27\uff09" }
-    ,{ "name": "native_settings_material", "value": "\u6c89\u6d78\u5149\u611f\u6750\u8d28" }
-    ,{ "name": "native_settings_material_desc", "value": "\u6750\u8d28\u8d8a\u7cbe\u7f8e\u753b\u9762\u8d8a\u7ec6\u8174\uff0c\u81ea\u9002\u5e94\u4f1a\u6839\u636e\u673a\u578b\u81ea\u52a8\u5e73\u8861\u753b\u8d28\u4e0e\u529f\u8017" }
-    ,{ "name": "native_settings_material_adaptive", "value": "\u81ea\u9002\u5e94" }
-    ,{ "name": "native_settings_material_exquisite", "value": "\u7cbe\u7f8e" }
-    ,{ "name": "native_settings_material_gentle", "value": "\u8f7b\u67d4" }
-    ,{ "name": "native_settings_material_smooth", "value": "\u6d41\u7545" }
-    ,{ "name": "native_settings_brightness", "value": "\u6750\u8d28\u4eae\u5ea6" }
-    ,{ "name": "native_settings_intelligent_material", "value": "\u667a\u80fd\u6750\u8d28\u8c03\u8282" }
-    ,{ "name": "native_settings_intelligent_material_desc", "value": "\u6839\u636e\u8bbe\u5907\u6e29\u5ea6\u81ea\u52a8\u8c03\u8282\u753b\u9762\u6548\u679c\uff0c\u517c\u987e\u6d41\u7545\u4e0e\u4f53\u9a8c" }
-    ,{ "name": "native_settings_hdr", "value": "\u5168\u5c40 HDR \u5149\u6548" }
-    ,{ "name": "native_settings_hdr_desc", "value": "\u5149\u6548\u4f1a\u4ee5 HDR \u5448\u73b0\uff08\u90e8\u5206\u673a\u578b\u548c\u7cfb\u7edf\u4e0d\u652f\u6301\uff09\uff0c\u4eae\u5ea6\u548c\u529f\u8017\u4f1a\u63d0\u9ad8" }
-    ,{ "name": "native_settings_floating_tabs", "value": "\u6d6e\u52a8\u9875\u7b7e\u680f" }
-    ,{ "name": "native_settings_floating_tabs_desc", "value": "\u9875\u7b7e\u680f\u4f1a\u5b8c\u6574\u586b\u6ee1\u7a97\u53e3\u5e95\u90e8" }
-    ,{ "name": "native_settings_animation_duration", "value": "\u52a8\u753b\u6301\u7eed\u65f6\u95f4" }
-    ,{ "name": "native_settings_animation_amplitude", "value": "\u52a8\u753b\u8fd0\u52a8\u5e45\u5ea6" }
-    ,{ "name": "native_settings_animation_damping", "value": "\u52a8\u753b\u5f39\u6027\u963b\u5c3c" }
-    ,{ "name": "native_settings_preset_efficiency", "value": "\u6548\u7387" }
-    ,{ "name": "native_settings_preset_default", "value": "\u9ed8\u8ba4" }
-    ,{ "name": "native_settings_preset_lively", "value": "\u7075\u52a8" }
-    ,{ "name": "native_settings_preview_hint", "value": "\u70b9\u51fb\u9884\u89c8\u64ad\u653e\u5c5e\u6027\u52a8\u753b" }
-    ,{ "name": "native_settings_close", "value": "\u5173\u95ed\u8bbe\u7f6e" }
-    ,{ "name": "native_settings_back", "value": "\u8fd4\u56de" }
-    ,{ "name": "transfer_protocol_refresh_action", "value": "\u5237\u65b0" }
-    ,{ "name": "transfer_protocol_refreshing", "value": "\u5237\u65b0\u4e2d" }
-    ,{ "name": "transfer_tailscale_network_not_connected", "value": "Tailscale\u7f51\u7edc\u672a\u8fde\u63a5" }
-    ,{ "name": "transfer_localsend_open_failed", "value": "LocalSend \u672a\u5b89\u88c5\u6216\u65e0\u6cd5\u6253\u5f00" }
-    ,{ "name": "device_detail_service_available", "value": "\u53ef\u7528" }
-    ,{ "name": "device_detail_device_offline", "value": "\u8bbe\u5907\u79bb\u7ebf" }
-    ,{ "name": "device_detail_media_discovered", "value": "\u5df2\u53d1\u73b0\uff1a%s" }
-    ,{ "name": "device_detail_remote_files_title", "value": "\u8fdc\u7a0b\u6587\u4ef6\u7ba1\u7406" }
-    ,{ "name": "transfer_multi_protocol_subtitle", "value": "\u901a\u8fc7\u591a\u534f\u8bae\u6536\u53d1\u6587\u4ef6" }
-    ,{ "name": "device_detail_remote_desktop_title", "value": "\u8fdc\u7a0b\u684c\u9762" }
-    ,{ "name": "account_open_details", "value": "\u6253\u5f00\u8d26\u6237\u8be6\u7ec6\u4fe1\u606f" }
-    ,{ "name": "settings_security_title", "value": "\u5b89\u5168" }
-    ,{ "name": "security_app_lock_title", "value": "\u5e94\u7528\u9501" }
-    ,{ "name": "security_app_lock_description", "value": "\u6bcf\u6b21\u8fd4\u56de\u524d\u53f0\u65f6\u9700\u8981\u901a\u8fc7\u8bbe\u5907\u8eab\u4efd\u9a8c\u8bc1" }
-    ,{ "name": "security_folder_lock_title", "value": "\u6587\u4ef6\u5939\u9501" }
-    ,{ "name": "security_folder_lock_description", "value": "\u53ef\u9501\u5b9a\u9009\u5b9a\u8bbe\u5907\u6587\u4ef6\u5939\u53ca\u5176\u5185\u5bb9" }
-    ,{ "name": "security_lock_folder_action", "value": "\u9501\u5b9a\u6587\u4ef6\u5939" }
-    ,{ "name": "security_unlock_folder_action", "value": "\u89e3\u9664\u6587\u4ef6\u5939\u9501\u5b9a" }
-    ,{ "name": "security_app_authentication_title", "value": "\u89e3\u9501 MeshArc" }
-    ,{ "name": "security_folder_authentication_title", "value": "\u89e3\u9501\u53d7\u4fdd\u62a4\u6587\u4ef6\u5939" }
-    ,{ "name": "security_app_locked_title", "value": "\u5e94\u7528\u5df2\u9501\u5b9a" }
-    ,{ "name": "security_app_locked_description", "value": "\u8bf7\u4f7f\u7528\u8bbe\u5907\u8eab\u4efd\u9a8c\u8bc1\u540e\u7ee7\u7eed" }
-    ,{ "name": "security_unlock_app_action", "value": "\u89e3\u9501" }
-    ,{ "name": "security_authentication_failed", "value": "\u8eab\u4efd\u9a8c\u8bc1\u672a\u5b8c\u6210\uff0c\u8bf7\u91cd\u8bd5" }
-    ,{ "name": "security_settings_authentication_title", "value": "\u9a8c\u8bc1\u5b89\u5168\u8bbe\u7f6e" }
-    ,{ "name": "security_settings_save_failed", "value": "\u65e0\u6cd5\u4fdd\u5b58\u5b89\u5168\u8bbe\u7f6e\uff0c\u8bf7\u91cd\u8bd5" }
-    ,{ "name": "notification_vpn_background_title", "value": "VPN 已连接" }
+    { "name": "peer_copy_dns", "value": "复制 MagicDNS 名称" },
+    { "name": "peer_dns_copied", "value": "已复制 MagicDNS 名称" },
+    {
+      "name": "device_detail_service_timeout",
+      "value": "检测超时"
+    },
+    {
+      "name": "device_detail_service_error",
+      "value": "检测失败"
+    },
+    {
+      "name": "taildrive_status_authorizing_operation",
+      "value": "正在确认文件访问权限…"
+    },
+    {
+      "name": "taildrive_selected_search_scope",
+      "value": "已选 %d 项 · 搜索结果外 %d 项"
+    },
+    {
+      "name": "taildrive_select_search_results",
+      "value": "全选当前搜索结果"
+    },
+    {
+      "name": "taildrive_deselect_search_results",
+      "value": "取消选择当前搜索结果"
+    },
+    {
+      "name": "taildrive_folder_context_changed",
+      "value": "目录或权限已变化。请复制名称，取消后在目标目录重新新建。"
+    },
+    {
+      "name": "taildrive_rename_context_changed",
+      "value": "目录或权限已变化。请复制名称，取消后重新选择文件进行重命名。"
+    },
+    {
+      "name": "taildrive_move_context_changed",
+      "value": "目录或权限已变化。请取消后重新选择要移动的文件。"
+    },
+    {
+      "name": "taildrive_details_context_changed",
+      "value": "目录或权限已变化。请关闭详情后重新选择文件。"
+    },
+    {
+      "name": "taildrive_status_preparing_upload",
+      "value": "正在准备上传…"
+    },
+    {
+      "name": "taildrive_retained_list_notice",
+      "value": "当前显示上次加载的列表，请刷新确认最新内容。"
+    },
+    {
+      "value": "登录服务尚未就绪，请稍后重试。",
+      "name": "auth_key_backend_not_ready"
+    },
+    {
+      "value": "使用管理员提供的设备 Auth key 入网，无需账号密码。提交前请确认下方控制服务器；Headscale 请先设置公司服务器地址。",
+      "name": "auth_key_description"
+    },
+    {
+      "value": "请输入设备 Auth key。",
+      "name": "auth_key_empty"
+    },
+    {
+      "value": "未能完成认证。请检查网络和控制服务器，并确认登录状态后再重试。",
+      "name": "auth_key_failed"
+    },
+    {
+      "value": "请检查密钥格式。Tailscale 需使用 tskey-auth- 密钥；Headscale 需先设置其控制服务器。",
+      "name": "auth_key_invalid"
+    },
+    {
+      "value": "正在认证…",
+      "name": "auth_key_loading"
+    },
+    {
+      "value": "使用 Auth key 登录",
+      "name": "auth_key_login_action"
+    },
+    {
+      "value": "这是 API 管理令牌或 OAuth 客户端密钥，请向管理员索取设备入网用的 Auth key。",
+      "name": "auth_key_management_key"
+    },
+    {
+      "value": "设备已注册，需管理员批准后才能连接。",
+      "name": "auth_key_needs_approval"
+    },
+    {
+      "value": "粘贴设备 Auth key",
+      "name": "auth_key_placeholder"
+    },
+    {
+      "value": "提交后清空输入，密钥不保存到设置或诊断日志。",
+      "name": "auth_key_privacy"
+    },
+    {
+      "value": "认证失败。密钥可能已过期、被撤销或已使用，也可能是服务器拒绝注册，请联系管理员确认。",
+      "name": "auth_key_rejected"
+    },
+    {
+      "value": "登录",
+      "name": "auth_key_submit"
+    },
+    {
+      "value": "登录成功，现在可以连接 VPN。",
+      "name": "auth_key_success"
+    },
+    {
+      "value": "认证超时。请先检查登录状态再重试，一次性密钥可能已使用。",
+      "name": "auth_key_timeout"
+    },
+    {
+      "name": "taildrive_title",
+      "value": "远程文件"
+    },
+    {
+      "name": "taildrive_subtitle",
+      "value": "浏览 Tailnet 设备共享的文件夹"
+    },
+    {
+      "name": "taildrive_connect_first",
+      "value": "请先连接 Tailscale 以浏览远程文件"
+    },
+    {
+      "name": "taildrive_refresh_action",
+      "value": "刷新"
+    },
+    {
+      "name": "taildrive_up_action",
+      "value": "上一级"
+    },
+    {
+      "name": "taildrive_new_folder_action",
+      "value": "新建文件夹"
+    },
+    {
+      "name": "taildrive_new_folder_default_name",
+      "value": "新建文件夹"
+    },
+    {
+      "name": "taildrive_upload_action",
+      "value": "上传"
+    },
+    {
+      "name": "taildrive_download_action",
+      "value": "下载"
+    },
+    {
+      "name": "taildrive_cached_file",
+      "value": "已缓存到本机"
+    },
+    {
+      "name": "taildrive_downloaded_file",
+      "value": "本次会话已下载并保存"
+    },
+    {
+      "name": "taildrive_details_action",
+      "value": "详情"
+    },
+    {
+      "name": "taildrive_move_action",
+      "value": "移动"
+    },
+    {
+      "name": "taildrive_search_placeholder",
+      "value": "搜索当前文件夹"
+    },
+    {
+      "name": "taildrive_search_action",
+      "value": "搜索"
+    },
+    {
+      "name": "taildrive_grid_view_action",
+      "value": "切换为网格视图"
+    },
+    {
+      "name": "taildrive_list_view_action",
+      "value": "切换为列表视图"
+    },
+    {
+      "name": "taildrive_multi_select_action",
+      "value": "多选"
+    },
+    {
+      "name": "taildrive_done_action",
+      "value": "完成"
+    },
+    {
+      "name": "taildrive_selected_count",
+      "value": "已选择 %d 项"
+    },
+    {
+      "name": "taildrive_selection_empty",
+      "value": "未选择"
+    },
+    {
+      "name": "taildrive_selected_total",
+      "value": "共 %s"
+    },
+    {
+      "name": "taildrive_select_all_action",
+      "value": "全选"
+    },
+    {
+      "name": "taildrive_deselect_all_action",
+      "value": "取消全选"
+    },
+    {
+      "name": "taildrive_share_action",
+      "value": "分享"
+    },
+    {
+      "name": "taildrive_copy_action",
+      "value": "复制"
+    },
+    {
+      "name": "taildrive_more_action",
+      "value": "更多"
+    },
+    {
+      "name": "taildrive_preview_download_title",
+      "value": "下载后预览"
+    },
+    {
+      "name": "taildrive_preview_download_message",
+      "value": "预览“%s”前需要先下载到应用私有文件夹。\\n类型：%s\\n大小：%s"
+    },
+    {
+      "name": "taildrive_preview_download_action",
+      "value": "下载"
+    },
+    {
+      "name": "taildrive_preview_download_hint",
+      "value": "该文件为 5 MB 或更大，下载后才能预览"
+    },
+    {
+      "name": "taildrive_loading",
+      "value": "正在读取文件…"
+    },
+    {
+      "name": "taildrive_sort_name",
+      "value": "按名称排序"
+    },
+    {
+      "name": "taildrive_sort_modified",
+      "value": "按时间排序"
+    },
+    {
+      "name": "taildrive_sort_size",
+      "value": "按大小排序"
+    },
+    {
+      "name": "taildrive_sort_group_title",
+      "value": "排序与分组"
+    },
+    {
+      "name": "taildrive_arrangement_action",
+      "value": "排列方式"
+    },
+    {
+      "name": "taildrive_sort_section",
+      "value": "排序方式"
+    },
+    {
+      "name": "taildrive_sort_direction_section",
+      "value": "排序顺序"
+    },
+    {
+      "name": "taildrive_sort_ascending",
+      "value": "升序"
+    },
+    {
+      "name": "taildrive_sort_descending",
+      "value": "降序"
+    },
+    {
+      "name": "taildrive_group_section",
+      "value": "分组方式"
+    },
+    {
+      "name": "taildrive_group_none",
+      "value": "不分组"
+    },
+    {
+      "name": "taildrive_group_by_type",
+      "value": "按类型分组"
+    },
+    {
+      "name": "taildrive_group_by_date",
+      "value": "按日期分组"
+    },
+    {
+      "name": "taildrive_group_folders",
+      "value": "文件夹"
+    },
+    {
+      "name": "taildrive_group_images",
+      "value": "图片"
+    },
+    {
+      "name": "taildrive_group_videos",
+      "value": "视频"
+    },
+    {
+      "name": "taildrive_group_documents",
+      "value": "文档"
+    },
+    {
+      "name": "taildrive_group_archives",
+      "value": "压缩包与应用"
+    },
+    {
+      "name": "taildrive_group_other",
+      "value": "其他"
+    },
+    {
+      "name": "taildrive_group_today",
+      "value": "今天"
+    },
+    {
+      "name": "taildrive_group_yesterday",
+      "value": "昨天"
+    },
+    {
+      "name": "taildrive_group_this_week",
+      "value": "近 7 天"
+    },
+    {
+      "name": "taildrive_group_earlier",
+      "value": "更早"
+    },
+    {
+      "name": "taildrive_group_unknown_date",
+      "value": "无日期信息"
+    },
+    {
+      "name": "taildrive_retry_action",
+      "value": "重试"
+    },
+    {
+      "name": "taildrive_details_title",
+      "value": "文件详情"
+    },
+    {
+      "name": "taildrive_details_type",
+      "value": "类型"
+    },
+    {
+      "name": "taildrive_details_path",
+      "value": "路径"
+    },
+    {
+      "name": "taildrive_details_size",
+      "value": "大小"
+    },
+    {
+      "name": "taildrive_details_modified",
+      "value": "修改时间"
+    },
+    {
+      "name": "taildrive_details_content_type",
+      "value": "内容类型"
+    },
+    {
+      "name": "taildrive_type_folder",
+      "value": "文件夹"
+    },
+    {
+      "name": "taildrive_type_tailnet",
+      "value": "Tailnet"
+    },
+    {
+      "name": "taildrive_type_device",
+      "value": "远程设备"
+    },
+    {
+      "name": "taildrive_type_share",
+      "value": "共享文件夹"
+    },
+    {
+      "name": "taildrive_type_file",
+      "value": "文件"
+    },
+    {
+      "name": "taildrive_move_title",
+      "value": "选择目标文件夹"
+    },
+    {
+      "name": "taildrive_move_here_action",
+      "value": "移动到这里"
+    },
+    {
+      "name": "taildrive_copy_to_title",
+      "value": "复制到目标文件夹"
+    },
+    {
+      "name": "taildrive_copy_here_action",
+      "value": "复制到这里"
+    },
+    {
+      "name": "taildrive_copy_path_action",
+      "value": "复制路径"
+    },
+    {
+      "name": "taildrive_move_no_subfolders",
+      "value": "当前文件夹下没有子文件夹"
+    },
+    {
+      "name": "taildrive_move_select_share_hint",
+      "value": "请进入具体共享文件夹后再选择此位置"
+    },
+    {
+      "name": "taildrive_details_quick_actions",
+      "value": "快捷操作"
+    },
+    {
+      "name": "taildrive_details_info_section",
+      "value": "基本信息"
+    },
+    {
+      "name": "taildrive_details_local_status",
+      "value": "本地状态"
+    },
+    {
+      "name": "taildrive_overwrite_title",
+      "value": "替换已有项？"
+    },
+    {
+      "name": "taildrive_replace_action",
+      "value": "替换"
+    },
+    {
+      "name": "taildrive_empty",
+      "value": "这里没有共享文件或文件夹"
+    },
+    {
+      "name": "taildrive_list_failed",
+      "value": "无法读取当前文件夹，请检查 Taildrive 权限后重试"
+    },
+    {
+      "name": "taildrive_rename_action",
+      "value": "重命名"
+    },
+    {
+      "name": "taildrive_delete_action",
+      "value": "删除"
+    },
+    {
+      "name": "taildrive_delete_title",
+      "value": "删除远程项？"
+    },
+    {
+      "name": "taildrive_delete_selected_message",
+      "value": "确定删除已选择的 %d 项吗？此操作无法撤销"
+    },
+    {
+      "name": "taildrive_new_folder_title",
+      "value": "新建文件夹"
+    },
+    {
+      "name": "taildrive_rename_title",
+      "value": "重命名"
+    },
+    {
+      "name": "taildrive_name_placeholder",
+      "value": "名称"
+    },
+    {
+      "name": "confirm_action",
+      "value": "确定"
+    },
+    {
+      "name": "taildrive_transfer_in_progress",
+      "value": "正在传输文件"
+    },
+    {
+      "name": "taildrive_status_select_failed",
+      "value": "无法打开文件选择器"
+    },
+    {
+      "name": "taildrive_status_uploading",
+      "value": "正在上传…"
+    },
+    {
+      "name": "taildrive_status_upload_completed",
+      "value": "上传完成"
+    },
+    {
+      "name": "taildrive_status_upload_failed",
+      "value": "上传失败"
+    },
+    {
+      "name": "taildrive_status_downloading",
+      "value": "正在下载…"
+    },
+    {
+      "name": "taildrive_status_export_cancelled",
+      "value": "已取消保存"
+    },
+    {
+      "name": "taildrive_status_download_completed",
+      "value": "文件已保存"
+    },
+    {
+      "name": "taildrive_status_export_failed",
+      "value": "无法保存下载文件"
+    },
+    {
+      "name": "taildrive_status_deleting",
+      "value": "正在删除…"
+    },
+    {
+      "name": "taildrive_status_delete_completed",
+      "value": "已删除"
+    },
+    {
+      "name": "taildrive_status_delete_failed",
+      "value": "删除失败"
+    },
+    {
+      "name": "taildrive_status_creating_folder",
+      "value": "正在创建文件夹…"
+    },
+    {
+      "name": "taildrive_status_renaming",
+      "value": "正在重命名…"
+    },
+    {
+      "name": "taildrive_status_moving",
+      "value": "正在移动…"
+    },
+    {
+      "name": "taildrive_status_move_completed",
+      "value": "移动完成"
+    },
+    {
+      "name": "taildrive_status_mutation_completed",
+      "value": "操作完成"
+    },
+    {
+      "name": "taildrive_status_mutation_failed",
+      "value": "无法修改远程项"
+    },
+    {
+      "name": "taildrive_status_invalid_name",
+      "value": "请输入有效的文件或文件夹名称"
+    },
+    {
+      "name": "taildrive_status_same_location",
+      "value": "该项已在当前文件夹中"
+    },
+    {
+      "name": "taildrive_status_target_not_found",
+      "value": "未找到该设备的 Taildrive 共享，已显示全部共享"
+    },
+    {
+      "name": "taildrive_status_permission_denied",
+      "value": "Taildrive 权限被拒绝"
+    },
+    {
+      "name": "taildrive_status_not_found",
+      "value": "远程项已不可用"
+    },
+    {
+      "name": "taildrive_status_already_exists",
+      "value": "已存在同名项"
+    },
+    {
+      "name": "taildrive_status_backend_unavailable",
+      "value": "请连接 Tailscale 后重试"
+    },
+    {
+      "name": "taildrive_status_busy",
+      "value": "另一个 Taildrive 传输仍在进行"
+    },
+    {
+      "name": "taildrive_status_cancelled",
+      "value": "传输已取消"
+    },
+    {
+      "name": "taildrive_status_timeout",
+      "value": "远程操作超时"
+    },
+    {
+      "name": "taildrive_status_no_space",
+      "value": "存储空间不足"
+    },
+    {
+      "name": "taildrive_status_remote_unavailable",
+      "value": "远程设备不可用"
+    },
+    {
+      "name": "taildrive_status_network_interrupted",
+      "value": "网络传输已中断"
+    },
+    {
+      "name": "taildrive_status_file_unavailable",
+      "value": "所选文件已不可用"
+    },
+    {
+      "name": "taildrive_status_transfer_failed",
+      "value": "Taildrive 操作失败"
+    },
+    {
+      "name": "taildrive_status_preview_downloading",
+      "value": "正在下载以便预览…"
+    },
+    {
+      "name": "taildrive_status_preview_download_completed",
+      "value": "下载完成，正在打开预览…"
+    },
+    {
+      "name": "taildrive_status_preview_download_failed",
+      "value": "无法下载文件以便预览"
+    },
+    {
+      "name": "taildrive_status_preview_failed",
+      "value": "没有可用的系统预览应用"
+    },
+    {
+      "name": "taildrive_status_paths_copied",
+      "value": "远程路径已复制"
+    },
+    {
+      "name": "taildrive_status_copy_failed",
+      "value": "无法复制远程路径"
+    },
+    {
+      "name": "taildrive_status_share_failed",
+      "value": "无法打开分享面板"
+    },
+    {
+      "name": "taildrive_status_copying",
+      "value": "正在复制…"
+    },
+    {
+      "name": "taildrive_status_copy_completed",
+      "value": "复制完成"
+    },
+    {
+      "name": "taildrive_status_share_downloading",
+      "value": "正在缓存分享文件…"
+    },
+    {
+      "name": "taildrive_status_share_download_failed",
+      "value": "无法缓存文件以便分享"
+    },
+    {
+      "name": "taildrive_status_select_one_for_details",
+      "value": "请选择一个文件使用此操作"
+    },
+    {
+      "name": "notification_taildrive_uploading_title",
+      "value": "正在上传远程文件"
+    },
+    {
+      "name": "notification_taildrive_downloading_title",
+      "value": "正在下载远程文件"
+    },
+    {
+      "name": "notification_taildrive_completed_title",
+      "value": "远程文件传输完成"
+    },
+    {
+      "name": "notification_taildrive_failed_title",
+      "value": "远程文件传输失败"
+    },
+    {
+      "name": "transfer_send_interrupted",
+      "value": "网络传输中断，自动续传仍未完成，请重试"
+    },
+    {
+      "name": "transfer_detecting_title",
+      "value": "正在发现可传输设备"
+    },
+    {
+      "name": "transfer_detecting_description",
+      "value": "正在从 VPN 后端读取 Taildrop 能力与设备列表"
+    },
+    {
+      "name": "transfer_admin_disabled_title",
+      "value": "Taildrop 尚未启用"
+    },
+    {
+      "name": "transfer_admin_disabled_description",
+      "value": "请在 Tailscale 管理控制台中启用文件发送功能"
+    },
+    {
+      "name": "transfer_unavailable_title",
+      "value": "Taildrop 暂时不可用"
+    },
+    {
+      "name": "transfer_unavailable_description",
+      "value": "暂时无法读取可发送设备，请稍后重试"
+    },
+    {
+      "name": "transfer_targets_ready_title",
+      "value": "%d 台设备在线"
+    },
+    {
+      "name": "transfer_targets_ready_description",
+      "value": "点击在线设备发送文件，或保存收件箱中的文件"
+    },
+    {
+      "name": "transfer_targets_title",
+      "value": "可发送设备"
+    },
+    {
+      "name": "transfer_no_targets_description",
+      "value": "暂未发现可用于发送文件的设备"
+    },
+    {
+      "name": "transfer_send_file_action",
+      "value": "发送文件"
+    },
+    {
+      "name": "transfer_send_completed",
+      "value": "文件已发送"
+    },
+    {
+      "name": "transfer_send_failed",
+      "value": "文件传输失败，请重试"
+    },
+    {
+      "name": "transfer_send_target_unavailable",
+      "value": "所选设备当前不可用"
+    },
+    {
+      "name": "transfer_send_disconnected",
+      "value": "传输完成前 Tailscale 已断开连接"
+    },
+    {
+      "name": "transfer_send_permission_denied",
+      "value": "无法读取所选文件"
+    },
+    {
+      "name": "transfer_send_no_space",
+      "value": "存储空间不足，无法准备本次传输"
+    },
+    {
+      "name": "transfer_send_file_unavailable",
+      "value": "所选文件已不可用"
+    },
+    {
+      "name": "transfer_send_file_changed",
+      "value": "所选文件在发送前发生变化"
+    },
+    {
+      "name": "transfer_send_backend_unavailable",
+      "value": "VPN 后端尚未准备好处理本次传输"
+    },
+    {
+      "name": "transfer_busy_message",
+      "value": "已有传输正在进行"
+    },
+    {
+      "name": "transfer_file_selection_failed",
+      "value": "无法打开文件选择器"
+    },
+    {
+      "name": "transfer_file_copy_failed",
+      "value": "无法准备所选文件"
+    },
+    {
+      "name": "transfer_send_action",
+      "value": "发送"
+    },
+    {
+      "name": "transfer_source_title",
+      "value": "选择发送内容"
+    },
+    {
+      "name": "transfer_source_message",
+      "value": "发送到 %s"
+    },
+    {
+      "name": "transfer_method_title",
+      "value": "选择传输方式"
+    },
+    {
+      "name": "transfer_method_message",
+      "value": "选择发送到 %s 的方式"
+    },
+    {
+      "name": "transfer_method_tailsend_title",
+      "value": "Taildrop"
+    },
+    {
+      "name": "transfer_method_tailsend_description",
+      "value": "应用内置Tailrdrop传输"
+    },
+    {
+      "name": "transfer_method_localsend_title",
+      "value": "捷传"
+    },
+    {
+      "name": "transfer_method_localsend_description",
+      "value": "通过捷传向远端 LocalSend 发送文件"
+    },
+    {
+      "name": "transfer_method_remembered",
+      "value": "两种协议都在线时每次都会询问"
+    },
+    {
+      "name": "media_method_title",
+      "value": "媒体播放"
+    },
+    {
+      "name": "media_method_message",
+      "value": "使用 HosPlayer 添加 %s 并播放媒体"
+    },
+    {
+      "name": "media_method_hosplayer_title",
+      "value": "HosPlayer"
+    },
+    {
+      "name": "media_method_hosplayer_description",
+      "value": "使用 HosPlayer 进行服务器添加与媒体播放"
+    },
+    {
+      "name": "transfer_protocol_online",
+      "value": "%s 在线"
+    },
+    {
+      "name": "transfer_protocol_checking",
+      "value": "%s 检测中"
+    },
+    {
+      "name": "transfer_protocol_offline",
+      "value": "%s 离线"
+    },
+    {
+      "name": "transfer_localsend_open_hint",
+      "value": "请打开 LocalSend 继续发送"
+    },
+    {
+      "name": "transfer_file_action",
+      "value": "文件"
+    },
+    {
+      "name": "transfer_photo_action",
+      "value": "图片与视频"
+    },
+    {
+      "name": "transfer_text_action",
+      "value": "文本"
+    },
+    {
+      "name": "transfer_text_editor_title",
+      "value": "发送文本"
+    },
+    {
+      "name": "transfer_text_preview_title",
+      "value": "文本预览"
+    },
+    {
+      "name": "transfer_preview_action",
+      "value": "预览"
+    },
+    {
+      "name": "transfer_collapse_action",
+      "value": "收起"
+    },
+    {
+      "name": "transfer_text_placeholder",
+      "value": "请输入要发送的文字"
+    },
+    {
+      "name": "transfer_cancel_failed",
+      "value": "无法取消本次传输"
+    },
+    {
+      "name": "transfer_cancelling",
+      "value": "正在取消"
+    },
+    {
+      "name": "transfer_send_cancelled",
+      "value": "文件传输已取消"
+    },
+    {
+      "name": "transfer_preparing",
+      "value": "正在准备文件"
+    },
+    {
+      "name": "transfer_sending_to",
+      "value": "正在发送到 %s"
+    },
+    {
+      "name": "transfer_waiting_for_backend",
+      "value": "正在等待 VPN 后端"
+    },
+    {
+      "name": "transfer_calculating_speed",
+      "value": "正在计算传输速度"
+    },
+    {
+      "name": "transfer_speed_eta",
+      "value": "%s · 剩余 %s"
+    },
+    {
+      "name": "transfer_receive_picker_failed",
+      "value": "无法选择文件保存位置"
+    },
+    {
+      "name": "transfer_receive_completed",
+      "value": "文件已保存"
+    },
+    {
+      "name": "transfer_image_saved",
+      "value": "图片已保存到图库"
+    },
+    {
+      "name": "transfer_text_copied",
+      "value": "文本已复制到剪贴板"
+    },
+    {
+      "name": "transfer_receive_unavailable",
+      "value": "收到的文件已不可用"
+    },
+    {
+      "name": "transfer_receive_no_space",
+      "value": "存储空间不足，无法保存此文件"
+    },
+    {
+      "name": "transfer_receive_delete_failed",
+      "value": "内容已处理，但无法移除收件箱副本"
+    },
+    {
+      "name": "transfer_receive_failed",
+      "value": "无法保存收到的文件，请重试"
+    },
+    {
+      "name": "transfer_save_timeout",
+      "value": "保存超时，可直接重试，无需重启应用"
+    },
+    {
+      "name": "transfer_receive_cancelled",
+      "value": "已取消保存，可以重新尝试"
+    },
+    {
+      "name": "transfer_media_ready_to_save",
+      "value": "媒体文件已准备好保存"
+    },
+    {
+      "name": "transfer_media_save_failed",
+      "value": "无法保存到图库，请重试"
+    },
+    {
+      "name": "transfer_media_save_authorization_failed",
+      "value": "未获得保存到图库的临时授权"
+    },
+    {
+      "name": "transfer_gallery_failed",
+      "value": "无法将图片保存到图库，请重试"
+    },
+    {
+      "name": "transfer_text_copy_failed",
+      "value": "无法复制收到的文本，请重试"
+    },
+    {
+      "name": "transfer_content_image",
+      "value": "图片"
+    },
+    {
+      "name": "transfer_content_video",
+      "value": "视频"
+    },
+    {
+      "name": "transfer_content_text",
+      "value": "文本"
+    },
+    {
+      "name": "transfer_content_file",
+      "value": "文件"
+    },
+    {
+      "name": "transfer_save_action",
+      "value": "保存"
+    },
+    {
+      "name": "transfer_copy_text_action",
+      "value": "复制"
+    },
+    {
+      "name": "transfer_discard_action",
+      "value": "丢弃"
+    },
+    {
+      "name": "transfer_discard_confirm_title",
+      "value": "丢弃此文件？"
+    },
+    {
+      "name": "transfer_discard_confirm_message",
+      "value": "此操作会从 Taildrop 收件箱中永久移除“%s”"
+    },
+    {
+      "name": "transfer_discard_completed",
+      "value": "文件已丢弃"
+    },
+    {
+      "name": "transfer_discard_failed",
+      "value": "无法丢弃此文件，请重试"
+    },
+    {
+      "name": "transfer_retry_action",
+      "value": "重试"
+    },
+    {
+      "name": "transfer_retry_choose_content",
+      "value": "请选择要重新发送的内容"
+    },
+    {
+      "name": "transfer_sent_status",
+      "value": "已发送"
+    },
+    {
+      "name": "transfer_received_status",
+      "value": "已接收"
+    },
+    {
+      "name": "transfer_failed_status",
+      "value": "失败"
+    },
+    {
+      "name": "transfer_inbox_title",
+      "value": "收到的文件"
+    },
+    {
+      "name": "transfer_inbox_unavailable",
+      "value": "Taildrop 收件箱暂时不可用"
+    },
+    {
+      "name": "transfer_inbox_empty",
+      "value": "其它设备发送到本机的文件会显示在这里"
+    },
+    {
+      "name": "transfer_clear_cache_action",
+      "value": "清除缓存"
+    },
+    {
+      "name": "transfer_clear_cache_confirm_title",
+      "value": "清除收到的文件缓存？"
+    },
+    {
+      "name": "transfer_clear_cache_confirm_message",
+      "value": "此操作会永久删除应用私有目录中缓存的全部收到文件"
+    },
+    {
+      "name": "transfer_clearing_cache",
+      "value": "正在清除收到的文件缓存"
+    },
+    {
+      "name": "transfer_cache_cleared",
+      "value": "收到的文件缓存已清除"
+    },
+    {
+      "name": "transfer_clear_cache_failed",
+      "value": "未能清除全部收到的文件缓存，请重试"
+    },
+    {
+      "name": "module_desc",
+      "value": "MeshArc for HarmonyOS NEXT"
+    },
+    {
+      "name": "entryability_desc",
+      "value": "MeshArc 鸿蒙主程序"
+    },
+    {
+      "name": "entryability_label",
+      "value": "MeshArc"
+    },
+    {
+      "name": "app_title",
+      "value": "MeshArc"
+    },
+    {
+      "name": "app_tagline",
+      "value": "安全连接你的设备"
+    },
+    {
+      "name": "tab_home",
+      "value": "设备"
+    },
+    {
+      "name": "tab_transfer",
+      "value": "传输"
+    },
+    {
+      "name": "tab_files",
+      "value": "文件"
+    },
+    {
+      "name": "tab_settings",
+      "value": "设置"
+    },
+    {
+      "name": "transfer_subtitle",
+      "value": "设备统一展示，需要时再选择传输通道"
+    },
+    {
+      "name": "transfer_send_files_title",
+      "value": "发送文件"
+    },
+    {
+      "name": "transfer_localsend_description",
+      "value": "通过 Tailscale 发现 MeshSend 设备，文件由 LocalSend 服务完成发送"
+    },
+    {
+      "name": "transfer_localsend_device_count",
+      "value": "已发现 %d 台 MeshSend 设备"
+    },
+    {
+      "name": "transfer_localsend_checking_description",
+      "value": "正在检测 MeshSend 设备"
+    },
+    {
+      "name": "transfer_localsend_empty_description",
+      "value": "暂未发现可用的 MeshSend 设备"
+    },
+    {
+      "name": "transfer_taildrop_title",
+      "value": "MeshSend"
+    },
+    {
+      "name": "transfer_taildrop_description",
+      "value": "使用 Tailscale Taildrop 的 MeshSend 传输文件、图片和文本"
+    },
+    {
+      "name": "transfer_connected_title",
+      "value": "可以开始接入传输"
+    },
+    {
+      "name": "transfer_connected_description",
+      "value": "向在线设备发送文件，并保存本机收到的文件"
+    },
+    {
+      "name": "transfer_connect_first_title",
+      "value": "请先连接 Tailscale"
+    },
+    {
+      "name": "transfer_connect_first_description",
+      "value": "连接 Tailscale 后才能发送与接收；已有的收到文件和传输记录仍可在下方查看"
+    },
+    {
+      "name": "transfer_remote_cached_title",
+      "value": "MeshArc 尚未连接"
+    },
+    {
+      "name": "transfer_remote_cached_description",
+      "value": "已缓存的远程设备仍会显示，发送时再按需恢复连接"
+    },
+    {
+      "name": "transfer_remote_devices_title",
+      "value": "远程设备"
+    },
+    {
+      "name": "transfer_remote_devices_description",
+      "value": "来自 MeshArc 的设备缓存；发送时优先尝试 LocalSend"
+    },
+    {
+      "name": "transfer_remote_cached_badge",
+      "value": "MeshArc"
+    },
+    {
+      "name": "transfer_remote_localsend_port",
+      "value": "LocalSend · 端口 %d"
+    },
+    {
+      "name": "transfer_remote_port_label",
+      "value": "端口 %d"
+    },
+    {
+      "name": "transfer_remote_port_action",
+      "value": "指定端口"
+    },
+    {
+      "name": "transfer_remote_port_title",
+      "value": "LocalSend 端口"
+    },
+    {
+      "name": "transfer_remote_port_message",
+      "value": "默认尝试 53317；如果目标设备使用自定义 LocalSend 端口，可以在这里记住"
+    },
+    {
+      "name": "transfer_remote_port_placeholder",
+      "value": "53317"
+    },
+    {
+      "name": "transfer_remote_port_save",
+      "value": "保存端口"
+    },
+    {
+      "name": "transfer_remote_port_invalid",
+      "value": "请输入 1–65535 范围内的端口"
+    },
+    {
+      "name": "transfer_remote_port_saved",
+      "value": "已记住此设备的 LocalSend 端口"
+    },
+    {
+      "name": "transfer_remote_waiting_description",
+      "value": "等待 LocalSend 检测"
+    },
+    {
+      "name": "transfer_remote_waiting_connection",
+      "value": "在线 · 等待连接"
+    },
+    {
+      "name": "transfer_remote_service_unavailable_description",
+      "value": "上次检测未发现 LocalSend"
+    },
+    {
+      "name": "transfer_history_title",
+      "value": "发送记录"
+    },
+    {
+      "name": "transfer_clear_history_action",
+      "value": "清除记录"
+    },
+    {
+      "name": "transfer_history_cleared",
+      "value": "传输记录已清除"
+    },
+    {
+      "name": "transfer_empty_title",
+      "value": "还没有发送记录"
+    },
+    {
+      "name": "transfer_empty_description",
+      "value": "启用 Taildrop 后，发送和接收的文件会显示在这里"
+    },
+    {
+      "name": "glow_title",
+      "value": "沉浸光感"
+    },
+    {
+      "name": "glow_description",
+      "value": "调整按钮与底栏的光感响应强度"
+    },
+    {
+      "name": "glow_exquisite",
+      "value": "精美"
+    },
+    {
+      "name": "glow_gentle",
+      "value": "轻柔"
+    },
+    {
+      "name": "glow_smooth",
+      "value": "流畅"
+    },
+    {
+      "name": "glow_adaptive",
+      "value": "自适应"
+    },
+    {
+      "name": "connection_connected",
+      "value": "已连接"
+    },
+    {
+      "name": "connection_connecting",
+      "value": "正在连接"
+    },
+    {
+      "name": "device_connection_connecting",
+      "value": "连接中"
+    },
+    {
+      "name": "device_connection_waiting",
+      "value": "在线 · 等待连接"
+    },
+    {
+      "name": "connection_recovering",
+      "value": "连接恢复中"
+    },
+    {
+      "name": "connection_problem",
+      "value": "连接遇到问题"
+    },
+    {
+      "name": "connection_login_required",
+      "value": "需要登录"
+    },
+    {
+      "name": "connection_disconnected",
+      "value": "未连接"
+    },
+    {
+      "name": "connection_starting",
+      "value": "初始化后端中"
+    },
+    {
+      "name": "connection_approval_required",
+      "value": "设备待审批"
+    },
+    {
+      "name": "connection_key_expired",
+      "value": "设备密钥已到期"
+    },
+    {
+      "name": "description_connected",
+      "value": "此设备已加入你的 Tailscale 私有网络"
+    },
+    {
+      "name": "description_connecting",
+      "value": "正在建立系统 VPN，请稍候"
+    },
+    {
+      "name": "description_login_required",
+      "value": "先在系统浏览器中完成 Tailscale 登录"
+    },
+    {
+      "name": "description_problem",
+      "value": "打开工程诊断可查看错误详情"
+    },
+    {
+      "name": "description_tls_problem",
+      "value": "安全控制连接校验失败，请检查系统时间和网络后重试"
+    },
+    {
+      "name": "description_network_problem",
+      "value": "暂时无法访问 Tailscale 网络，请检查 Wi-Fi 或移动数据后重试"
+    },
+    {
+      "name": "description_vpn_permission_problem",
+      "value": "系统 VPN 启动失败，请允许 VPN 请求后重新连接"
+    },
+    {
+      "name": "description_vpn_conflict_problem",
+      "value": "请先在系统中断开其它 VPN，再重新连接"
+    },
+    {
+      "name": "vpn_conflict_title",
+      "value": "请先断开其它 VPN"
+    },
+    {
+      "name": "vpn_conflict_message",
+      "value": "请断开其它 VPN 以连接 Tailscale"
+    },
+    {
+      "name": "vpn_conflict_confirm_action",
+      "value": "确定"
+    },
+    {
+      "name": "description_status_problem",
+      "value": "暂时无法读取 VPN 状态，请重新打开应用后重试"
+    },
+    {
+      "name": "description_disconnected",
+      "value": "连接后可通过Tailscale访问其它设备"
+    },
+    {
+      "name": "description_starting",
+      "value": "正在准备 Tailscale，请稍候"
+    },
+    {
+      "name": "description_approval_required",
+      "value": "请前往 Tailscale 管理控制台批准此设备"
+    },
+    {
+      "name": "description_key_expired",
+      "value": "重新登录 Tailscale 以更新设备密钥"
+    },
+    {
+      "name": "action_connect",
+      "value": "连接 Tailscale"
+    },
+    {
+      "name": "action_connecting",
+      "value": "正在连接…"
+    },
+    {
+      "name": "action_starting",
+      "value": "初始化后端中"
+    },
+    {
+      "name": "action_disconnect",
+      "value": "断开连接"
+    },
+    {
+      "name": "traffic_download",
+      "value": "本次连接下载"
+    },
+    {
+      "name": "traffic_upload",
+      "value": "本次连接上传"
+    },
+    {
+      "name": "action_login",
+      "value": "登录 Tailscale"
+    },
+    {
+      "name": "login_loading",
+      "value": "正在加载登录，请稍等"
+    },
+    {
+      "name": "login_browser_prompt",
+      "value": "请在浏览器中完成登录"
+    },
+    {
+      "name": "exit_node_title",
+      "value": "出口节点"
+    },
+    {
+      "name": "exit_node_description",
+      "value": "通过另一台设备访问互联网"
+    },
+    {
+      "name": "exit_node_empty",
+      "value": "当前网络没有可用的出口节点"
+    },
+    {
+      "name": "exit_node_none",
+      "value": "不使用出口节点"
+    },
+    {
+      "name": "exit_node_login_required",
+      "value": "登录后可查看并选择当前网络的出口节点"
+    },
+    {
+      "name": "exit_node_disconnect_first",
+      "value": "断开连接以更改出口节点"
+    },
+    {
+      "name": "devices_title",
+      "value": "设备"
+    },
+    {
+      "name": "devices_empty",
+      "value": "当前没有其他设备"
+    },
+    {
+      "name": "devices_count",
+      "value": "%d 台在线，共 %d 台"
+    },
+    {
+      "name": "peer_online",
+      "value": "在线"
+    },
+    {
+      "name": "peer_offline",
+      "value": "离线"
+    },
+    {
+      "name": "peer_exit_node",
+      "value": "可用作出口节点"
+    },
+    {
+      "name": "peer_connectivity_action",
+      "value": "测试连通性"
+    },
+    {
+      "name": "peer_connectivity_testing",
+      "value": "正在测试…"
+    },
+    {
+      "name": "peer_connectivity_summary",
+      "value": "%d/%d 次响应 · 平均 %d 毫秒 · 丢包 %d%%"
+    },
+    {
+      "name": "peer_connectivity_latency_range",
+      "value": "延迟范围 %d–%d 毫秒"
+    },
+    {
+      "name": "peer_copy_ip",
+      "value": "复制 IP"
+    },
+    {
+      "name": "peer_ip_copied",
+      "value": "设备 IP 已复制"
+    },
+    {
+      "name": "device_copy_unavailable",
+      "value": "此设备没有可复制的信息"
+    },
+    {
+      "name": "device_copy_failed",
+      "value": "复制失败，请重试"
+    },
+    {
+      "name": "device_approval_required",
+      "value": "待审批"
+    },
+    {
+      "name": "device_key_expired",
+      "value": "密钥已到期"
+    },
+    {
+      "name": "device_key_expiring",
+      "value": "密钥将在 %d 天后到期"
+    },
+    {
+      "name": "local_device_badge",
+      "value": "本机"
+    },
+    {
+      "name": "account_title",
+      "value": "账户"
+    },
+    {
+      "name": "account_signed_in",
+      "value": "此设备已登录 Tailscale"
+    },
+    {
+      "name": "account_signed_out",
+      "value": "登录后可管理此设备并连接你的私有网络"
+    },
+    {
+      "name": "account_profile_unavailable",
+      "value": "登录以使用 Tailscale"
+    },
+    {
+      "name": "account_tailnet",
+      "value": "所属网络"
+    },
+    {
+      "name": "account_device",
+      "value": "当前设备"
+    },
+    {
+      "name": "about_title",
+      "value": "关于"
+    },
+    {
+      "name": "welcome_dialog_title",
+      "value": "感谢体验本应用 🎉"
+    },
+    {
+      "name": "welcome_dialog_message",
+      "value": "本应用目前仍处于早期开发阶段，部分功能可能尚未完善，使用过程中可能会遇到异常或兼容性问题\n\n如果您遇到问题，欢迎通过 设置 > 关于 > 反馈 联系我们，您的建议将帮助应用持续改进\n\n感谢您的理解与支持！"
+    },
+    {
+      "name": "welcome_dialog_action",
+      "value": "我知道了"
+    },
+    {
+      "name": "feedback_label",
+      "value": "反馈"
+    },
+    {
+      "name": "feedback_open_failed",
+      "value": "无法打开邮件应用"
+    },
+    {
+      "name": "app_version_label",
+      "value": "应用版本"
+    },
+    {
+      "name": "tailscale_version_label",
+      "value": "Tailscale 内核"
+    },
+    {
+      "name": "logout_description",
+      "value": "退出后，此设备需要重新登录才能连接"
+    },
+    {
+      "name": "logout_disconnect_first",
+      "value": "请先断开 Tailscale，再退出登录"
+    },
+    {
+      "name": "logout_action",
+      "value": "退出登录"
+    },
+    {
+      "name": "logout_failed",
+      "value": "退出登录失败，请稍后重试"
+    },
+    {
+      "name": "logout_confirm_title",
+      "value": "退出 Tailscale？"
+    },
+    {
+      "name": "logout_confirm_message",
+      "value": "此设备将从当前 Tailscale 网络注销，以后使用时需要重新登录"
+    },
+    {
+      "name": "cancel_action",
+      "value": "取消"
+    },
+    {
+      "name": "continue_action",
+      "value": "继续"
+    },
+    {
+      "name": "diagnostics_expand",
+      "value": "展开工程诊断"
+    },
+    {
+      "name": "diagnostics_collapse",
+      "value": "收起工程诊断"
+    },
+    {
+      "name": "diagnostics_title",
+      "value": "工程诊断"
+    },
+    {
+      "name": "diagnostics_description",
+      "value": "用于排查问题的技术状态"
+    },
+    {
+      "name": "diagnostics_unlocked_toast",
+      "value": "工程模式已开启，已定位到工程诊断"
+    },
+    {
+      "name": "diagnostic_report_title",
+      "value": "诊断报告"
+    },
+    {
+      "name": "diagnostic_report_description",
+      "value": "生成经过隐私脱敏的 ZIP，包含所选功能的状态、计数、设置及近期结构化事件；不会收集原始日志、身份信息、网络地址或本地路径"
+    },
+    {
+      "name": "diagnostic_report_action",
+      "value": "生成并分享报告"
+    },
+    {
+      "name": "diagnostic_report_generating",
+      "value": "正在生成诊断报告…"
+    },
+    {
+      "name": "diagnostic_report_failed",
+      "value": "诊断报告生成或分享失败"
+    },
+    {
+      "name": "diagnostic_feature_options_title",
+      "value": "新增功能诊断选项"
+    },
+    {
+      "name": "diagnostic_feature_options_description",
+      "value": "选择要在工程诊断页和脱敏报告中显示的模块；开关变化和自检结果会写入结构化事件与 HiLog"
+    },
+    {
+      "name": "diagnostic_enabled_modules_title",
+      "value": "已启用模块"
+    },
+    {
+      "name": "diagnostic_quick_transfer_option_title",
+      "value": "捷传与 HosPlayer 联动"
+    },
+    {
+      "name": "diagnostic_quick_transfer_option_description",
+      "value": "查看 LocalSend、MeshArc 接收端、媒体服务识别和 HosPlayer 参数协议状态"
+    },
+    {
+      "name": "diagnostic_service_monitoring_option_title",
+      "value": "服务在线状态监测"
+    },
+    {
+      "name": "diagnostic_service_monitoring_option_description",
+      "value": "查看轮询、捷传、媒体、Sunshine 与 Taildrop 的在线状态汇总"
+    },
+    {
+      "name": "diagnostic_security_option_title",
+      "value": "应用锁与安全文件夹"
+    },
+    {
+      "name": "diagnostic_security_option_description",
+      "value": "查看脱敏配置状态，并可触发一次不修改设置的系统身份认证自检"
+    },
+    {
+      "name": "diagnostic_appearance_option_title",
+      "value": "外观与布局"
+    },
+    {
+      "name": "diagnostic_appearance_option_description",
+      "value": "查看背景、沉浸取色、流光等级、主页布局和导航配置摘要"
+    },
+    {
+      "name": "diagnostic_localsend_status_title",
+      "value": "LocalSend / 捷传"
+    },
+    {
+      "name": "diagnostic_mesharc_receiver_status_title",
+      "value": "MeshArc 接收端"
+    },
+    {
+      "name": "diagnostic_hosplayer_status_title",
+      "value": "媒体与 HosPlayer"
+    },
+    {
+      "name": "diagnostic_service_monitoring_title",
+      "value": "服务在线状态监测"
+    },
+    {
+      "name": "diagnostic_service_monitoring_description",
+      "value": "显示脱敏后的在线数量、探测进度与后台轮询状态；状态变化会写入日志"
+    },
+    {
+      "name": "diagnostic_service_polling_status_title",
+      "value": "后台轮询"
+    },
+    {
+      "name": "diagnostic_media_service_status_title",
+      "value": "媒体服务"
+    },
+    {
+      "name": "diagnostic_sunshine_service_status_title",
+      "value": "Sunshine 服务"
+    },
+    {
+      "name": "diagnostic_taildrop_service_status_title",
+      "value": "Taildrop 服务"
+    },
+    {
+      "name": "diagnostic_refresh_feature_services_action",
+      "value": "刷新新增功能服务状态"
+    },
+    {
+      "name": "diagnostic_feature_refresh_status_title",
+      "value": "刷新结果"
+    },
+    {
+      "name": "diagnostic_security_title",
+      "value": "应用安全诊断"
+    },
+    {
+      "name": "diagnostic_security_description",
+      "value": "仅检查应用锁与安全文件夹状态；认证自检不会保存凭据或更改开关"
+    },
+    {
+      "name": "diagnostic_app_lock_status_title",
+      "value": "应用锁"
+    },
+    {
+      "name": "diagnostic_folder_lock_status_title",
+      "value": "安全文件夹"
+    },
+    {
+      "name": "diagnostic_security_self_test_action",
+      "value": "测试系统身份认证"
+    },
+    {
+      "name": "diagnostic_security_self_test_status_title",
+      "value": "身份认证自检"
+    },
+    {
+      "name": "diagnostic_appearance_title",
+      "value": "外观诊断"
+    },
+    {
+      "name": "diagnostic_appearance_description",
+      "value": "只显示外观配置是否启用及数值摘要，不记录背景图片 URI 或文件路径"
+    },
+    {
+      "name": "diagnostic_appearance_background_status_title",
+      "value": "背景效果"
+    },
+    {
+      "name": "diagnostic_appearance_layout_status_title",
+      "value": "布局与导航"
+    },
+    {
+      "name": "diagnostic_device_list_verification_title",
+      "value": "设备列表滚动验证"
+    },
+    {
+      "name": "diagnostic_device_list_verification_description",
+      "value": "复现较长的主页设备列表，验证第 6 台以后的设备仍可滚动到并点击"
+    },
+    {
+      "name": "diagnostic_device_list_fixture_title",
+      "value": "显示 8 台测试设备"
+    },
+    {
+      "name": "diagnostic_device_list_fixture_description",
+      "value": "仅在本次启动临时追加离线测试行，不修改账户或设备数据"
+    },
+    {
+      "name": "diagnostic_device_list_open_action",
+      "value": "打开主页验证"
+    },
+    {
+      "name": "diagnostic_device_list_last_clicked_title",
+      "value": "最近点击的测试设备"
+    },
+    {
+      "name": "settings_subtitle",
+      "value": "账户、网络和外观"
+    },
+    {
+      "name": "settings_title",
+      "value": "网络设置"
+    },
+    {
+      "name": "network_settings_description",
+      "value": "选择此设备使用私有网络的方式"
+    },
+    {
+      "name": "setting_subnet_routes",
+      "value": "接受子网路由"
+    },
+    {
+      "name": "setting_subnet_routes_description",
+      "value": "访问其他设备共享的网络"
+    },
+    {
+      "name": "setting_exit_node",
+      "value": "出口节点"
+    },
+    {
+      "name": "setting_exit_node_lan",
+      "value": "使用出口节点时允许访问局域网"
+    },
+    {
+      "name": "setting_exit_node_lan_description",
+      "value": "使用出口节点时仍可访问附近设备"
+    },
+    {
+      "name": "network_settings_disconnect_first",
+      "value": "断开连接后可更改网络设置"
+    },
+    {
+      "name": "setting_tailnet_dns",
+      "value": "使用 MagicDNS"
+    },
+    {
+      "name": "setting_tailnet_dns_description",
+      "value": "解析 Tailnet 设备名，并应用网络的 DNS 规则。断开连接后可更改，下次连接生效。"
+    },
+    {
+      "name": "network_setting_failed",
+      "value": "设置未能保存，请重试"
+    },
+    {
+      "name": "setting_enabled",
+      "value": "已开启"
+    },
+    {
+      "name": "setting_disabled",
+      "value": "已关闭"
+    },
+    {
+      "name": "setting_unavailable",
+      "value": "暂不可用"
+    },
+    {
+      "name": "control_server_title",
+      "value": "后端服务器"
+    },
+    {
+      "name": "control_server_description",
+      "value": "填入后端服务器地址以继续，若不知道这是什么，请使用默认地址，确认前应用不会联网"
+    },
+    {
+      "name": "control_server_confirmed",
+      "value": "已确认"
+    },
+    {
+      "name": "control_server_not_confirmed",
+      "value": "未确认"
+    },
+    {
+      "name": "control_server_save",
+      "value": "确认后端服务器"
+    },
+    {
+      "name": "control_server_http_risk_title",
+      "value": "HTTP 后端连接风险"
+    },
+    {
+      "name": "control_server_http_risk_message",
+      "value": "该地址使用未加密的 HTTP，登录和连接流量可能被网络读取或篡改，只有在信任此网络和服务器时才保存"
+    },
+    {
+      "name": "control_server_http_risk_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "control_server_http_risk_confirm",
+      "value": "仍然保存 HTTP 后端"
+    },
+    {
+      "name": "control_server_saved",
+      "value": "后端服务器已保存，现在可以登录"
+    },
+    {
+      "name": "control_server_invalid",
+      "value": "请输入有效的 HTTP 或 HTTPS 控制服务器地址，且不要包含查询参数"
+    },
+    {
+      "name": "control_server_save_failed",
+      "value": "控制服务器保存失败，请重试"
+    },
+    {
+      "name": "control_server_disconnect_first",
+      "value": "请先断开连接，再更改后端服务器"
+    },
+    {
+      "name": "control_server_guide_title",
+      "value": "选择控制服务器"
+    },
+    {
+      "name": "control_server_guide_message",
+      "value": "在你确认地址之前，Tailscale OHOS 不会连接任何服务器，设置页已预填 Tailscale 官方地址，你也可以填写自建 Headscale 地址"
+    },
+    {
+      "name": "control_server_later",
+      "value": "稍后"
+    },
+    {
+      "name": "control_server_configure",
+      "value": "现在配置"
+    },
+    {
+      "name": "control_server_required_to_connect",
+      "value": "请先在账户设置中确认后端服务器"
+    },
+    {
+      "name": "connection_server_required",
+      "value": "需要配置后端服务器"
+    },
+    {
+      "name": "description_server_required",
+      "value": "选择并确认后端服务器后，Tailscale 才会启动"
+    },
+    {
+      "name": "control_server_first_run_tip",
+      "value": "请先填写后端服务器地址并登录"
+    },
+    {
+      "name": "diagnostic_first_run_tools_description",
+      "value": "用于测试首次使用流程和系统 VPN 意外断开的工程操作，每次操作都会写入诊断事件日志"
+    },
+    {
+      "name": "diagnostic_reset_first_run_action",
+      "value": "清除数据并模拟首次打开"
+    },
+    {
+      "name": "diagnostic_reset_first_run_confirm_title",
+      "value": "模拟首次打开应用？"
+    },
+    {
+      "name": "diagnostic_reset_first_run_confirm_message",
+      "value": "将清除已确认的后端服务器和本地 Tailscale 账户状态，然后回到首次使用引导"
+    },
+    {
+      "name": "diagnostic_reset_first_run_completed",
+      "value": "已恢复首次使用状态"
+    },
+    {
+      "name": "diagnostic_reset_first_run_failed",
+      "value": "未能完整清除首次使用数据"
+    },
+    {
+      "name": "diagnostic_force_vpn_stop_action",
+      "value": "手动切断系统 VPN 连接"
+    },
+    {
+      "name": "diagnostic_force_vpn_stop_completed",
+      "value": "已手动切断系统 VPN"
+    },
+    {
+      "name": "diagnostic_force_vpn_stop_failed",
+      "value": "未能切断系统 VPN"
+    },
+    {
+      "name": "diagnostic_simulate_crash_action",
+      "value": "模拟应用闪退"
+    },
+    {
+      "name": "diagnostic_simulate_crash_confirm_title",
+      "value": "模拟应用闪退？"
+    },
+    {
+      "name": "diagnostic_simulate_crash_confirm_message",
+      "value": "此工程测试会停止系统 VPN、保留一份新鲜的“已连接”状态快照，然后异常终止应用，重新打开后，应用应短暂核验这份旧状态，并在约 2.5 秒内显示“未连接”"
+    },
+    {
+      "name": "diagnostic_simulate_crash_failed",
+      "value": "未能准备闪退模拟"
+    },
+    {
+      "name": "diagnostic_action_status",
+      "value": "工程操作"
+    },
+    {
+      "name": "diagnostic_probe_title",
+      "value": "诊断检查"
+    },
+    {
+      "name": "diagnostic_probe_description",
+      "value": "检查应用和控制面状态，不会修改数据"
+    },
+    {
+      "name": "diagnostic_refresh_status_action",
+      "value": "刷新状态"
+    },
+    {
+      "name": "diagnostic_probe_engine_action",
+      "value": "检查引擎"
+    },
+    {
+      "name": "diagnostic_probe_control_tls_action",
+      "value": "检查控制面 TLS"
+    },
+    {
+      "name": "diagnostic_control_plane_status_title",
+      "value": "控制面"
+    },
+    {
+      "name": "diagnostic_vpn_extension_status_title",
+      "value": "VPN 扩展"
+    },
+    {
+      "name": "diagnostic_dangerous_title",
+      "value": "危险操作"
+    },
+    {
+      "name": "diagnostic_dangerous_description",
+      "value": "以下操作可能清除数据、停止服务或模拟故障，请确认影响后再执行"
+    },
+    {
+      "name": "diagnostic_fake_media_online_title",
+      "value": "伪装媒体服务在线"
+    },
+    {
+      "name": "diagnostic_fake_media_online_description",
+      "value": "仅本次启动临时将 Jellyfin 显示为可用"
+    },
+    {
+      "name": "diagnostic_media_integration_title",
+      "value": "媒体服务联动验证"
+    },
+    {
+      "name": "diagnostic_media_integration_description",
+      "value": "检查捷传接收链路、媒体服务识别，并使用内置样本验证 Jellyfin、Emby、Plex 与 HosPlayer 参数联动"
+    },
+    {
+      "name": "diagnostic_media_self_test_action",
+      "value": "运行媒体服务离线自检"
+    },
+    {
+      "name": "diagnostic_hosplayer_copy_action",
+      "value": "复制 HosPlayer 导入链接"
+    },
+    {
+      "name": "diagnostic_media_self_test_status",
+      "value": "媒体联动自检"
+    },
+    {
+      "name": "settings_appearance_title",
+      "value": "外观"
+    },
+    {
+      "name": "settings_storage_title",
+      "value": "存储"
+    },
+    {
+      "name": "settings_cache_title",
+      "value": "缓存"
+    },
+    {
+      "name": "settings_cache_description",
+      "value": "（7天后自动清理）"
+    },
+    {
+      "name": "settings_cache_calculating",
+      "value": "正在计算"
+    },
+    {
+      "name": "settings_cache_clearing",
+      "value": "正在清除"
+    },
+    {
+      "name": "settings_clear_cache_action",
+      "value": "清理所有本地文件"
+    },
+    {
+      "name": "settings_clear_cache_confirm_title",
+      "value": "清理所有本地文件？"
+    },
+    {
+      "name": "settings_clear_cache_confirm_message",
+      "value": "将删除预览缓存和应用私有目录中已收到的文件，不会影响账户、连接设置或发送记录"
+    },
+    {
+      "name": "settings_clear_cache_busy",
+      "value": "当前有任务正在使用缓存，请稍后再试"
+    },
+    {
+      "name": "settings_cache_cleared",
+      "value": "缓存已清除"
+    },
+    {
+      "name": "settings_all_local_files_cleared",
+      "value": "所有本地文件已清理"
+    },
+    {
+      "name": "settings_clear_cache_failed",
+      "value": "部分缓存未能清除，请稍后重试"
+    },
+    {
+      "name": "settings_all_local_files_clear_failed",
+      "value": "部分本地文件未能清理，请稍后重试"
+    },
+    {
+      "name": "notification_taildrop_receiving_title",
+      "value": "正在接收文件"
+    },
+    {
+      "name": "notification_taildrop_receiving_indeterminate",
+      "value": "正在接收"
+    },
+    {
+      "name": "notification_taildrop_received_title",
+      "value": "已接收文件"
+    },
+    {
+      "name": "notification_taildrop_received_message",
+      "value": "选择保存方式"
+    },
+    {
+      "name": "notification_taildrop_save_action",
+      "value": "保存"
+    },
+    {
+      "name": "notification_taildrop_open_action",
+      "value": "打开"
+    },
+    {
+      "name": "notification_taildrop_copy_action",
+      "value": "复制"
+    },
+    {
+      "name": "notification_taildrop_later_action",
+      "value": "稍后"
+    },
+    {
+      "name": "device_connection_status",
+      "value": "连接状态"
+    },
+    {
+      "name": "device_connection_path",
+      "value": "连接方式"
+    },
+    {
+      "name": "localsend_label",
+      "value": "MeshSend"
+    },
+    {
+      "name": "localsend_available",
+      "value": "已发现"
+    },
+    {
+      "name": "localsend_checking",
+      "value": "正在检测 MeshSend"
+    },
+    {
+      "name": "localsend_unavailable",
+      "value": "暂未发现 MeshSend"
+    },
+    {
+      "name": "device_probe_checking",
+      "value": "正在检测"
+    },
+    {
+      "name": "device_path_direct",
+      "value": "直连 · %d ms"
+    },
+    {
+      "name": "device_path_relay",
+      "value": "中继 · %d ms"
+    },
+    {
+      "name": "device_path_peer_relay",
+      "value": "点对点中继 · %d ms"
+    },
+    {
+      "name": "device_path_derp_relay",
+      "value": "DERP 中继 · %d ms"
+    },
+    {
+      "name": "device_path_unreachable",
+      "value": "当前不可达"
+    },
+    {
+      "name": "device_status_unknown",
+      "value": "检测中"
+    },
+    {
+      "name": "device_detail_service_unavailable",
+      "value": "不可用"
+    },
+    {
+      "name": "streaming_label",
+      "value": "远程串流"
+    },
+    {
+      "name": "sunshine_available",
+      "value": "Sunshine 可用"
+    },
+    {
+      "name": "sunshine_checking",
+      "value": "Sunshine 检测中"
+    },
+    {
+      "name": "sunshine_timeout",
+      "value": "Sunshine 检测超时"
+    },
+    {
+      "name": "sunshine_unavailable",
+      "value": "未检测到 Sunshine"
+    },
+    {
+      "name": "sunshine_failed",
+      "value": "Sunshine 检测失败"
+    },
+    {
+      "name": "media_services_label",
+      "value": "影音服务"
+    },
+    {
+      "name": "media_services_checking",
+      "value": "影音服务检测中"
+    },
+    {
+      "name": "media_services_available",
+      "value": "%s 可用"
+    },
+    {
+      "name": "media_services_unavailable",
+      "value": "未发现支持的影音服务"
+    },
+    {
+      "name": "media_services_timeout",
+      "value": "检测超时"
+    },
+    {
+      "name": "media_services_failed",
+      "value": "检测失败"
+    },
+    {
+      "name": "device_group_local",
+      "value": "本机"
+    },
+    {
+      "name": "device_group_online",
+      "value": "在线"
+    },
+    {
+      "name": "device_group_offline",
+      "value": "离线"
+    },
+    {
+      "name": "device_detail_services_title",
+      "value": "可用服务"
+    },
+    {
+      "name": "device_detail_refresh_services",
+      "value": "重新检查可用服务"
+    },
+    {
+      "name": "device_detail_desktop_title",
+      "value": "桌面"
+    },
+    {
+      "name": "device_detail_desktop_description",
+      "value": "Sunshine · 使用 Moonlight 打开"
+    },
+    {
+      "name": "device_detail_media_title",
+      "value": "媒体"
+    },
+    {
+      "name": "device_detail_transfer_title",
+      "value": "发送文件"
+    },
+    {
+      "name": "device_detail_transfer_tailsend_description",
+      "value": "MeshSend · 内置 Tailscale 传输"
+    },
+    {
+      "name": "device_detail_transfer_localsend_description",
+      "value": "MeshSend · LocalSend 扩展"
+    },
+    {
+      "name": "device_detail_transfer_both_description",
+      "value": "可选择 MeshSend 传输方式"
+    },
+    {
+      "name": "device_detail_localsend_description",
+      "value": "此设备已发现 MeshSend（LocalSend）服务"
+    },
+    {
+      "name": "device_detail_taildrop_description",
+      "value": "使用 MeshSend 向设备发送文件、图片或文本"
+    },
+    {
+      "name": "device_detail_taildrop_offline",
+      "value": "设备上线后即可使用 MeshSend"
+    },
+    {
+      "name": "device_detail_taildrop_connect",
+      "value": "连接 Tailscale 后即可开始 MeshSend 传输"
+    },
+    {
+      "name": "device_detail_services_checking",
+      "value": "正在检查可用服务…"
+    },
+    {
+      "name": "device_detail_services_empty",
+      "value": "暂未发现可直接打开的服务"
+    },
+    {
+      "name": "device_detail_services_offline",
+      "value": "设备当前离线，仍可在下方查看网络信息"
+    },
+    {
+      "name": "device_detail_network_title",
+      "value": "网络"
+    },
+    {
+      "name": "device_detail_exit_node_available",
+      "value": "可用"
+    },
+    {
+      "name": "device_detail_device_title",
+      "value": "设备信息"
+    },
+    {
+      "name": "device_detail_system_label",
+      "value": "系统"
+    },
+    {
+      "name": "device_detail_model_label",
+      "value": "型号"
+    },
+    {
+      "name": "network_sheet_title",
+      "value": "网络"
+    },
+    {
+      "name": "network_sheet_network_title",
+      "value": "Tailscale 网络"
+    },
+    {
+      "name": "network_sheet_device_label",
+      "value": "当前设备"
+    },
+    {
+      "name": "network_sheet_local_address",
+      "value": "设备IP"
+    },
+    {
+      "name": "network_sheet_not_used",
+      "value": "未使用"
+    },
+    {
+      "name": "network_sheet_not_used_available",
+      "value": "未使用 · %d 可用"
+    },
+    {
+      "name": "network_sheet_tailnet_default",
+      "value": "Tailnet 默认"
+    },
+    {
+      "name": "network_sheet_lan_access",
+      "value": "局域网访问"
+    },
+    {
+      "name": "network_sheet_on",
+      "value": "开启"
+    },
+    {
+      "name": "network_sheet_off",
+      "value": "关闭"
+    },
+    {
+      "name": "network_sheet_traffic_title",
+      "value": "流量"
+    },
+    {
+      "name": "network_sheet_duration",
+      "value": "连接时长"
+    },
+    {
+      "name": "network_sheet_current_rate",
+      "value": "当前速率"
+    },
+    {
+      "name": "network_sheet_session_traffic",
+      "value": "本次连接"
+    },
+    {
+      "name": "update_changelog_title",
+      "value": "更新日志"
+    },
+    {
+      "name": "update_changelog_only_on_update",
+      "value": "仅更新时显示"
+    },
+    {
+      "name": "update_changelog_section",
+      "value": "本次更新"
+    },
+    {
+      "name": "navigation_settings_title",
+      "value": "底部导航栏"
+    },
+    {
+      "name": "navigation_settings_description",
+      "value": "选择显示哪些标签，并调整显示顺序"
+    },
+    {
+      "name": "navigation_position_title",
+      "value": "导航栏位置"
+    },
+    {
+      "name": "navigation_position_description",
+      "value": "上下拖动调整浮动导航栏的高度"
+    },
+    {
+      "name": "navigation_always_one_visible",
+      "value": "至少保留一个可见标签"
+    },
+    {
+      "name": "navigation_move_up",
+      "value": "上移标签"
+    },
+    {
+      "name": "navigation_move_down",
+      "value": "下移标签"
+    },
+    {
+      "name": "settings_network_connection_title",
+      "value": "网络与连接"
+    },
+    {
+      "name": "settings_network_preferences_title",
+      "value": "连接偏好"
+    },
+    {
+      "name": "settings_appearance_navigation_title",
+      "value": "外观与导航"
+    },
+    {
+      "name": "settings_storage_cache_title",
+      "value": "存储与缓存"
+    },
+    {
+      "name": "settings_about_help_title",
+      "value": "关于与帮助"
+    },
+    {
+      "name": "settings_animation_summary",
+      "value": "时长、幅度与弹性响应"
+    },
+    {
+      "name": "native_settings_title",
+      "value": "设置"
+    },
+    {
+      "name": "native_settings_profile_default",
+      "value": "MeshArc"
+    },
+    {
+      "name": "native_settings_vip",
+      "value": "MeshArc VIP"
+    },
+    {
+      "name": "native_settings_vip_action",
+      "value": "解锁更多能力"
+    },
+    {
+      "name": "native_settings_system_follow",
+      "value": "跟随系统"
+    },
+    {
+      "name": "native_settings_transfer_section",
+      "value": "互传与空间"
+    },
+    {
+      "name": "native_settings_appearance_section",
+      "value": "外观与个性化"
+    },
+    {
+      "name": "native_settings_help_section",
+      "value": "关于与帮助"
+    },
+    {
+      "name": "native_settings_transfer",
+      "value": "互传设置"
+    },
+    {
+      "name": "native_settings_storage",
+      "value": "空间管理"
+    },
+    {
+      "name": "native_settings_storage_total",
+      "value": "总占用空间"
+    },
+    {
+      "name": "native_settings_storage_app_data",
+      "value": "应用配置与数据"
+    },
+    {
+      "name": "native_settings_storage_received",
+      "value": "已接收文件与媒体"
+    },
+    {
+      "name": "native_settings_storage_temporary",
+      "value": "临时传输与预览缓存"
+    },
+    {
+      "name": "native_settings_storage_clear_cache",
+      "value": "清除缓存"
+    },
+    {
+      "name": "native_settings_storage_clear_cache_description",
+      "value": "仅清除缩略图和预览缓存，缓存将在7天后自动清理"
+    },
+    {
+      "name": "native_settings_storage_clear",
+      "value": "清理所有本地文件"
+    },
+    {
+      "name": "native_settings_storage_clear_description",
+      "value": "清理预览缓存以及应用私有目录中已收到的文件"
+    },
+    {
+      "name": "native_settings_storage_clear_action",
+      "value": "清理"
+    },
+    {
+      "name": "native_settings_theme",
+      "value": "主题色和风格"
+    },
+    {
+      "name": "native_settings_color_mode",
+      "value": "颜色模式"
+    },
+    {
+      "name": "native_settings_background_material",
+      "value": "背景图和材质"
+    },
+    {
+      "name": "native_settings_animation",
+      "value": "动画效果"
+    },
+    {
+      "name": "native_settings_usage",
+      "value": "使用说明"
+    },
+    {
+      "name": "native_settings_choose_background",
+      "value": "选择背景图片"
+    },
+    {
+      "name": "native_settings_clear_background",
+      "value": "清空背景图片"
+    },
+    {
+      "name": "native_settings_choose_background_desc",
+      "value": "从相册选择一张图片"
+    },
+    {
+      "name": "native_settings_immersive_color",
+      "value": "沉浸色彩背景"
+    },
+    {
+      "name": "native_settings_immersive_color_desc",
+      "value": "根据连接与传输状态叠加环境色，一眼感知当前状态"
+    },
+    {
+      "name": "native_settings_immersive_light",
+      "value": "沉浸光感"
+    },
+    {
+      "name": "native_settings_immersive_light_desc",
+      "value": "体验 HarmonyOS Design 的最新材质光感（会增加功耗且容易掉帧）"
+    },
+    {
+      "name": "native_settings_material",
+      "value": "沉浸光感材质"
+    },
+    {
+      "name": "native_settings_material_desc",
+      "value": "自适应由系统根据设备平衡材质质量与功耗。"
+    },
+    {
+      "name": "native_settings_material_adaptive",
+      "value": "自适应"
+    },
+    {
+      "name": "native_settings_material_exquisite",
+      "value": "精美"
+    },
+    {
+      "name": "native_settings_material_gentle",
+      "value": "轻柔"
+    },
+    {
+      "name": "native_settings_material_smooth",
+      "value": "流畅"
+    },
+    {
+      "name": "native_settings_brightness",
+      "value": "背景亮度"
+    },
+    {
+      "name": "native_settings_intelligent_material",
+      "value": "智能材质调节"
+    },
+    {
+      "name": "native_settings_intelligent_material_desc",
+      "value": "自适应材质由系统根据设备管理。"
+    },
+    {
+      "name": "native_settings_hdr",
+      "value": "全局 HDR 光效"
+    },
+    {
+      "name": "native_settings_hdr_desc",
+      "value": "光效会以 HDR 呈现（部分机型和系统不支持），亮度和功耗会提高"
+    },
+    {
+      "name": "native_settings_floating_tabs",
+      "value": "浮动页签栏"
+    },
+    {
+      "name": "native_settings_floating_tabs_desc",
+      "value": "页签栏会完整填满窗口底部"
+    },
+    {
+      "name": "native_settings_animation_duration",
+      "value": "动画持续时间"
+    },
+    {
+      "name": "native_settings_animation_amplitude",
+      "value": "动画运动幅度"
+    },
+    {
+      "name": "native_settings_animation_damping",
+      "value": "动画弹性阻尼"
+    },
+    {
+      "name": "native_settings_preset_efficiency",
+      "value": "效率"
+    },
+    {
+      "name": "native_settings_preset_default",
+      "value": "默认"
+    },
+    {
+      "name": "native_settings_preset_lively",
+      "value": "灵动"
+    },
+    {
+      "name": "native_settings_preview_hint",
+      "value": "预览自动循环，调节下方参数可实时查看效果"
+    },
+    {
+      "name": "native_settings_close",
+      "value": "关闭设置"
+    },
+    {
+      "name": "native_settings_back",
+      "value": "返回"
+    },
+    {
+      "name": "transfer_protocol_refresh_action",
+      "value": "刷新"
+    },
+    {
+      "name": "transfer_protocol_refreshing",
+      "value": "刷新中"
+    },
+    {
+      "name": "transfer_tailscale_network_not_connected",
+      "value": "Tailscale网络未连接"
+    },
+    {
+      "name": "transfer_localsend_open_failed",
+      "value": "LocalSend 未安装或无法打开"
+    },
+    {
+      "name": "device_detail_service_available",
+      "value": "可用"
+    },
+    {
+      "name": "device_detail_device_offline",
+      "value": "设备离线"
+    },
+    {
+      "name": "device_detail_media_discovered",
+      "value": "已发现：%s"
+    },
+    {
+      "name": "device_detail_remote_files_title",
+      "value": "远程文件管理"
+    },
+    {
+      "name": "transfer_multi_protocol_subtitle",
+      "value": "通过多协议收发文件"
+    },
+    {
+      "name": "device_detail_remote_desktop_title",
+      "value": "远程串流"
+    },
+    {
+      "name": "account_open_details",
+      "value": "打开账户详细信息"
+    },
+    {
+      "name": "settings_security_title",
+      "value": "安全"
+    },
+    {
+      "name": "security_app_lock_title",
+      "value": "应用锁"
+    },
+    {
+      "name": "security_app_lock_description",
+      "value": "每次返回前台时需要通过设备身份验证"
+    },
+    {
+      "name": "security_folder_lock_title",
+      "value": "文件夹锁"
+    },
+    {
+      "name": "security_folder_lock_description",
+      "value": "可锁定选定设备文件夹及其内容"
+    },
+    {
+      "name": "security_lock_folder_action",
+      "value": "锁定文件夹"
+    },
+    {
+      "name": "security_unlock_folder_action",
+      "value": "解除文件夹锁定"
+    },
+    {
+      "name": "security_app_authentication_title",
+      "value": "解锁 MeshArc"
+    },
+    {
+      "name": "security_folder_authentication_title",
+      "value": "解锁受保护文件夹"
+    },
+    {
+      "name": "security_app_locked_title",
+      "value": "应用已锁定"
+    },
+    {
+      "name": "security_app_locked_description",
+      "value": "请使用设备身份验证后继续"
+    },
+    {
+      "name": "security_unlock_app_action",
+      "value": "解锁"
+    },
+    {
+      "name": "security_authentication_failed",
+      "value": "身份验证未完成，请重试"
+    },
+    {
+      "name": "security_settings_authentication_title",
+      "value": "验证安全设置"
+    },
+    {
+      "name": "security_settings_save_failed",
+      "value": "无法保存安全设置，请重试"
+    },
+    {
+      "name": "notification_vpn_background_title",
+      "value": "VPN 已连接"
+    },
+    {
+      "name": "feature_guide_title",
+      "value": "功能开启指南"
+    },
+    {
+      "name": "feature_guide_intro",
+      "value": "点击功能查看开启步骤和成功判断。多数功能直接用开关；远程共享等高级功能才需要后台策略。MeshArc 不会代你改 tailnet 权限；不要用示例覆盖现有策略，不确定时请管理员协助。"
+    },
+    {
+      "name": "feature_guide_policy_hint",
+      "value": "只读策略示例：替换身份并合并到已有数组。长按 → 全选 → 复制。仅授权自己未打标签设备上的 docs 共享。"
+    },
+    {
+      "name": "feature_guide_commands_hint",
+      "value": "在远端电脑执行，不是在手机执行；先替换示例目录/网段。长按仅选中适用于你的平台的命令行并复制，不要连同标题或其他平台的命令一起执行。"
+    },
+    {
+      "name": "feature_guide_connect_title",
+      "value": "连接与设备访问"
+    },
+    {
+      "name": "feature_guide_connect_body",
+      "value": "1. 在电脑、NAS 或服务器安装 Tailscale，并登录同一个 tailnet。\n2. 打开 MeshArc，完成浏览器登录，点击连接并允许系统 VPN 请求。\n3. 等待已连接，在主页选择在线设备，复制它的 Tailscale IP（通常是 100.x.x.x），在对应客户端访问服务。\n确认：两端在线，且目标服务已启动。无需编辑 config。\n排查：先断开其他系统 VPN；设备被要求审批时，请管理员在 Machines 中批准。「使用 MagicDNS」开关默认开启；管理端已启用 MagicDNS 时，可在设备详情复制设备名，否则请使用 IP；重启后需手动连接。"
+    },
+    {
+      "name": "feature_guide_taildrop_title",
+      "value": "Taildrop · 收发文件"
+    },
+    {
+      "name": "feature_guide_taildrop_body",
+      "value": "开启位置：Tailscale 管理后台 → Settings → General → Send Files（Taildrop）。\n1. 由 Owner 或 Admin 打开 Send Files；这是后台开关，不用写 config。\n2. 两端登录同一用户账号并连接 Tailscale，接收端运行支持 Taildrop 的客户端。带标签设备、别人共享给你的设备不能作为个人 Taildrop 目标。\n3. 在 MeshArc 的传输页（MeshSend）选择标有 Taildrop 可用的设备，再选文件或照片发送；接收文件后按提示保存到文件或图库。\n确认：目标显示 Taildrop 可用，小文件发送后可在接收端找到。\n排查：检查后台开关、设备归属、在线状态和接收端版本。LocalSend 可用不代表 Taildrop 可用。\n平台补充：macOS 首次使用还需在系统设置 → 通用 → 登录项与扩展 → 共享中允许 Tailscale；Linux/NAS 的保存方式请按官方 Taildrop 指南设置。"
+    },
+    {
+      "name": "feature_guide_taildrive_title",
+      "value": "Taildrive · 远程文件夹"
+    },
+    {
+      "name": "feature_guide_taildrive_body",
+      "value": "Taildrive 不是 Taildrop 开关：需要后台授权，并在电脑上共享文件夹；MeshArc 当前用于访问远端共享，不发布手机文件夹。官方功能仍处于 alpha。\n1. 请 Owner、Admin 或 Network admin 打开后台 Access controls。优先用可视化编辑器的 Node attributes 为自己的用户添加 drive:share 和 drive:access，再添加 tailscale.com/cap/drive 应用授权。\n2. 不熟悉策略时，使用下方只读示例：将 you@example.com 换成后台自己的登录身份。它仅允许该用户读取自己名下、未打标签设备的共享；默认不开放写入。若可视化编辑器无法表达应用授权，再切换 JSON editor。\n3. 保留原策略，将示例中的对象分别加入已有 nodeAttrs 和 grants 数组；没有该数组才新建。不要整份替换、重复同名顶层字段或把源/目标改为 *。校验通过并保存。没有编辑权限，请管理员帮忙。\n4. 在 Windows、macOS 或 Linux 的 Tailscale 1.64.0+ 客户端创建共享；下方命令中的路径必须换成电脑上的现有文件夹。在运行 Tailscale 的电脑终端执行，不是在手机或后台执行。\n5. MeshArc 连接后打开文件页并刷新，按设备 → 共享名进入。\n确认：能看到 docs 和其中的文件。只读示例下上传、删除等写操作被拒绝是正常的；确实需要写入时，请管理员将该授权的 ro 改成 rw。\n排查：能看到设备但没有共享，请查电脑是否发布共享、两项 nodeAttrs、应用授权、文件夹系统权限。NAS/标签设备和跨用户共享需单独设计权限，不能直接套用本例。\n电脑提示：先用文件管理器创建要共享的目录。若提示找不到 tailscale 命令，请检查客户端安装和命令行路径；macOS 也可按官方指南显示 File Sharing 设置，选择共享文件夹并将共享名设为 docs。"
+    },
+    {
+      "name": "feature_guide_localsend_title",
+      "value": "LocalSend · 兼容传输"
+    },
+    {
+      "name": "feature_guide_localsend_body",
+      "value": "1. 接收端安装并打开 LocalSend 或兼容的捷传，保持接收服务运行，并允许它访问网络。无需 Taildrop 开关或 Tailscale 策略示例。\n2. 跨网络传输时让两端连接同一个 tailnet，并确认其访问策略允许接收端服务；同一局域网仍需允许发现和接收端口。\n3. 在 MeshArc 传输页查看 LocalSend 状态，选择可用目标；两种协议都可用时按提示选择 LocalSend。\n4. 接收端确认传输请求；如更改过接收端口，在 MeshArc 对应设备的端口设置中填写实际端口（默认通常为 53317）。\n确认：LocalSend 状态可用，接收端收到文件。\n排查：检查接收应用是否在运行、防火墙、网络授权和端口。它与 Taildrop 的开关、可用状态互相独立。"
+    },
+    {
+      "name": "feature_guide_exit_title",
+      "value": "出口节点 · 使用远端网络"
+    },
+    {
+      "name": "feature_guide_exit_body",
+      "value": "1. 在准备作为出口的电脑上连接 Tailscale。Windows/macOS 优先在客户端启用 Run exit node；Linux 先按官方指南启用 IP 转发，再执行下方命令。\n2. 请管理员在后台 Machines 找到该电脑 → Edit route settings → 批准 Use as exit node。还需策略允许你使用出口，不能只批准节点就算完成。\n3. 回到 MeshArc → 设置 → 网络与连接，选择该出口节点；需要同时访问当前 Wi-Fi 的局域网时开启允许本地网络访问。若界面要求先断开连接，请按提示操作后重连。\n确认：选中节点后，网络出口符合预期；选择不使用出口节点可恢复。\n排查：检查远端在线、管理员批准、使用权限、IP 转发和防火墙。此功能是使用远端出口，不是把手机发布成出口节点。"
+    },
+    {
+      "name": "feature_guide_subnet_title",
+      "value": "子网路由 · 访问内网设备"
+    },
+    {
+      "name": "feature_guide_subnet_body",
+      "value": "1. 在能访问目标内网的电脑/NAS 上安装 Tailscale，按该平台官方指南开启 IP 转发。\n2. 下方只是示例：把 192.168.1.0/24 换成真实目标网段，并在该路由设备上发布；已有多条路由时保留完整列表，不要用示例覆盖。\n3. 请管理员在后台 Machines → 路由设备 → Edit route settings 批准该网段，并允许你的用户访问需要的目标 IP 和端口。\n4. MeshArc → 设置 → 网络与连接 → 开启接受子网路由，连接后用内网设备原本的 IP 访问。\n确认：能访问获授权的内网服务。\n排查：检查网段与当前 Wi-Fi 是否重叠、路由批准、访问策略、IP 转发和目标防火墙。不需要在每个内网设备安装 Tailscale，也不代表允许访问整个内网。"
+    },
+    {
+      "name": "feature_guide_media_title",
+      "value": "媒体库 · Jellyfin / Emby / Plex"
+    },
+    {
+      "name": "feature_guide_media_body",
+      "value": "1. 在电脑或 NAS 安装并启动 Jellyfin、Emby 或 Plex，先在服务端确认媒体库和账号能正常使用。\n2. 让服务端和手机连接同一个 tailnet；确认服务器监听可访问的地址、端口和防火墙，而不是只监听 127.0.0.1。无需 Taildrop/Taildrive 授权。\n3. 在手机安装兼容的 HosPlayer，在 MeshArc 的设备详情选择已识别的媒体服务并打开播放器；在播放器里登录媒体账号。\n确认：HosPlayer 能打开媒体库并播放测试视频。\n排查：用 Tailscale IP 加实际端口确认可达；未自动识别时检查服务类型、端口和访问策略。MeshArc 不替你安装媒体服务器，也不代填媒体密码。"
+    },
+    {
+      "name": "feature_guide_streaming_title",
+      "value": "Sunshine · 游戏串流准备"
+    },
+    {
+      "name": "feature_guide_streaming_body",
+      "value": "1. 在电脑安装并配置 Sunshine，先确认主机上的游戏和编码能正常运行。\n2. 两端连接 tailnet，并允许 Sunshine 所需端口。手机侧需兼容的 Moonlight 客户端，在其中添加电脑 Tailscale IP 并完成 PIN 配对。\n确认：以串流客户端实际成功连接为准，设备在线或 Sunshine 探测成功不等于已经可以串流。\n一键串流需要支持 MeshArc 联动协议的 MoonlightOH 版本；旧版本可复制主机地址手动添加。已添加的同一主机按 UUID 复用并保留配对。直连使用用户码率上限，中继使用较低上限并启用会话内自适应码率；可在提示中选择原有配置。"
+    },
+    {
+      "name": "feature_guide_security_title",
+      "value": "应用锁 / 文件夹锁"
+    },
+    {
+      "name": "feature_guide_security_body",
+      "value": "1. 先在系统中设置锁屏密码或生物识别。\n2. MeshArc → 设置 → 安全，按需要开启应用锁或 Taildrive 文件夹锁，并完成系统身份验证。\n3. 再次进入受保护内容时按系统提示解锁；关闭功能仍按界面要求验证。\n确认：受保护页面触发系统认证。无需修改 config。\n注意：这只保护通过本机 MeshArc 查看内容，不改变远端共享权限，不是文件加密；Taildrive 读写权限仍由服务端和 tailnet 管理员决定。"
+    },
+    {
+      "name": "feature_guide_appearance_title",
+      "value": "外观、动画与缓存"
+    },
+    {
+      "name": "feature_guide_appearance_body",
+      "value": "开启位置：MeshArc → 设置 → 外观与导航 / 存储与缓存。\n1. 在外观页面选择背景、沉浸式材质和动画参数，均可直接通过界面调整，无需 config。\n2. 在存储页面查看空间占用，仅在没有相关传输或预览任务时清理临时缓存。\n确认：设置在界面中生效；部分系统材质效果需要真机支持。\n注意：外观选项不改变网络权限或功能开启状态；清理本机临时缓存不等于删除远端 Taildrive 文件。"
+    },
+    {
+      "name": "feature_guide_reference_hint",
+      "value": "官方开启资料：可复制网址到浏览器打开。Tailscale 管理后台：https://login.tailscale.com/admin"
+    },
+    {
+      "name": "feature_guide_advanced",
+      "value": "策略示例与平台命令"
+    },
+    {
+      "name": "feature_guide_transfer_help",
+      "value": "传输使用说明"
+    },
+    {
+      "name": "feature_guide_enable_taildrop",
+      "value": "查看 Taildrop 开启步骤"
+    },
+    {
+      "name": "feature_guide_target_requirements",
+      "value": "查看 Taildrop 设备要求"
+    },
+    {
+      "name": "feature_guide_transfer_error",
+      "value": "暂时无法查询设备状态，请刷新或检查连接；这不代表 Taildrop 未开启。"
+    },
+    {
+      "name": "feature_guide_taildrop_disabled",
+      "value": "后台尚未开启 Taildrop；LocalSend 可用时仍可正常使用。"
+    },
+    {
+      "name": "feature_guide_taildrop_no_targets",
+      "value": "未找到符合条件的个人 Taildrop 设备，请检查设备归属和接收端要求。"
+    },
+    {
+      "name": "feature_guide_taildrive_help",
+      "value": "如何开启 Taildrive"
+    },
+    {
+      "name": "feature_guide_share_help",
+      "value": "如何共享文件夹"
+    },
+    {
+      "name": "feature_guide_permission_help",
+      "value": "查看权限与配置说明"
+    },
+    {
+      "name": "feature_guide_no_shares",
+      "value": "这里还没有可访问的共享，可检查电脑发布的文件夹和访问权限。"
+    },
+    {
+      "name": "feature_guide_search_empty",
+      "value": "没有匹配的项目"
+    },
+    {
+      "name": "feature_guide_clear_search",
+      "value": "清除搜索"
+    },
+    {
+      "name": "feature_guide_connect_help",
+      "value": "查看连接说明"
+    },
+    {
+      "name": "feature_guide_exit_help",
+      "value": "出口节点使用说明"
+    },
+    {
+      "name": "feature_guide_exit_empty_help",
+      "value": "如何添加出口节点"
+    },
+    {
+      "name": "feature_guide_subnet_help",
+      "value": "子网路由使用说明"
+    },
+    {
+      "name": "feature_guide_media_help",
+      "value": "媒体服务与播放器准备步骤"
+    },
+    {
+      "name": "feature_guide_streaming_help",
+      "value": "串流准备与手动连接说明"
+    },
+    {
+      "name": "feature_guide_help_section",
+      "value": "帮助"
+    },
+    {
+      "name": "path_diag_title",
+      "value": "直连路径诊断（Issue #18）"
+    },
+    {
+      "name": "path_diag_description",
+      "value": "默认关闭。采集 3 分钟，最多保留 1536 条脱敏事件；不记录 IP、密钥或负载。主动探测会刷新 STUN 并探测最多 3 台在线设备，不改变路由。复现后停止并导出诊断报告。"
+    },
+    {
+      "name": "path_diag_start",
+      "value": "开始 3 分钟采集"
+    },
+    {
+      "name": "path_diag_probe",
+      "value": "主动探测（需已开始采集）"
+    },
+    {
+      "name": "path_diag_stop",
+      "value": "停止采集并保留记录"
+    },
+    {
+      "name": "path_diag_clear",
+      "value": "停止并清除路径记录"
+    },
+    {
+      "name": "system_share_title",
+      "value": "通过 MeshArc 分享 %d 个文件"
+    },
+    {
+      "name": "system_share_choose_device",
+      "value": "请选择接收设备；没有可用设备时，请先连接 MeshArc。"
+    },
+    {
+      "name": "system_share_cancel",
+      "value": "取消本次分享"
+    },
+    {
+      "name": "system_share_invalid",
+      "value": "无法读取分享内容，请回到原应用重新分享，单次最多 100 个文件。"
+    },
+    {
+      "name": "standalone_diagnostics_title",
+      "value": "诊断与故障报告"
+    },
+    {
+      "name": "standalone_diagnostics_description",
+      "value": "无需进入设置即可导出本地脱敏报告。崩溃记录默认关闭；开启后24小时内最多保留5条系统提供的崩溃摘要和代码栈。可先开启、复现问题后重新打开应用，再从此处导出。不会自动上传；不含原始系统日志，系统未提供事件时可能没有堆栈。"
+    },
+    {
+      "name": "standalone_diagnostics_enabled",
+      "value": "崩溃记录已临时开启（24小时内有效）"
+    },
+    {
+      "name": "standalone_diagnostics_disabled",
+      "value": "崩溃记录已关闭"
+    },
+    {
+      "name": "standalone_diagnostics_enable",
+      "value": "开启临时崩溃记录"
+    },
+    {
+      "name": "standalone_diagnostics_clear",
+      "value": "关闭并清除崩溃记录"
+    },
+    {
+      "name": "standalone_diagnostics_clear_failed",
+      "value": "本次记录已停止，但保存关闭状态或清除记录失败。请在重新启动应用前重试。"
+    },
+    {
+      "name": "personalization_color_mode_desc",
+      "value": "选择应用配色；跟随系统会随设备的深浅模式切换。"
+    },
+    {
+      "name": "personalization_color_light",
+      "value": "浅色"
+    },
+    {
+      "name": "personalization_color_dark",
+      "value": "深色"
+    },
+    {
+      "name": "personalization_home_layout",
+      "value": "主页布局"
+    },
+    {
+      "name": "personalization_home_layout_desc",
+      "value": "选择已连接时的主页布局；紧凑布局突出连接概况，经典布局展示更多详情。"
+    },
+    {
+      "name": "personalization_home_compact",
+      "value": "紧凑"
+    },
+    {
+      "name": "personalization_home_classic",
+      "value": "经典"
+    },
+    {
+      "name": "personalization_tab_margin",
+      "value": "页签栏底部距离"
+    },
+    {
+      "name": "personalization_tab_margin_desc",
+      "value": "调整页签栏与系统导航区域的距离，范围为 0–100 vp。"
+    },
+    {
+      "name": "personalization_save_failed",
+      "value": "未能保存设置，请重试。"
+    },
+    {
+      "name": "personalization_apply_failed",
+      "value": "未能应用配色模式，请重试。"
+    },
+    {
+      "name": "personalization_background_failed",
+      "value": "未能保存新图片，已保留原背景，请重新选择。"
+    },
+    {
+      "name": "personalization_background_unavailable",
+      "value": "已保存的背景暂时无法读取，请重新选择图片。"
+    },
+    {
+      "name": "personalization_preview_caption",
+      "value": "背景预览"
+    },
+    {
+      "name": "native_settings_brightness_desc",
+      "value": "背景相对亮度，范围为 0–100%；只调整背景图片和沉浸色，不改变文字或屏幕亮度。"
+    },
+    {
+      "name": "native_settings_brightness_inactive_desc",
+      "value": "选择背景图片或开启沉浸色后，可调整 0–100% 的背景相对亮度。"
+    },
+    {
+      "name": "native_settings_animation_scale_desc",
+      "value": "滑块使用 0–100% 的相对强度；数值越高，动画越久、运动幅度越大或弹性阻尼越强。手动调整后使用自定义参数。"
+    },
+    {
+      "name": "control_server_manage",
+      "value": "编辑服务器"
+    },
+    {
+      "name": "control_server_switching",
+      "value": "正在切换服务器…"
+    },
+    {
+      "name": "control_server_presets_hint",
+      "value": "已保存服务器保留各自登录和网络偏好，断开连接后可切换。"
+    },
+    {"name": "account_profile_add", "value": "添加账户"},
+    {"name": "account_profile_number", "value": "账户 %d"},
+    {"name": "account_profile_hint", "value": "账户分别保留登录、设备和文件，断开连接后可切换。"},
+    {"name": "account_profile_failed", "value": "账户切换失败，可选择原账户后重试。"},
+    {"name": "account_profile_stop_login", "value": "停止等待登录"},
+    {"name": "feedback_email_with_diagnostics", "value": "邮件反馈（附诊断）"},
+    {"name": "feedback_email_subject", "value": "MeshArc 问题反馈 %s (%d)"},
+    {"name": "feedback_email_body", "value": "简单补充下面三项即可，环境信息和诊断附件已自动准备好。\n\n1. 遇到了什么问题？\n【写一句现象、发生的页面或功能；有报错可附上报错文字。】\n\n2. 你希望出现什么结果？\n【写一句正常情况下应该怎样。】\n\n3. 怎样能复现？\n【例如：打开…… → 点击…… → 出现问题。不确定可写“不确定”。】\n\n选填：发生频率（每次／偶尔／仅一次）、大致时间、近期变化（更新／切网／改设置）。不知道可留空。\n\n—— 本次诊断自动填写，无需重复输入 ——\nMeshArc：{appVersion}（{appVersionCode}）\nTailscale：{tailscaleVersion}\n设备型号：{model}\n系统版本：{system}\nSDK API：{sdkApiVersion}\n已登录：{signedIn}\n已选出口节点：{exitNodeSelected}\n接受子网路由：{acceptSubnetRoutes}\n报告生成时间（UTC，并非问题发生时间）：{generatedAt}\n\n已附脱敏诊断 ZIP，无需复制日志或重填环境信息。请检查正文和附件后发送。"},
+    {"name": "feedback_email_yes", "value": "是"},
+    {"name": "feedback_email_no", "value": "否"},
+    {"name": "feedback_email_unknown", "value": "未知"},
+    {"name": "feedback_email_attachment_failed", "value": "未能打开带诊断的邮件草稿。可重试，或导出下方报告后手动添加附件。"},
+    {"name": "feedback_email_prepared", "value": "诊断附件已准备，请在邮件中检查后发送。"},
+    {"name": "settings_dns_title", "value": "DNS"},
+    {"name": "setting_dns_override", "value": "自定义 DNS"},
+    {"name": "setting_dns_override_description", "value": "作为默认上游；打开「使用 MagicDNS」时保留设备名解析与分域规则。重新连接后生效"},
+    {"name": "setting_dns_primary", "value": "DNS 服务器"},
+    {"name": "setting_dns_primary_placeholder", "value": "IPv4 或 IPv6 地址"},
+    {"name": "setting_dns_secondary", "value": "另一 DNS 服务器（可选）"},
+    {"name": "setting_dns_secondary_placeholder", "value": "IPv4 或 IPv6 地址"},
+    {"name": "setting_dns_search_domains", "value": "搜索域（可选）"},
+    {"name": "setting_dns_search_domains_placeholder", "value": "逗号分隔，例如 corp.example.com"},
+    {"name": "setting_dns_save", "value": "保存 DNS 设置"},
+    {"name": "setting_dns_saved", "value": "已保存，重新连接 VPN 后生效"},
+    {"name": "setting_dns_invalid_primary", "value": "请输入可用的 DNS 服务器地址"},
+    {"name": "setting_dns_invalid_secondary", "value": "请输入可用的另一 DNS 地址"},
+    {"name": "setting_dns_invalid_search_domains", "value": "请输入最多 8 个有效搜索域"},
+    {"name": "setting_dns_save_failed", "value": "DNS 设置保存失败"},
+    {"name": "settings_storage_read_failed", "value": "读取失败"},
+    {"name": "background_running_title", "value": "后台运行"},
+    {"name": "background_running_summary", "value": "实验性保活设置"},
+    {"name": "background_running_location", "value": "模拟定位"},
+    {"name": "background_running_location_detail", "value": "通过低频定位请求尝试保留程序后台"},
+    {"name": "home_connection_optimization", "value": "连接优化"},
+    {"name": "background_running_pip", "value": "模拟画中画"},
+    {"name": "background_running_pip_detail", "value": "在小窗显示 VPN 上下行流量，并尝试保持应用在后台运行"},
+    {"name": "background_running_audio", "value": "模拟音频"},
+    {"name": "background_running_audio_detail", "value": "通过静音音频与后台任务尝试保留程序后台"},
+    {"name": "background_running_download", "value": "模拟下载"},
+    {"name": "background_running_download_detail", "value": "通过本机回环连接持续接收模拟数据"},
+    {"name": "background_running_tips", "value": "实验功能可能增加耗电。所有开关仅本次应用运行有效，重启后默认关闭。\n\n定位需授权位置权限并保持系统位置开关开启，坐标收到后直接丢弃。\n\n画中画受设备能力、系统设置和窗口模式影响。音频焦点被打断或系统取消任务后，静音播放会停止。\n\n模拟下载通过本机回环连接收发数据，进度取自实际接收字节，数据随即丢弃。\n\n系统仍会检查业务一致性并管控资源，以上方式均可能被暂停或终止。"},
+    {"name": "background_running_error", "value": "实验已停止或未能启动，错误码 %s"},
+    {"name": "exit_node_status_none", "value": "未使用出口节点"},
+    {"name": "exit_node_selected", "value": "已选择：%s"},
+    {"name": "exit_node_list_unavailable", "value": "出口节点列表暂不可用"},
+    {"name": "diagnostics_unlock_countdown_toast", "value": "再点击%d次即可进入工程诊断"},
+    {"name": "connection_duration_just_now", "value": "刚刚连接"},
+    {"name": "connection_duration_hours_minutes", "value": "%d 小时 %d 分钟"},
+    {"name": "connection_duration_minutes_seconds", "value": "%d 分钟 %d 秒"},
+    {"name": "connection_duration_seconds", "value": "%d 秒"},
+    {"name": "peer_service_connect_and_online_toast", "value": "请先连接 MeshArc，并确认目标设备在线"},
+    {"name": "diagnostic_fake_jellyfin_name", "value": "Jellyfin（工程伪装）"},
+    {"name": "stream_connect_required_toast", "value": "请先连接 MeshArc，再使用远程串流"},
+    {"name": "stream_target_offline_toast", "value": "目标设备当前离线"},
+    {"name": "stream_sunshine_probe_error_toast", "value": "无法检测 Sunshine，请稍后重试"},
+    {"name": "stream_path_probe_timeout_toast", "value": "连接路径检测超时，请稍后重试"},
+    {"name": "stream_sunshine_timeout_toast", "value": "Sunshine 检测超时，请检查目标电脑防火墙或网络状态"},
+    {"name": "stream_moonlight_open_failed_toast", "value": "无法打开 MoonlightOH，请稍后重试"},
+    {"name": "stream_sunshine_unavailable_toast", "value": "未检测到可用的 Sunshine 服务，请确认电脑已启动 Sunshine"},
+    {"name": "stream_sunshine_failed_toast", "value": "Sunshine 检测暂时失败，请稍后重试"},
+    {"name": "stream_target_unreachable_toast", "value": "当前无法访问目标设备"},
+    {"name": "stream_derp_confirm_title", "value": "当前通过 DERP 中继连接"},
+    {"name": "stream_derp_confirm_message", "value": "中继连接可能导致延迟升高或画面卡顿，MeshArc 将建议 MoonlightOH 使用较低码率"},
+    {"name": "stream_derp_use_compatible_profile", "value": "使用兼容配置"},
+    {"name": "stream_derp_use_original_profile", "value": "使用原有配置"},
+    {"name": "stream_moonlight_required_title", "value": "需要支持联动的 MoonlightOH"},
+    {"name": "stream_moonlight_required_message", "value": "请安装或更新到支持 MeshArc 联动的 MoonlightOH；也可复制主机地址手动连接"},
+    {"name": "stream_dialog_cancel_action", "value": "取消"},
+    {"name": "stream_copy_host_address_action", "value": "复制主机地址"},
+    {"name": "hosplayer_open_failed_toast", "value": "无法打开 HosPlayer，请稍后重试"},
+    {"name": "hosplayer_unsafe_endpoint_toast", "value": "服务器地址不符合安全传参规则"},
+    {"name": "diagnostic_media_self_test_running", "value": "正在运行离线测试…"},
+    {"name": "diagnostic_media_self_test_passed", "value": "PASS · 媒体服务识别 4/4 · HosPlayer 参数协议通过"},
+    {"name": "diagnostic_media_self_test_failed_export", "value": "FAILED · 请导出诊断报告并检查媒体联动日志"},
+    {"name": "diagnostic_media_self_test_unavailable", "value": "FAILED · 无法运行媒体服务离线测试"},
+    {"name": "hosplayer_import_link_copied_toast", "value": "HosPlayer 导入链接已复制"},
+    {"name": "hosplayer_import_link_failed_toast", "value": "无法生成 HosPlayer 导入链接"},
+    {"name": "update_changelog_timeline_code", "value": "内部版本 %d"},
+    {"name": "update_changelog_detail_code", "value": "内部版本号：%d"}
   ]
 }

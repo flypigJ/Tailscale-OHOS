@@ -1,5 +1,6 @@
 import { SunshineState } from '../services/StreamingModels';
 import { MotionTokens } from './MotionTokens';
+import { UiTokens } from './UiTokens';
 
 @Component
 export struct SunshineStatusBadge {
@@ -33,14 +34,15 @@ export struct SunshineStatusBadge {
     if (this.badgeVisible) {
       Text(this.displayedState === 'checking' ? $r('app.string.sunshine_checking') :
         $r('app.string.sunshine_available'))
-        .fontSize(10)
+        .fontSize(UiTokens.BADGE_SIZE)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.displayedState === 'available' ? $r('app.color.status_streaming_available') :
           $r('app.color.status_probe_pending'))
-        .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+        .padding({ left: UiTokens.BADGE_PADDING_HORIZONTAL, right: UiTokens.BADGE_PADDING_HORIZONTAL,
+          top: UiTokens.BADGE_PADDING_VERTICAL, bottom: UiTokens.BADGE_PADDING_VERTICAL })
         .backgroundColor(this.displayedState === 'available' ? $r('app.color.badge_background_available') :
           $r('app.color.badge_background_pending'))
-        .borderRadius(8)
+        .borderRadius(UiTokens.BADGE_RADIUS)
         .transition(
           TransitionEffect.asymmetric(
             TransitionEffect.OPACITY.animation({ duration: MotionTokens.NORMAL, curve: MotionTokens.curve() })

@@ -104,6 +104,7 @@ export class WindowEnvironment {
   private active: boolean = false;
   private generation: number = 0;
   private listenerCount: number = 0;
+  private privacyModeApplied?: boolean = undefined;
   private windowSizeListenerRegistered: boolean = false;
   private avoidAreaListenerRegistered: boolean = false;
   private densityListenerRegistered: boolean = false;
@@ -178,6 +179,7 @@ export class WindowEnvironment {
     }
     this.mainWindow = mainWindow;
     this.uiContext = uiContext;
+    this.privacyModeApplied = undefined;
     this.active = true;
     this.generation += 1;
     this.observation.generation = this.generation;
@@ -185,6 +187,33 @@ export class WindowEnvironment {
     this.readInitialObservation(mainWindow);
     this.registerListeners(mainWindow, this.uiContext);
     this.logInitialObservation();
+  }
+
+  setPrivacyMode(enabled: boolean): void {
+    const targetWindow = this.mainWindow;
+    if (targetWindow === undefined || typeof targetWindow.setWindowPrivacyMode !== 'function') {
+      return;
+    }
+    if (this.privacyModeApplied === enabled) {
+      return;
+    }
+    this.privacyModeApplied = enabled;
+    try {
+      const pending = targetWindow.setWindowPrivacyMode(enabled);
+      if (pending !== undefined && typeof pending.catch === 'function') {
+        pending.catch((error: BusinessError) => {
+          if (this.mainWindow === targetWindow && this.privacyModeApplied === enabled) {
+            this.privacyModeApplied = undefined;
+          }
+          hilog.warn(DOMAIN, TAG, 'WindowEnvironment privacy mode update failed. %{public}s',
+            DiagnosticPrivacy.formatLogError(error));
+        });
+      }
+    } catch (error) {
+      this.privacyModeApplied = undefined;
+      hilog.warn(DOMAIN, TAG, 'WindowEnvironment privacy mode unavailable. %{public}s',
+        DiagnosticPrivacy.formatLogError(error as BusinessError));
+    }
   }
 
   updateConfiguration(configuration: Configuration): void {
@@ -201,6 +230,7 @@ export class WindowEnvironment {
     this.active = false;
     this.mainWindow = undefined;
     this.uiContext = undefined;
+    this.privacyModeApplied = undefined;
     if (registeredWindow !== undefined) {
       this.unregisterListeners(registeredWindow, registeredContext);
     }

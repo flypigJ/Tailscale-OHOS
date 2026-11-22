@@ -1,6 +1,8 @@
+import { UiTokens } from './UiTokens';
+import { LightAppearance } from './LightAppearance';
 import { MotionTokens } from './MotionTokens';
+import { SymbolGlyphModifier } from '@kit.ArkUI';
 import {
-  BlurStrategy,
   DividerShowType,
   HdsNavigation,
   HdsNavigationAttribute,
@@ -16,7 +18,6 @@ export interface UpdateChangelogEntry {
   releaseDate: string;
   changes: string[];
   current: boolean;
-  imageResource?: Resource;
 }
 
 /**
@@ -28,6 +29,7 @@ export interface UpdateChangelogEntry {
 export struct UpdateChangelogSheet {
   @Prop entries: UpdateChangelogEntry[] = [];
   @Prop appName: string = 'MeshArc';
+  @Prop glowLevel: number = 3;
   @Prop materialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.ADAPTIVE;
 
   @State private selectedIndex: number = 0;
@@ -67,18 +69,19 @@ export struct UpdateChangelogSheet {
       Text(`v${entry.versionName}`)
         .fontSize(15)
         .fontWeight(FontWeight.Bold)
-        .fontColor(index === this.selectedIndex ? Color.White : $r('sys.color.font_primary'))
+        .fontColor(index === this.selectedIndex ? $r('app.color.selection_foreground') :
+          $r('sys.color.font_primary'))
         .textAlign(TextAlign.Center)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
         .padding({ left: 7, right: 7, top: 6, bottom: 6 })
-        .backgroundColor(index === this.selectedIndex ? $r('app.color.emphasize') :
+        .backgroundColor(index === this.selectedIndex ? $r('app.color.selection_background') :
           $r('sys.color.background_primary'))
         .borderRadius(17)
 
-      Text(`versionCode ${entry.versionCode}`)
-        .fontSize(11)
+      Text($r('app.string.update_changelog_timeline_code', entry.versionCode))
+        .fontSize(UiTokens.CAPTION_SIZE)
         .fontColor(index === this.selectedIndex ? $r('app.color.emphasize') :
           $r('sys.color.font_secondary'))
         .textAlign(TextAlign.Center)
@@ -87,7 +90,7 @@ export struct UpdateChangelogSheet {
         .width('100%')
 
       Text(entry.releaseDate)
-        .fontSize(11)
+        .fontSize(UiTokens.CAPTION_SIZE)
         .fontColor($r('sys.color.font_secondary'))
         .textAlign(TextAlign.Center)
         .maxLines(1)
@@ -122,15 +125,15 @@ export struct UpdateChangelogSheet {
 
   @Builder
   private ChangeRow(change: string) {
-    Row({ space: 9 }) {
+    Row({ space: 8 }) {
       Text('\u2022')
         .fontSize(17)
         .fontColor($r('app.color.emphasize'))
         .width(11)
         .textAlign(TextAlign.Center)
       Text(change)
-        .fontSize(15)
-        .lineHeight(23)
+        .fontSize(UiTokens.BODY_SIZE)
+        .lineHeight(22)
         .fontColor($r('sys.color.font_primary'))
         .layoutWeight(1)
     }
@@ -141,35 +144,26 @@ export struct UpdateChangelogSheet {
   @Builder
   private ChangelogDetails(entry: UpdateChangelogEntry) {
     Scroll() {
-      Column({ space: 10 }) {
-        if (entry.imageResource !== undefined) {
-          Image(entry.imageResource)
-            .width('100%')
-            .aspectRatio(3.0)
-            .objectFit(ImageFit.Contain)
-            .borderRadius(12)
-            .margin({ bottom: 4 })
-        }
-
+      Column({ space: UiTokens.GROUP_GAP }) {
         Text(`${this.appName} ${entry.versionName}`)
-          .fontSize(25)
-          .fontWeight(FontWeight.Bold)
+          .fontSize(UiTokens.TITLE_SIZE)
+          .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
           .width('100%')
 
-        Text(`VersionCode: ${entry.versionCode}`)
-          .fontSize(15)
-          .fontColor($r('sys.color.font_primary'))
+        Text($r('app.string.update_changelog_detail_code', entry.versionCode))
+          .fontSize(UiTokens.CAPTION_SIZE)
+          .fontColor($r('sys.color.font_secondary'))
           .width('100%')
 
         Text(entry.releaseDate)
-          .fontSize(15)
-          .fontColor($r('sys.color.font_primary'))
+          .fontSize(UiTokens.CAPTION_SIZE)
+          .fontColor($r('sys.color.font_secondary'))
           .width('100%')
 
         Text($r('app.string.update_changelog_section'))
-          .fontSize(19)
-          .fontWeight(FontWeight.Bold)
+          .fontSize(UiTokens.SECTION_TITLE_SIZE)
+          .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
           .width('100%')
           .margin({ top: 5 })
@@ -210,7 +204,7 @@ export struct UpdateChangelogSheet {
     } else {
       Column() {
         Text($r('app.string.update_changelog_title'))
-          .fontSize(15)
+          .fontSize(UiTokens.BODY_SIZE)
           .fontColor($r('sys.color.font_secondary'))
       }
       .layoutWeight(1)
@@ -221,23 +215,35 @@ export struct UpdateChangelogSheet {
 
   build() {
     HdsNavigation() {
-      Column({ space: 12 }) {
+      Column({ space: UiTokens.GROUP_GAP }) {
         this.VersionTimeline()
         this.ChangelogPages()
       }
         .width('100%')
         .height('100%')
-        .padding({ left: 18, right: 18, top: 8, bottom: 16 })
-        .backgroundColor($r('sys.color.background_secondary'))
+        .padding({ left: UiTokens.PAGE_PADDING, right: UiTokens.PAGE_PADDING, top: 8, bottom: 16 })
+        .backgroundColor(LightAppearance.supports() ? Color.Transparent : $r('sys.color.background_secondary'))
     }
       .titleMode(HdsNavigationTitleMode.MODAL)
       .titleBar({
         enableComponentSafeArea: true,
         style: {
-          blurStrategy: BlurStrategy.DISABLE,
+          blurStrategy: LightAppearance.blurStrategy(this.glowLevel),
+          originalStyle: {
+            contentStyle: {
+              titleStyle: {
+                mainTitleColor: $r('sys.color.font_primary'),
+                subTitleColor: $r('sys.color.font_secondary')
+              },
+              menuStyle: {
+                iconColor: $r('sys.color.icon_primary'),
+                textColor: $r('sys.color.font_primary')
+              }
+            }
+          },
           systemMaterialEffect: {
-            materialType: hdsMaterial.MaterialType.IMMERSIVE,
-            materialLevel: this.materialLevel
+            materialType: LightAppearance.hdsType(this.glowLevel),
+            materialLevel: LightAppearance.hdsLevel(this.glowLevel)
           }
         },
         content: {
@@ -253,6 +259,8 @@ export struct UpdateChangelogSheet {
             }, {
               content: {
                 label: $r('app.string.native_settings_close'),
+                icon: new SymbolGlyphModifier($r('sys.symbol.xmark'))
+                  .fontColor([$r('sys.color.icon_primary')]),
                 type: IconStyleMode.SMALL,
                 isEnabled: true,
                 action: () => this.requestAction('dismiss')
@@ -265,7 +273,7 @@ export struct UpdateChangelogSheet {
       .hideBackButton(true)
       .width('100%')
       .height('100%')
-      .backgroundColor($r('sys.color.background_secondary'))
+      .backgroundColor(LightAppearance.supports() ? Color.Transparent : $r('sys.color.background_secondary'))
       .id('update-changelog-navigation')
   }
 }

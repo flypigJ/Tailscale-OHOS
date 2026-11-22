@@ -20,6 +20,76 @@ export interface ReleaseChangelogDefinition {
 
 export const RELEASE_CHANGELOG_ENTRIES: ReleaseChangelogDefinition[] = [
   {
+    versionName: '2.0.0',
+    versionCode: 200000000,
+    releaseDateZh: '2026年11月22日',
+    releaseDateEn: 'November 22, 2026',
+    changesZh: [
+      '升级 Tailscale 内核至上游最新，修复安全问题',
+      '新增“连接优化”入口，优化连接、后台恢复和重连稳定性',
+      '加入 MagicDNS 和自定义 DNS 支持',
+      '改进部分功能交互',
+      '优化大文件取消传输响应与后台连接恢复稳定性'
+    ],
+    changesEn: [
+      'Upgraded the Tailscale engine to the latest upstream release and fixed security issues',
+      'Added a Connection optimization entry and improved connection, background recovery and reconnection stability',
+      'Added MagicDNS and custom DNS support',
+      'Refined interactions across several features',
+      'Improved large-transfer cancellation responsiveness and background connection recovery stability'
+    ]
+  },
+  {
+    versionName: '1.1.6',
+    versionCode: 100000016,
+    releaseDateZh: '2026年11月1日',
+    releaseDateEn: 'November 1, 2026',
+    changesZh: [
+      '紧急修复上个版本导致的异常闪退问题\n亲爱的用户，很抱歉上个版本的bug给你们带来许多不便。本人为学生开发者，近期忙于期中考，故在前段时间疏于更新，望各位谅解。非常感谢。'
+    ],
+    changesEn: [
+      'Urgent fix for unexpected crashes introduced in the previous version\nDear users, I am sorry for the inconvenience caused by bugs in the previous version. I am a student developer and have recently been busy with midterm exams, which has kept me from updating the app as regularly as I should. Thank you very much for your understanding.'
+    ]
+  },
+  {
+    versionName: '1.1.5',
+    versionCode: 100000015,
+    releaseDateZh: '2026年10月20日',
+    releaseDateEn: 'October 20, 2026',
+    changesZh: [
+      '优化应用稳定性，尝试解决偶发闪退',
+      '支持从相册、文件管理等应用分享文件到其他设备',
+      '支持点击保存收到的图片和视频到相册',
+      '支持通过系统文件选择器保存收到的其他文件',
+      '修复未连接时分享设备界面持续闪动的问题'
+    ],
+    changesEn: [
+      'Improved app stability to address occasional crashes',
+      'Share files from Gallery, Files and other apps to other devices',
+      'Save received images and videos to the gallery with a tap',
+      'Save other received files using the system file picker',
+      'Fixed continuous flickering of the share device screen while disconnected'
+    ]
+  },
+  {
+    versionName: '1.1.1',
+    versionCode: 100000005,
+    releaseDateZh: '2026年10月15日',
+    releaseDateEn: 'October 15, 2026',
+    changesZh: [
+      '优化文件页操作布局与原生系统材质，调整排序、视图切换和多选操作入口；本版本需要 HarmonyOS API 26 或更高版本',
+      '补充连接、文件传输、共享目录、子网、出口节点及媒体功能的配置说明与帮助入口',
+      '改进后台任务、网络恢复与 VPN 生命周期诊断，保留脱敏错误码和异常上下文，减少周期探测日志对关键事件的覆盖',
+      '修复传输帮助按钮的系统图标资源引用，确保应用正常编译'
+    ],
+    changesEn: [
+      'Refined file-page controls and native system materials, including sorting, view switching and selection actions; this version requires HarmonyOS API 26 or later',
+      'Added setup instructions and help entry points for connections, file transfers, shared folders, subnets, exit nodes and media services',
+      'Improved background-task, network-recovery and VPN lifecycle diagnostics with redacted error codes and failure context, preserving key events amid periodic probes',
+      'Fixed the system icon resource used by the transfer help button so the app compiles successfully'
+    ]
+  },
+  {
     versionName: '1.1.0',
     versionCode: 100000003,
     releaseDateZh: '2026年9月23日',

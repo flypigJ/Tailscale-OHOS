@@ -6,15 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$buildProfile = Get-Content -Raw (Join-Path $projectRoot 'build-profile.json5')
-$targetApiMatch = [regex]::Match($buildProfile, '"compileSdkVersion"\s*:\s*"(?:[^"(]+\((\d+)\)|(?:\d+\.\d+\.\d+))"')
-if (-not $targetApiMatch.Success) {
-  $targetApiMatch = [regex]::Match($buildProfile, '"targetSdkVersion"\s*:\s*"[^"(]+\((\d+)\)"')
-}
-if (-not $targetApiMatch.Success) {
-  throw 'Unable to determine targetSdkVersion from build-profile.json5.'
-}
-$targetApiLevel = if ($targetApiMatch.Groups[1].Value) { $targetApiMatch.Groups[1].Value } else { '26' }
+$targetApiLevel = '26'
 
 $installedDevEcoHomes = Get-ChildItem -Path (Join-Path $env:ProgramFiles 'Huawei') `
   -Directory -Filter 'DevEco Studio*' -ErrorAction SilentlyContinue | ForEach-Object {
@@ -40,14 +32,9 @@ $sdkCandidates = @(
   # Prefer the complete vendor distribution over locally assembled SDK copies.
   (Join-Path $devecoHome 'sdk'),
   (Join-Path $projectRoot '.tools\harmony-sdk-26-release'),
-  (Join-Path $projectRoot '.tools\harmony-sdk-23-release2'),
-  (Join-Path $env:LOCALAPPDATA 'OpenHarmony\Sdk\6.1.0-release'),
-  (Join-Path $env:LOCALAPPDATA 'OpenHarmony\Sdk\23'),
-  (Join-Path $projectRoot '.tools\harmony-sdk-26-release'),
   (Join-Path $env:LOCALAPPDATA 'OpenHarmony\Sdk\26.0.0-release'),
   (Join-Path $env:LOCALAPPDATA 'OpenHarmony\Sdk\26.0.0'),
-  (Join-Path $env:LOCALAPPDATA 'OpenHarmony\Sdk\26.0.0-release2'),
-  (Join-Path $devecoHome 'sdk')
+  (Join-Path $env:LOCALAPPDATA 'OpenHarmony\Sdk\26.0.0-release2')
 ) | Where-Object { $_ -and (Test-Path $_) }
 $requiredSdkComponents = @('ets', 'js', 'native', 'previewer', 'toolchains')
 $requiredHmsSdkComponents = @('ets', 'js', 'native', 'previewer', 'toolchains')
@@ -69,13 +56,13 @@ foreach ($candidate in $sdkCandidates | Select-Object -Unique) {
     }
     $metadata = Get-Content -Raw $metadataPath | ConvertFrom-Json
     if ([int]$metadata.apiVersion -ne [int]$targetApiLevel -or
-      ($Product -eq 'release' -and $metadata.releaseType -ne 'Release')) {
+      $metadata.releaseType -ne 'Release') {
       $candidateIsValid = $false
       break
     }
     $candidateMetadata[$component] = $metadata
   }
-  if ($candidateIsValid -and $Product -eq 'release') {
+  if ($candidateIsValid) {
     foreach ($component in $requiredHmsSdkComponents) {
       # Vendor HMS distributions use uni-package.json. Older assembled SDKs
       # may use the OpenHarmony metadata filename instead.
@@ -112,11 +99,9 @@ $requiredSdkComponents | ForEach-Object {
   $metadata = $sdkComponentMetadata[$_]
   Write-Host "  $($_): $($metadata.version) $($metadata.releaseType)"
 }
-if ($Product -eq 'release') {
-  $requiredHmsSdkComponents | ForEach-Object {
-    $metadata = $sdkComponentMetadata["hms-$_"]
-    Write-Host "  hms-$($_): $($metadata.version) $($metadata.releaseType)"
-  }
+$requiredHmsSdkComponents | ForEach-Object {
+  $metadata = $sdkComponentMetadata["hms-$_"]
+  Write-Host "  hms-$($_): $($metadata.version) $($metadata.releaseType)"
 }
 
 if (-not (Test-Path $hvigor) -and -not (Test-Path $hvigorWrapper)) {
@@ -165,7 +150,18 @@ $env:NODE_PATH = @(
   (Join-Path $devecoHome 'tools\hvigor\hvigor-ohos-plugin\node_modules')
 ) -join ';'
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass `
+& node (Join-Path $PSScriptRoot 'update-runtime-fingerprint.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Diagnostic fingerprint generation failed' }
+
+& node (Join-Path $PSScriptRoot 'verify-sdk-baseline.cjs') `
+  (Join-Path $projectRoot 'build-profile.json5')
+if ($LASTEXITCODE -ne 0) {
+  throw 'API 26 SDK baseline verification failed.'
+}
+
+$pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
+$nativePowerShell = if ($pwshCmd) { $pwshCmd.Source } else { (Get-Command powershell.exe -ErrorAction Stop).Source }
+& $nativePowerShell -NoProfile -ExecutionPolicy Bypass `
   -File (Join-Path $PSScriptRoot 'build-go.ps1')
 if ($LASTEXITCODE -ne 0) {
   throw "OpenHarmony Go build failed with exit code $LASTEXITCODE"
@@ -184,15 +180,45 @@ if ($LASTEXITCODE -ne 0) {
   throw "Hvigor build failed with exit code $LASTEXITCODE"
 }
 
-$haps = Get-ChildItem -Path (Join-Path $PSScriptRoot '..\entry\build') -Recurse -Filter '*.hap'
+if ($Product -eq 'release') {
+  & node $hvigorEntry --mode project -p product=$Product `
+    -p buildMode=$buildMode -p debuggable=$debuggable assembleApp --no-daemon
+  if ($LASTEXITCODE -ne 0) {
+    throw "Hvigor release assembleApp failed with exit code $LASTEXITCODE"
+  }
+}
+
+$hapOutputDirectory = Join-Path $projectRoot "entry\build\$Product\outputs\default"
+$haps = @('entry-default-signed.hap', 'entry-default-unsigned.hap') | ForEach-Object {
+  $artifactPath = Join-Path $hapOutputDirectory $_
+  if (Test-Path -LiteralPath $artifactPath) {
+    Get-Item -LiteralPath $artifactPath
+  }
+}
 if (-not $haps) {
   throw 'Build completed but no HAP artifact was found.'
 }
 
 $haps | ForEach-Object { Write-Host "Built: $($_.FullName)" }
 
+if ($Product -eq 'release') {
+  $appOutputDirectory = Join-Path $projectRoot "build\outputs\$Product"
+  $signedApps = @(Get-ChildItem -LiteralPath $appOutputDirectory -Filter '*-signed.app' -File -ErrorAction SilentlyContinue)
+  if ($signedApps.Count -eq 0) {
+    throw "Release build completed but no signed .app artifact was found under $appOutputDirectory"
+  }
+  $signedApps | ForEach-Object { Write-Host "Built APP: $($_.FullName)" }
+}
+
 & powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File (Join-Path $PSScriptRoot 'verify-artifacts.ps1')
+  -File (Join-Path $PSScriptRoot 'verify-artifacts.ps1') -Product $Product
 if ($LASTEXITCODE -ne 0) {
   throw "Artifact verification failed with exit code $LASTEXITCODE"
+}
+
+& powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File (Join-Path $PSScriptRoot 'export-apms-symbols.ps1') -Product $Product `
+  -ReadElf (Join-Path $sdkHome 'default\openharmony\native\llvm\bin\llvm-readelf.exe')
+if ($LASTEXITCODE -ne 0) {
+  throw "APMS symbol archive failed with exit code $LASTEXITCODE"
 }

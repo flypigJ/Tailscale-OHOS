@@ -1,3 +1,5 @@
+import { TaildropTransferRecord } from '@tailscale/common';
+
 export interface TaildropContentFile {
   name: string;
   size: number;
@@ -8,19 +10,7 @@ export interface TaildropContentCacheEntry extends TaildropContentFile {
   path: string;
 }
 
-export interface TaildropContentHistoryRecord {
-  requestId: number;
-  direction: string;
-  state: string;
-  reason: string;
-  targetKey: string;
-  targetName: string;
-  fileName: string;
-  fileCount: number;
-  totalBytes: number;
-  previewPath: string;
-  completedAtMs: number;
-}
+export type TaildropContentHistoryRecord = TaildropTransferRecord;
 
 export interface TaildropContentHistory {
   records?: TaildropContentHistoryRecord[];

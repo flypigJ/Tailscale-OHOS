@@ -11,8 +11,8 @@ if (-not (Test-Path $appJsonPath)) {
   throw "App metadata is missing: $appJsonPath"
 }
 
-$changelog = Get-Content -Raw $changelogPath
-$appJson = Get-Content -Raw $appJsonPath
+$changelog = Get-Content -Raw -Encoding UTF8 $changelogPath
+$appJson = Get-Content -Raw -Encoding UTF8 $appJsonPath
 $appVersionMatch = [regex]::Match($appJson, '"versionName"\s*:\s*"([^"]+)"')
 $appCodeMatch = [regex]::Match($appJson, '"versionCode"\s*:\s*(\d+)')
 if (-not $appVersionMatch.Success -or -not $appCodeMatch.Success) {

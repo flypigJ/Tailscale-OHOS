@@ -2,6 +2,17 @@ import { common, wantAgent, WantAgent } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import {
+  TAILDROP_TEXT_MAX_CLIPBOARD_BYTES,
+  TaildropIncomingFileSummary,
+  classifyFileContentKind,
+  isMediaFileName
+} from '@tailscale/common';
+import {
+  buildSignedTaildropEventId,
+  hasUnsafeControlOrBidiChars,
+  stripUnsafeControlAndBidiChars
+} from './AppShellIntentAdapter';
 
 const DOMAIN: number = 0x0000;
 const TAG: string = 'TaildropNotifications';
@@ -11,20 +22,8 @@ const PROGRESS_NOTIFICATION_ID: number = 420001;
 const COMPLETION_NOTIFICATION_BASE_ID: number = 421000;
 const COMPLETION_NOTIFICATION_ID_RANGE: number = 500000000;
 const COMPLETION_ACTIONS_PER_NOTIFICATION: number = 4;
-const TEXT_CLIPBOARD_MAX_BYTES: number = 1024 * 1024;
-const IMAGE_EXTENSIONS: string[] = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif', 'dng'];
-const VIDEO_EXTENSIONS: string[] = ['mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', '3gp', 'ts'];
-const TEXT_EXTENSIONS: string[] = [
-  'txt', 'md', 'markdown', 'json', 'xml', 'csv', 'log', 'yaml', 'yml', 'ini', 'conf', 'js', 'ts', 'ets',
-  'html', 'css', 'sh', 'py', 'go', 'java', 'c', 'cpp', 'h', 'hpp', 'rs', 'kt', 'swift'
-];
 
-export interface TaildropNotificationFile {
-  name: string;
-  declaredSize: number;
-  received: number;
-  startedAtMs: number;
-}
+export type TaildropNotificationFile = TaildropIncomingFileSummary;
 
 let notificationEnabled: boolean = false;
 let nextCompletionNotificationId: number =
@@ -34,6 +33,7 @@ export async function publishTaildropProgress(context: common.Context, file: Tai
   if (!await canPublish()) {
     return;
   }
+  const safeDisplayName: string = sanitizeNotificationDisplayLabel(file.name);
   const progress: number | undefined = progressPercent(file);
   const request: notificationManager.NotificationRequest = {
     id: PROGRESS_NOTIFICATION_ID,
@@ -44,7 +44,7 @@ export async function publishTaildropProgress(context: common.Context, file: Tai
       notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
       normal: {
         title: stringResource(context, 'notification_taildrop_receiving_title', 'Receiving file'),
-        text: file.name,
+        text: safeDisplayName,
         additionalText: progress === undefined ?
           stringResource(context, 'notification_taildrop_receiving_indeterminate', 'Receiving') : `${progress}%`
       }
@@ -56,7 +56,7 @@ export async function publishTaildropProgress(context: common.Context, file: Tai
         name: 'downloadTemplate',
         data: {
           title: stringResource(context, 'notification_taildrop_receiving_title', 'Receiving file'),
-          fileName: file.name,
+          fileName: safeDisplayName,
           progressValue: progress
         }
       };
@@ -84,18 +84,30 @@ export async function publishTaildropSavePrompt(context: common.Context, fileNam
     const notificationId: number = allocateCompletionNotificationId();
     const normalizedReceivedAtMs: number = Number.isSafeInteger(receivedAtMs) && receivedAtMs > 0 ?
       receivedAtMs : Date.now();
-    const eventId: string = `${normalizedReceivedAtMs}:${notificationId}`;
+    const filesDir: string = context !== undefined && typeof context.filesDir === 'string' ?
+      context.filesDir.trim() : '';
+    const safeDisplayName: string = sanitizeNotificationDisplayLabel(fileName);
+    const openEventId: string = buildSignedTaildropEventId(
+      filesDir, 'open', fileName, size, normalizedReceivedAtMs, notificationId);
+    const laterEventId: string = buildSignedTaildropEventId(
+      filesDir, 'later', fileName, size, normalizedReceivedAtMs, notificationId);
+    const requiresOpenFallback: boolean = isMediaFileName(fileName) || hasUnsafeControlOrBidiChars(fileName);
+    const candidateSaveEventId: string = requiresOpenFallback ? '' : buildSignedTaildropEventId(
+      filesDir, 'save', fileName, size, normalizedReceivedAtMs, notificationId);
+    const saveActionName: string = candidateSaveEventId.length > 0 ? 'save' : 'open';
+    const saveEventId: string = candidateSaveEventId.length > 0 ? candidateSaveEventId : openEventId;
     const actionRequestCode: number = notificationId * COMPLETION_ACTIONS_PER_NOTIFICATION;
     const openAgent: WantAgent = await taildropActionAgent(
-      actionRequestCode, 'open', fileName, size, normalizedReceivedAtMs, eventId);
-    const requiresSecureMediaSave: boolean = isMediaFile(fileName);
+      actionRequestCode, 'open', fileName, size, normalizedReceivedAtMs, openEventId);
     const saveAgent: WantAgent = await taildropActionAgent(
-      actionRequestCode + 1, requiresSecureMediaSave ? 'open' : 'save', fileName, size,
-      normalizedReceivedAtMs, eventId);
+      actionRequestCode + 1, saveActionName, fileName, size,
+      normalizedReceivedAtMs, saveEventId);
     const laterAgent: WantAgent = await taildropActionAgent(
-      actionRequestCode + 2, 'later', fileName, size, normalizedReceivedAtMs, eventId);
+      actionRequestCode + 2, 'later', fileName, size, normalizedReceivedAtMs, laterEventId);
     const saveAction: notificationManager.NotificationActionButton = {
-      title: taildropSaveActionTitle(context, fileName, size),
+      title: saveActionName === 'open' ?
+        stringResource(context, 'notification_taildrop_open_action', 'Open') :
+        taildropSaveActionTitle(context, fileName, size),
       wantAgent: saveAgent
     };
     const laterAction: notificationManager.NotificationActionButton = {
@@ -111,7 +123,7 @@ export async function publishTaildropSavePrompt(context: common.Context, fileNam
         notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
         normal: {
           title: stringResource(context, 'notification_taildrop_received_title', 'File received'),
-          text: fileName,
+          text: safeDisplayName,
           additionalText: stringResource(context, 'notification_taildrop_received_message',
             'Choose how to save the file')
         }
@@ -147,29 +159,12 @@ async function taildropActionAgent(requestCode: number, action: string, fileName
 }
 
 function taildropSaveActionTitle(context: common.Context, fileName: string, size: number): string {
-  if (isMediaFile(fileName)) {
+  if (isMediaFileName(fileName)) {
     return stringResource(context, 'notification_taildrop_open_action', 'Open');
   }
-  return isTextFile(fileName, size) ?
+  return classifyFileContentKind(fileName, size, TAILDROP_TEXT_MAX_CLIPBOARD_BYTES) === 'text' ?
     stringResource(context, 'notification_taildrop_copy_action', 'Copy') :
     stringResource(context, 'notification_taildrop_save_action', 'Save');
-}
-
-function isMediaFile(fileName: string): boolean {
-  const extensionIndex: number = fileName.lastIndexOf('.');
-  if (extensionIndex < 1) {
-    return false;
-  }
-  const extension: string = fileName.substring(extensionIndex + 1).toLowerCase();
-  return IMAGE_EXTENSIONS.includes(extension) || VIDEO_EXTENSIONS.includes(extension);
-}
-
-function isTextFile(fileName: string, size: number): boolean {
-  const extensionIndex: number = fileName.lastIndexOf('.');
-  if (extensionIndex < 1 || size < 0 || size > TEXT_CLIPBOARD_MAX_BYTES) {
-    return false;
-  }
-  return TEXT_EXTENSIONS.includes(fileName.substring(extensionIndex + 1).toLowerCase());
 }
 
 async function canPublish(): Promise<boolean> {
@@ -207,6 +202,11 @@ function stringResource(context: common.Context, name: string, fallback: string)
   } catch (_error) {
     return fallback;
   }
+}
+
+function sanitizeNotificationDisplayLabel(value: string): string {
+  const cleaned: string = stripUnsafeControlAndBidiChars(value).trim();
+  return cleaned.length > 0 ? cleaned : 'file';
 }
 
 function logPublishError(operation: string, error: BusinessError): void {

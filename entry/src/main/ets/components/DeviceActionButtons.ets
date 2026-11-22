@@ -1,5 +1,6 @@
 import { SunshineState } from '../services/StreamingModels';
 import { MediaProbeState } from '../services/MediaIntegrationModels';
+import { UiTokens } from './UiTokens';
 
 @Component
 export struct DeviceActionButtons {
@@ -42,7 +43,7 @@ export struct DeviceActionButtons {
           if (this.launching || this.sunshineState === 'checking') {
             LoadingProgress().width(14).height(14).color($r('app.color.action_streaming_icon'))
           } else {
-            SymbolGlyph($r('sys.symbol.rectangle_on_rectangle')).fontSize(15)
+            SymbolGlyph($r('sys.symbol.rectangle_on_rectangle')).fontSize(UiTokens.ICON_CHEVRON)
               .fontColor([$r('app.color.action_streaming_icon')])
           }
           Text($r('app.string.streaming_label'))
@@ -78,7 +79,7 @@ export struct DeviceActionButtons {
           if (this.mediaChecking || this.mediaLaunching) {
             LoadingProgress().width(14).height(14).color($r('app.color.action_media_progress'))
           } else {
-            SymbolGlyph($r('sys.symbol.rectangle_on_rectangle')).fontSize(15)
+            SymbolGlyph($r('sys.symbol.video')).fontSize(UiTokens.ICON_CHEVRON)
               .fontColor([$r('app.color.action_media_icon')])
           }
           Text($r('app.string.media_services_label'))
@@ -115,8 +116,8 @@ export struct DeviceActionButtons {
 
       Button({ type: ButtonType.Normal, stateEffect: true }) {
         Row({ space: 5 }) {
-          SymbolGlyph($r('sys.symbol.doc'))
-            .fontSize(14)
+          SymbolGlyph($r('sys.symbol.square_on_square_fill'))
+            .fontSize(UiTokens.ICON_CHEVRON)
             .fontColor([$r('sys.color.icon_primary')])
           Text($r('app.string.peer_copy_ip'))
             .fontSize(11)

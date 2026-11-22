@@ -1,14 +1,41 @@
+import { AccountProfiles } from './AccountProfiles';
+import { AtomicFileStore, AtomicWriteOptions } from './AtomicFileStore';
+import { ControlServerConfig } from './ControlServerConfig';
+import { VpnExtensionRpcChannel, VpnRpcRequestOptions, VpnRpcResult } from './VpnExtensionRpcChannel';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
+import {
+  PreparedTaildriveFile,
+  TAILDRIVE_CONTROL_REQUEST_FILE_NAME,
+  TAILDRIVE_CONTROL_RESPONSE_FILE_NAME,
+  TAILDRIVE_MANUAL_TRANSFER_REQUEST_FILE_NAME,
+  TAILDRIVE_MANUAL_TRANSFER_RESPONSE_FILE_NAME,
+  TAILDRIVE_QUERY_REQUEST_FILE_NAME,
+  TAILDRIVE_QUERY_RESPONSE_FILE_NAME,
+  TAILDRIVE_TRANSFER_REQUEST_FILE_NAME,
+  TAILDRIVE_TRANSFER_RESPONSE_FILE_NAME,
+  TaildriveEntry,
+  TaildriveExtensionRequest,
+  TaildriveListResult,
+  TaildriveMutationRequest,
+  TaildriveMutationResult,
+  TaildriveStatResult,
+  TaildriveTransferRequest,
+  TaildriveTransferSnapshot
+} from '@tailscale/common';
 
-const TAILDRIVE_QUERY_REQUEST_FILE: string = 'taildrive-query-request.json';
-const TAILDRIVE_QUERY_RESPONSE_FILE: string = 'taildrive-query-response.json';
-const TAILDRIVE_TRANSFER_REQUEST_FILE: string = 'taildrive-transfer-request.json';
-const TAILDRIVE_TRANSFER_RESPONSE_FILE: string = 'taildrive-transfer-response.json';
-const TAILDRIVE_MANUAL_TRANSFER_REQUEST_FILE: string = 'taildrive-manual-transfer-request.json';
-const TAILDRIVE_MANUAL_TRANSFER_RESPONSE_FILE: string = 'taildrive-manual-transfer-response.json';
-const TAILDRIVE_CONTROL_REQUEST_FILE: string = 'taildrive-control-request.json';
-const TAILDRIVE_CONTROL_RESPONSE_FILE: string = 'taildrive-control-response.json';
+export {
+  PreparedTaildriveFile,
+  TaildriveEntry,
+  TaildriveExtensionRequest,
+  TaildriveListResult,
+  TaildriveMutationRequest,
+  TaildriveMutationResult,
+  TaildriveStatResult,
+  TaildriveTransferRequest,
+  TaildriveTransferSnapshot
+} from '@tailscale/common';
+
 // A cold remote directory query first performs a bounded native TSMP warm-up
 // (up to 5 s), then retains the existing 20 s WebDAV request limit.
 const TAILDRIVE_QUERY_TIMEOUT_MS: number = 32000;
@@ -16,108 +43,53 @@ const TAILDRIVE_MUTATION_TIMEOUT_MS: number = 35000;
 const TAILDRIVE_TRANSFER_TIMEOUT_MS: number = 30 * 60 * 1000 + 10000;
 const TAILDRIVE_CONTROL_TIMEOUT_MS: number = 5000;
 
-interface TaildriveExtensionRequest {
-  requestId: number;
-  operation: string;
-  payload: string;
-}
-
-interface TaildriveExtensionResponse {
-  requestId: number;
-  result: string;
-}
-
-export interface TaildriveEntry {
-  name: string;
+interface TaildrivePathPayload {
   path: string;
-  kind: string;
-  size: number;
-  modifiedAtMs: number;
-  contentType?: string;
-  etag?: string;
-}
-
-export interface TaildriveListResult {
-  state: string;
-  path: string;
-  entries: TaildriveEntry[];
-  reason: string;
-}
-
-export interface TaildriveStatResult {
-  state: string;
-  entry: TaildriveEntry;
-  reason: string;
-}
-
-export interface TaildriveMutationRequest {
-  operation: string;
-  path: string;
-  newPath?: string;
-  overwrite?: boolean;
-}
-
-export interface TaildriveMutationResult {
-  state: string;
-  operation: string;
-  path: string;
-  newPath: string;
-  reason: string;
-}
-
-export interface TaildriveTransferRequest {
-  requestId: number;
-  remotePath: string;
-  localRoot: string;
-  localPath: string;
-  sourceModifiedAtMs?: number;
-  overwrite?: boolean;
-}
-
-export interface TaildriveTransferSnapshot {
-  requestId: number;
-  direction: string;
-  state: string;
-  reason: string;
-  remotePath: string;
-  localPath: string;
-  fileName: string;
-  bytes: number;
-  totalBytes: number;
-  startedAtMs: number;
-  completedAtMs: number;
-}
-
-export interface PreparedTaildriveFile {
-  path: string;
-  requestDir: string;
-  name: string;
-  size: number;
-  modifiedAtMs: number;
 }
 
 /** Owns the Taildrive request protocol and app-private staging copies. */
 export class TaildriveGateway {
   private context?: common.UIAbilityContext;
   private nextRequestId: number = Date.now();
+  private configurationGeneration: number = 0;
+  private profileToken: string = '';
+  private serverToken: number = 0;
+  private serverURL: string = "";
   private queryQueue: Promise<void> = Promise.resolve();
   private transferQueue: Promise<void> = Promise.resolve();
   private manualTransferQueue: Promise<void> = Promise.resolve();
   private controlQueue: Promise<void> = Promise.resolve();
+  private activeStagedDirs: Set<string> = new Set<string>();
 
   configure(context: common.UIAbilityContext): void {
+    this.configurationGeneration++;
     this.context = context;
+    const settings = ControlServerConfig.load(context.filesDir);
+    this.serverToken = settings.updatedAtMs;
+    this.serverURL = settings.controlURL;
+    this.profileToken = AccountProfiles.token(context.filesDir, settings.controlURL);
+  }
+
+  private ownsServer(): boolean {
+    if (this.context === undefined) return false;
+    const settings = ControlServerConfig.load(this.context.filesDir);
+    try {
+      return settings.controlURL === this.serverURL && settings.updatedAtMs === this.serverToken &&
+        AccountProfiles.token(this.context.filesDir, settings.controlURL) === this.profileToken;
+    } catch (_error) { return false; }
   }
 
   async list(path: string): Promise<TaildriveListResult> {
+    const queryPayload: TaildrivePathPayload = { path: path };
     const text: string = await this.requestThroughVpnExtension('query', 'list',
-      JSON.stringify({ path: path }), TAILDRIVE_QUERY_TIMEOUT_MS);
+      JSON.stringify(queryPayload), TAILDRIVE_QUERY_TIMEOUT_MS);
     return this.parseList(text);
   }
 
   async stat(path: string): Promise<TaildriveStatResult> {
+    const queryPayload: TaildrivePathPayload = { path: path };
     const text: string = await this.requestThroughVpnExtension('query', 'stat',
-      JSON.stringify({ path: path }), TAILDRIVE_QUERY_TIMEOUT_MS);
+      JSON.stringify(queryPayload), TAILDRIVE_QUERY_TIMEOUT_MS);
     return this.parseStat(text);
   }
 
@@ -154,7 +126,11 @@ export class TaildriveGateway {
 
   private async requestThroughVpnExtension(channel: string, operation: string,
     payload: string, timeoutMs: number): Promise<string> {
-    return this.enqueue(channel, () => this.performVpnExtensionRequest(channel, operation, payload, timeoutMs));
+    const generation: number = this.configurationGeneration;
+    return this.enqueue(channel, () => {
+      if (generation !== this.configurationGeneration) throw new Error('Taildrive account changed');
+      return this.performVpnExtensionRequest(channel, operation, payload, timeoutMs);
+    });
   }
 
   private enqueue(channel: string, task: () => Promise<string>): Promise<string> {
@@ -179,87 +155,81 @@ export class TaildriveGateway {
 
   private async performVpnExtensionRequest(channel: string, operation: string,
     payload: string, timeoutMs: number): Promise<string> {
-    if (this.context === undefined) {
+    if (this.context === undefined || !this.ownsServer()) {
       throw new Error('Taildrive VPN Extension channel is not configured.');
     }
-    const requestId: number = ++this.nextRequestId;
-    const requestPath: string = `${this.context.filesDir}/${this.requestFile(channel)}`;
-    const responsePath: string = `${this.context.filesDir}/${this.responseFile(channel)}`;
+    const generation: number = this.configurationGeneration;
+    this.nextRequestId = Math.max(Date.now(), this.nextRequestId + 1);
+    const requestId: number = this.nextRequestId;
+    const requestFileName: string = this.requestFile(channel);
+    const responseFileName: string = this.responseFile(channel);
     const request: TaildriveExtensionRequest = {
       requestId: requestId,
       operation: operation,
       payload: payload
     };
-    this.writeText(responsePath, '');
-    if (!this.writeText(requestPath, JSON.stringify(request))) {
+    const requestJson: string = JSON.stringify(request);
+    const shouldAbort = (): string =>
+      (generation !== this.configurationGeneration || !this.ownsServer()) ? 'Taildrive server changed' : '';
+    const writeFile = (path: string, content: string): boolean => this.writeText(path, content);
+    const rpcOptions: VpnRpcRequestOptions = {
+      filesDir: this.context.filesDir,
+      requestFile: requestFileName,
+      responseFile: responseFileName,
+      requestId: requestId,
+      requestJson: requestJson,
+      timeoutMs: timeoutMs,
+      pollIntervalMs: 100,
+      useMonotonicClock: false,
+      checkVpnHeartbeat: timeoutMs >= 15000,
+      shouldAbort: shouldAbort,
+      writeFile: writeFile
+    };
+    const rpcResult: VpnRpcResult = await VpnExtensionRpcChannel.request(rpcOptions);
+    if (rpcResult.status === 'ok') {
+      return rpcResult.result;
+    }
+    if (rpcResult.status === 'write_failed') {
       throw new Error('Taildrive VPN Extension request failed.');
     }
-    const startedAt: number = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
-      await new Promise<void>((resolve: () => void) => setTimeout(resolve, 100));
-      try {
-        if (!fileIo.accessSync(responsePath)) {
-          continue;
-        }
-        const responseText: string = fileIo.readTextSync(responsePath).trim();
-        if (responseText.length === 0) {
-          continue;
-        }
-        const response: TaildriveExtensionResponse = JSON.parse(responseText) as TaildriveExtensionResponse;
-        if (response.requestId !== requestId) {
-          continue;
-        }
-        this.writeText(responsePath, '');
-        return response.result;
-      } catch (_error) {
-        // The Extension may be replacing the response while it is read. Keep
-        // polling until the matching complete JSON object is visible.
-      }
+    if (rpcResult.status === 'aborted') {
+      throw new Error(rpcResult.reason ?? 'Taildrive server changed');
     }
-    this.writeText(requestPath, '');
+    if (rpcResult.status === 'heartbeat_lost') {
+      throw new Error('Taildrive VPN Extension heartbeat lost (vpn_heartbeat_lost).');
+    }
     throw new Error('Taildrive VPN Extension request timed out.');
   }
 
   private requestFile(channel: string): string {
     if (channel === 'transfer') {
-      return TAILDRIVE_TRANSFER_REQUEST_FILE;
+      return TAILDRIVE_TRANSFER_REQUEST_FILE_NAME;
     }
     if (channel === 'manualTransfer') {
-      return TAILDRIVE_MANUAL_TRANSFER_REQUEST_FILE;
+      return TAILDRIVE_MANUAL_TRANSFER_REQUEST_FILE_NAME;
     }
     if (channel === 'control') {
-      return TAILDRIVE_CONTROL_REQUEST_FILE;
+      return TAILDRIVE_CONTROL_REQUEST_FILE_NAME;
     }
-    return TAILDRIVE_QUERY_REQUEST_FILE;
+    return TAILDRIVE_QUERY_REQUEST_FILE_NAME;
   }
 
   private responseFile(channel: string): string {
     if (channel === 'transfer') {
-      return TAILDRIVE_TRANSFER_RESPONSE_FILE;
+      return TAILDRIVE_TRANSFER_RESPONSE_FILE_NAME;
     }
     if (channel === 'manualTransfer') {
-      return TAILDRIVE_MANUAL_TRANSFER_RESPONSE_FILE;
+      return TAILDRIVE_MANUAL_TRANSFER_RESPONSE_FILE_NAME;
     }
     if (channel === 'control') {
-      return TAILDRIVE_CONTROL_RESPONSE_FILE;
+      return TAILDRIVE_CONTROL_RESPONSE_FILE_NAME;
     }
-    return TAILDRIVE_QUERY_RESPONSE_FILE;
+    return TAILDRIVE_QUERY_RESPONSE_FILE_NAME;
   }
 
   private writeText(path: string, content: string): boolean {
-    let file: fileIo.File | undefined = undefined;
-    try {
-      file = fileIo.openSync(path,
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, content);
-      return true;
-    } catch (_error) {
-      return false;
-    } finally {
-      if (file !== undefined) {
-        try { fileIo.closeSync(file); } catch (_error) {}
-      }
-    }
+    const writeOpts: AtomicWriteOptions = { owner: 'taildrive-ipc', fsync: false };
+    return AtomicFileStore.writeAtomic(path, content, writeOpts);
   }
 
   async stageUpload(uri: string, root: string, requestId: number): Promise<PreparedTaildriveFile> {
@@ -268,6 +238,7 @@ export class TaildriveGateway {
       throw new Error('Taildrive staging request already exists.');
     }
     fileIo.mkdirSync(requestDir, true);
+    this.activeStagedDirs.add(requestDir);
     let source: fileIo.File | undefined = undefined;
     try {
       source = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
@@ -275,10 +246,11 @@ export class TaildriveGateway {
       if (!stat.isFile() || stat.size < 0) {
         throw new Error('Selected item is not a regular file.');
       }
+      const modifiedAtMs: number = Number.isFinite(stat.mtime) && stat.mtime > 0 ? stat.mtime * 1000 : 0;
       const destination: string = `${requestDir}/upload.taildrive`;
       await fileIo.copyFile(source.fd, destination);
-      if (stat.mtime > 0) {
-        fileIo.utimes(destination, stat.mtime);
+      if (modifiedAtMs > 0) {
+        fileIo.utimes(destination, modifiedAtMs);
       }
       const copied: fileIo.Stat = fileIo.lstatSync(destination);
       if (!copied.isFile() || copied.size !== stat.size) {
@@ -289,7 +261,7 @@ export class TaildriveGateway {
         requestDir: requestDir,
         name: source.name,
         size: copied.size,
-        modifiedAtMs: stat.mtime
+        modifiedAtMs: modifiedAtMs
       };
     } catch (_error) {
       this.cleanupStagedDirectory(requestDir);
@@ -317,9 +289,13 @@ export class TaildriveGateway {
       const cutoffMs: number = Date.now() - maxAgeMs;
       fileIo.listFileSync(root).forEach((name: string) => {
         const requestDir: string = `${root}/${name}`;
+        if (this.activeStagedDirs.has(requestDir)) {
+          return;
+        }
         try {
           const stat: fileIo.Stat = fileIo.statSync(requestDir);
-          if (stat.isDirectory() && stat.mtime > 0 && stat.mtime <= cutoffMs) {
+          const modifiedMs: number = stat.mtime * 1000;
+          if (stat.isDirectory() && Number.isFinite(modifiedMs) && modifiedMs > 0 && modifiedMs <= cutoffMs) {
             this.cleanupStagedDirectory(requestDir);
           }
         } catch (_error) {
@@ -380,6 +356,7 @@ export class TaildriveGateway {
   }
 
   private cleanupStagedDirectory(requestDir: string): void {
+    this.activeStagedDirs.delete(requestDir);
     try {
       if (!fileIo.accessSync(requestDir)) {
         return;
@@ -403,9 +380,20 @@ export class TaildriveGateway {
   private parseList(text: string): TaildriveListResult {
     try {
       const value: TaildriveListResult = JSON.parse(text) as TaildriveListResult;
-      if (!Array.isArray(value.entries)) {
+      if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+        typeof value.state !== 'string' || typeof value.path !== 'string' ||
+        (value.reason !== undefined && typeof value.reason !== 'string')) {
+        throw new Error('Invalid Taildrive list');
+      }
+      // Go encodes a nil slice as null on early error paths.
+      if (value.entries === null) {
         value.entries = [];
       }
+      if (!Array.isArray(value.entries) ||
+        !value.entries.every((entry: TaildriveEntry) => this.validEntry(entry))) {
+        throw new Error('Invalid Taildrive entries');
+      }
+      value.reason = value.reason ?? '';
       return value;
     } catch (_error) {
       return { state: 'failed', path: '/', entries: [], reason: 'invalid_result' };
@@ -414,7 +402,14 @@ export class TaildriveGateway {
 
   private parseStat(text: string): TaildriveStatResult {
     try {
-      return JSON.parse(text) as TaildriveStatResult;
+      const value: TaildriveStatResult = JSON.parse(text) as TaildriveStatResult;
+      if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+        typeof value.state !== 'string' || !this.validEntry(value.entry) ||
+        (value.reason !== undefined && typeof value.reason !== 'string')) {
+        throw new Error('Invalid Taildrive stat');
+      }
+      value.reason = value.reason ?? '';
+      return value;
     } catch (_error) {
       return {
         state: 'failed',
@@ -426,7 +421,17 @@ export class TaildriveGateway {
 
   private parseMutation(text: string): TaildriveMutationResult {
     try {
-      return JSON.parse(text) as TaildriveMutationResult;
+      const value: TaildriveMutationResult = JSON.parse(text) as TaildriveMutationResult;
+      if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+        typeof value.state !== 'string' || typeof value.operation !== 'string' ||
+        typeof value.path !== 'string' ||
+        (value.newPath !== undefined && typeof value.newPath !== 'string') ||
+        (value.reason !== undefined && typeof value.reason !== 'string')) {
+        throw new Error('Invalid Taildrive mutation');
+      }
+      value.newPath = value.newPath ?? '';
+      value.reason = value.reason ?? '';
+      return value;
     } catch (_error) {
       return { state: 'failed', operation: '', path: '', newPath: '', reason: 'invalid_result' };
     }
@@ -434,7 +439,17 @@ export class TaildriveGateway {
 
   private parseTransfer(text: string): TaildriveTransferSnapshot {
     try {
-      return JSON.parse(text) as TaildriveTransferSnapshot;
+      const value: TaildriveTransferSnapshot = JSON.parse(text) as TaildriveTransferSnapshot;
+      if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+        typeof value.state !== 'string' || typeof value.reason !== 'string' ||
+        typeof value.direction !== 'string' || typeof value.remotePath !== 'string' ||
+        typeof value.localPath !== 'string' || typeof value.fileName !== 'string' ||
+        !Number.isFinite(value.requestId) || !Number.isFinite(value.bytes) ||
+        !Number.isFinite(value.totalBytes) || !Number.isFinite(value.startedAtMs) ||
+        !Number.isFinite(value.completedAtMs)) {
+        throw new Error('Invalid Taildrive transfer');
+      }
+      return value;
     } catch (_error) {
       return {
         requestId: 0, direction: '', state: 'failed', reason: 'invalid_result',
@@ -442,5 +457,13 @@ export class TaildriveGateway {
         startedAtMs: 0, completedAtMs: 0
       };
     }
+  }
+
+  private validEntry(value: TaildriveEntry): boolean {
+    return value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) &&
+      typeof value.name === 'string' && typeof value.path === 'string' && typeof value.kind === 'string' &&
+      Number.isFinite(value.size) && Number.isFinite(value.modifiedAtMs) &&
+      (value.contentType === undefined || typeof value.contentType === 'string') &&
+      (value.etag === undefined || typeof value.etag === 'string');
   }
 }

@@ -1,5 +1,8 @@
+import { LightAppearance } from './LightAppearance';
+
 @Component
 export struct CompactConnectedHomeHeader {
+  @Prop glowLevel: number = 3;
   @Prop connected: boolean = false;
   @Prop statusTitle: ResourceStr = '';
   @Prop statusDescription: ResourceStr = '';
@@ -92,12 +95,12 @@ export struct CompactConnectedHomeHeader {
             .font({ size: 12 })
             .optionFont({ size: 12 })
             .selectedOptionFont({ size: 12 })
-            .menuBackgroundColor($r('sys.color.comp_background_tertiary'))
-            .menuBackgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
             .constraintSize({ minWidth: 104, maxWidth: 160 })
             .enabled(this.exitNodeEnabled)
             .opacity(this.exitNodeEnabled ? 1 : 0.55)
             .onSelect((index: number) => this.onExitNodeSelect(index))
+            .systemMaterial(LightAppearance.control(this.glowLevel))
+            .menuSystemMaterial(LightAppearance.menu(this.glowLevel))
         } else {
           Text(this.exitNodeLabel)
             .fontSize(13)

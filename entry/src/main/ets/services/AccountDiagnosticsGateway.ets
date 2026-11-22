@@ -2,6 +2,7 @@ import { process as appProcess } from '@kit.ArkTS';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import nativeBridge from 'libtailscale_ohos.so';
+import BuildProfile from 'BuildProfile';
 import { DiagnosticEventStore } from './DiagnosticEventStore';
 import {
   DiagnosticReportInput,
@@ -10,31 +11,15 @@ import {
 } from './DiagnosticReportService';
 import { HomeReadOnlyGateway } from './HomeReadOnlyGateway';
 import { DiagnosticPrivacy } from './DiagnosticPrivacy';
+import { VPN_PROBE_STATUS_FILE_NAME } from '@tailscale/common';
+
+export { RequestGuard as AccountDiagnosticsRequestGuard } from '@tailscale/common';
 
 const WELCOME_ACKNOWLEDGED_FILE_NAME: string = 'welcome-acknowledged';
-const VPN_PROBE_STATUS_FILE_NAME: string = 'vpn-probe-status.txt';
 
 export interface NativeBridgeDiagnosticStatus {
   nativeStatus: string;
   tailscaleVersion: string;
-}
-
-/** Invalidates account/diagnostic completions after re-entry or teardown. */
-export class AccountDiagnosticsRequestGuard {
-  private generation: number = 0;
-
-  begin(): number {
-    this.generation++;
-    return this.generation;
-  }
-
-  invalidate(): void {
-    this.generation++;
-  }
-
-  isCurrent(generation: number): boolean {
-    return generation > 0 && generation === this.generation;
-  }
 }
 
 /** Owns the M8B Account and Diagnostics Native/file boundary. */
@@ -106,6 +91,9 @@ export class AccountDiagnosticsGateway {
   }
 
   stageCrashProbeStatus(context: common.Context, status: string): boolean {
+    if (!BuildProfile.DEBUG) {
+      return false;
+    }
     let file: fileIo.File | undefined = undefined;
     try {
       file = fileIo.openSync(`${context.filesDir}/${VPN_PROBE_STATUS_FILE_NAME}`,
@@ -125,6 +113,9 @@ export class AccountDiagnosticsGateway {
   }
 
   abortProcessAfter(delayMs: number): void {
+    if (!BuildProfile.DEBUG) {
+      return;
+    }
     setTimeout(() => appProcess.abort(), delayMs);
   }
 }

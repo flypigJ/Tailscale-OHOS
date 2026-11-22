@@ -22,7 +22,7 @@ function fixture(t) {
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, text, { mode: 0o755 });
   };
-  for (const name of ['build.sh', 'build-go.sh']) {
+  for (const name of ['build.sh', 'build-go.sh', 'verify-sdk-baseline.cjs']) {
     put(`scripts/${name}`, readFileSync(path.join(scripts, name), 'utf8'));
   }
   const git = (cwd, args) => {
@@ -45,9 +45,15 @@ function fixture(t) {
     put(`${repo}/source.txt`, 'before\n');
   }
   put('native/go_bridge/go.mod', 'module test\nrequire (\n tailscale.com v1.86.5\n)\n');
+  // This suite exercises the shell driver. Input-verifier behavior has its
+  // own tests; the fixture verifier lets us test refusal before compilation.
+  put('scripts/verify-engine-inputs.cjs', `const fs=require('node:fs');const path=require('node:path');
+const root=path.resolve(__dirname,'..');
+if(fs.readFileSync(path.join(root,'third_party/tailscale/source.txt'),'utf8')!=='before\\n')throw new Error('Unreviewed source delta');
+`);
   put('toolchain/bin/go', `#!/usr/bin/env bash
 set -eu
-printf '%s\\n' "$@" > "$GO_BUILD_LOG"
+printf '%s\\n' "$@" "CC=\${CC:-}" "CXX=\${CXX:-}" > "$GO_BUILD_LOG"
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == -o ]]; then
     shift
@@ -59,7 +65,9 @@ while [[ $# -gt 0 ]]; do
 done
 exit 1
 `);
-  mkdirSync(path.join(root, 'DevEco/sdk/default/openharmony/native'), { recursive: true });
+  put('DevEco/sdk/default/openharmony/native/oh-uni-package.json', JSON.stringify({
+    apiVersion: 26, releaseType: 'Release'
+  }));
   const env = { ...process.env,
     DEVECO_STUDIO_HOME: shellPath(path.join(root, 'DevEco')),
     DEVECO_SDK_HOME: shellPath(path.join(root, 'DevEco/sdk')),
@@ -71,33 +79,49 @@ exit 1
   return { root, put, run };
 }
 
-test('fresh and already-patched checkouts build and copy both outputs', t => {
+test('qualified inputs build repeatedly without rewriting sources and copy both outputs', t => {
   const f = fixture(t);
   for (let i = 0; i < 2; i++) {
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(readFileSync(path.join(f.root, 'third_party/tailscale/source.txt'), 'utf8'), 'after\n');
+    assert.equal(readFileSync(path.join(f.root, 'third_party/tailscale/source.txt'), 'utf8'), 'before\n');
     assert.equal(readFileSync(path.join(f.root, 'entry/libs/arm64-v8a/libtailscale_go.h'), 'utf8'), 'header');
-    assert.match(readFileSync(path.join(f.root, 'go-args.txt'), 'utf8'), /longStamp=1\.86\.5.*shortStamp=1\.86\.5/);
+    const goArgs = readFileSync(path.join(f.root, 'go-args.txt'), 'utf8');
+    assert.match(goArgs, /longStamp=1\.104\.5.*shortStamp=1\.104\.5/);
+    assert.match(goArgs, /-extldflags=-Wl,-soname,libtailscale_go\.so,--build-id=sha1,-z,relro,-z,now,-z,noexecstack\b/);
+    assert.match(goArgs, /CC=.*-fstack-protector-strong/);
+    assert.match(goArgs, /CXX=.*-fstack-protector-strong/);
   }
 });
 
-test('unrelated dirty files do not suppress the required Tailscale patch', t => {
+test('the normal build does not mutate unrelated files', t => {
   const f = fixture(t);
   f.put('third_party/tailscale/notes.txt', 'local work\n');
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(readFileSync(path.join(f.root, 'third_party/tailscale/source.txt'), 'utf8'), 'after\n');
+  assert.equal(readFileSync(path.join(f.root, 'third_party/tailscale/source.txt'), 'utf8'), 'before\n');
   assert.equal(readFileSync(path.join(f.root, 'third_party/tailscale/notes.txt'), 'utf8'), 'local work\n');
 });
 
-test('conflicting patch stops before compiling and preserves the source', t => {
+test('input verification failure stops before compiling and preserves the source', t => {
   const f = fixture(t);
   f.put('third_party/tailscale/source.txt', 'conflict\n');
   const result = f.run();
   assert.notEqual(result.status, 0);
   assert.equal(existsSync(path.join(f.root, 'go-args.txt')), false);
   assert.equal(readFileSync(path.join(f.root, 'third_party/tailscale/source.txt'), 'utf8'), 'conflict\n');
+});
+
+test('an older or non-Release native SDK is rejected before patching or compiling', testContext => {
+  const fixtureContext = fixture(testContext);
+  for (const metadata of [{ apiVersion: 23, releaseType: 'Release' }, { apiVersion: 26, releaseType: 'Beta' }]) {
+    fixtureContext.put('DevEco/sdk/default/openharmony/native/oh-uni-package.json', JSON.stringify(metadata));
+    const result = fixtureContext.run();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /requires the HarmonyOS API 26 Release SDK/);
+    assert.equal(existsSync(path.join(fixtureContext.root, 'go-args.txt')), false);
+    assert.equal(readFileSync(path.join(fixtureContext.root, 'third_party/tailscale/source.txt'), 'utf8'), 'before\n');
+  }
 });
 
 test('Release and unknown products are rejected before any build or signing', t => {

@@ -12,6 +12,13 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    "querySchemes": ["moonlight-mesharc"],
+    "metadata": [
+      {
+        "name": "ohos.arkui.UIMaterial.state",
+        "value": "default"
+      }
+    ],
     "abilities": [
       {
         "name": "EntryAbility",
@@ -23,7 +30,9 @@
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "backgroundModes": [
-          "dataTransfer"
+          "dataTransfer",
+          "location",
+          "audioPlayback"
         ],
         "skills": [
           {
@@ -32,6 +41,29 @@
             ],
             "actions": [
               "ohos.want.action.home"
+            ]
+          },
+          {
+            "actions": [
+              "ohos.want.action.sendData",
+              "ohos.want.action.sendMultipleData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "general.image",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "general.video",
+                "maxFileSupported": 100
+              },
+              {
+                "scheme": "file",
+                "utd": "general.file",
+                "maxFileSupported": 100
+              }
             ]
           }
         ]
@@ -50,6 +82,11 @@
     ],
     "requestPermissions": [
       {
+        "name": "ohos.permission.APPROXIMATELY_LOCATION",
+        "reason": "$string:background_running_location_detail",
+        "usedScene": { "abilities": ["EntryAbility"], "when": "always" }
+      },
+      {
         "name": "ohos.permission.INTERNET"
       },
       {
@@ -66,6 +103,9 @@
       },
       {
         "name": "ohos.permission.ACCESS_BIOMETRIC"
+      },
+      {
+        "name": "ohos.permission.PRIVACY_WINDOW"
       }
     ]
   }

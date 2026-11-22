@@ -76,6 +76,9 @@ export class NavigationPreferences {
   }
 
   private static normalizeBottomMargin(value: number): number {
+    if (!Number.isFinite(value)) {
+      return DEFAULT_NAVIGATION_BOTTOM_MARGIN;
+    }
     return Math.min(100, Math.max(0, Math.round(value)));
   }
 

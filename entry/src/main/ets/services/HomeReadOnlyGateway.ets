@@ -18,22 +18,7 @@ export class HomeReadOnlyGateway {
   }
 }
 
-/** Rejects a completed read that belongs to an earlier Home lifecycle. */
-export class HomeReadOnlyRequestGuard {
-  private generation: number = 0;
-
-  begin(): number {
-    return this.generation;
-  }
-
-  invalidate(): void {
-    this.generation++;
-  }
-
-  isCurrent(generation: number): boolean {
-    return generation === this.generation;
-  }
-}
+export { EpochRequestGuard as HomeReadOnlyRequestGuard } from '@tailscale/common';
 
 export interface HomeTrafficStatus {
   session: number;

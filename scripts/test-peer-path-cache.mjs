@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
-import vm from 'node:vm';
 import test from 'node:test';
+import { loadEtsModules } from './helpers/ets-vm-loader.mjs';
 
-const src = readFileSync(new URL('../entry/src/main/ets/services/PeerPathService.ets', import.meta.url), 'utf8');
-const js = stripTypeScriptTypes(src.replace(/^import .*;\r?$/gm, '')
-  .replace('export class PeerPathService', 'class PeerPathService'));
 function fixture() {
   const f = { now: 10000, calls: 0, type: 'derp' };
   const sandbox = { Date: { now: () => f.now } };
-  vm.runInNewContext(js + '\nglobalThis.Service = PeerPathService;', sandbox);
+  loadEtsModules([
+    'services/AtomicFileStore',
+    'services/VpnExtensionRpcChannel',
+    'services/PeerPathService'
+  ], sandbox, { Service: 'PeerPathService' });
   f.service = new sandbox.Service({ filesDir: '/files' });
   f.service.requestThroughVpnExtension = async () => {
     f.calls++; return JSON.stringify({ state: 'reachable', reason: '', pathType: f.type });

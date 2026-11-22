@@ -18,6 +18,11 @@ const NOTIFICATION_UPDATE_INTERVAL_MS: number = 30000;
 const START_RETRY_BASE_MS: number = 30000;
 const START_RETRY_MAX_MS: number = 300000;
 
+interface VpnConnectionIntent {
+  desired: boolean;
+  requestedAtMs: number;
+}
+
 interface VpnRuntimeStatus {
   state: string;
   txBytes: number;
@@ -32,22 +37,47 @@ export class VpnBackgroundTaskManager {
   private suspendListenerRegistered: boolean = false;
   private lifecycleGeneration: number = 0;
   private cancellationRevision: number = 0;
+  private startPending: boolean = false;
+  private earlyCancellations: backgroundTaskManager.ContinuousTaskCancelInfo[] = [];
+  private lastLiveHeartbeatMs: number = 0;
+  private identityRetryAtMs: number = 0;
+  private identityAttempts: number = 0;
   private monitorTimer: number = -1;
   private task?: backgroundTaskManager.ContinuousTaskNotification;
   private stopping: boolean = false;
+  private cleanupPending: boolean = false;
   private suppressedUntilDisconnect: boolean = false;
   private nextStartAtMs: number = 0;
   private retryCount: number = 0;
   private lastLiveAtMs: number = 0;
   private nextNotificationAtMs: number = 0;
+  private lastDiagnosticState: string = '';
+  private lastStatusReadErrorCode: number = 0;
+  private lastFailureSignature: string = '';
+  private lastFailureAtMs: number = 0;
 
   private readonly cancelCallback =
     (info: backgroundTaskManager.ContinuousTaskCancelInfo): void => {
-      if (this.stopping || (this.task?.continuousTaskId !== undefined &&
-        info.id !== this.task.continuousTaskId)) {
+      if (this.stopping) {
         return;
       }
-      // Cancellation can arrive before startBackgroundRunning resolves.
+      if (this.task === undefined || this.task.continuousTaskId === undefined) {
+        if (this.startPending || this.task !== undefined) {
+          // Wait for the returned task ID before a cancellation can affect us.
+          const previous: number = this.earlyCancellations.findIndex(
+            (item: backgroundTaskManager.ContinuousTaskCancelInfo) => item.id === info.id);
+          if (previous >= 0) {
+            this.earlyCancellations[previous] = info;
+          } else if (this.earlyCancellations.length < 32) {
+            this.earlyCancellations.push(info);
+          }
+        }
+        return;
+      }
+      if (this.task.continuousTaskId === undefined || info.id !== this.task.continuousTaskId) {
+        return;
+      }
+      // Only a matching system task ID can cancel this VPN's protection.
       this.cancellationRevision++;
       this.task = undefined;
       const userCancelled: boolean =
@@ -105,16 +135,16 @@ export class VpnBackgroundTaskManager {
     if (this.listenerRegistered) {
       try {
         backgroundTaskManager.off('continuousTaskCancel', this.cancelCallback);
-      } catch (_error) {
-        // Ability destruction also releases this process's listeners.
+      } catch (error) {
+        this.record('background_listener_remove_failed', (error as BusinessError).code ?? -1);
       }
       this.listenerRegistered = false;
     }
     if (this.suspendListenerRegistered) {
       try {
         backgroundTaskManager.off('continuousTaskSuspend', this.suspendCallback);
-      } catch (_error) {
-        // Best-effort teardown.
+      } catch (error) {
+        this.record('background_suspend_listener_remove_failed', (error as BusinessError).code ?? -1);
       }
       this.suspendListenerRegistered = false;
     }
@@ -142,11 +172,19 @@ export class VpnBackgroundTaskManager {
     this.operationInFlight = true;
     const generation: number = this.lifecycleGeneration;
     try {
+      if (this.cleanupPending) {
+        await this.stop(context);
+        if (this.cleanupPending) return;
+      }
       if (!this.monitoring) {
         await this.stop(context);
         return;
       }
       const status: VpnRuntimeStatus = this.readStatus(context.filesDir);
+      if (status.state !== this.lastDiagnosticState) {
+        this.lastDiagnosticState = status.state;
+        this.record('background_runtime_' + status.state, this.lastStatusReadErrorCode);
+      }
       if (status.state === 'disconnected') {
         this.suppressedUntilDisconnect = false;
         this.nextStartAtMs = 0;
@@ -156,11 +194,21 @@ export class VpnBackgroundTaskManager {
         return;
       }
       if (status.state !== 'connected') {
+        if (this.task === undefined && !this.suppressedUntilDisconnect &&
+          Date.now() >= this.nextStartAtMs && this.hasPendingConnectIntent(context.filesDir)) {
+          // Acquire protection before backgrounding so the UI is not frozen
+          // while the VPN extension is still completing initial handshake.
+          this.lastLiveAtMs = Math.max(this.lastLiveAtMs, this.connectionRequestedAtMs(context.filesDir));
+          await this.start(context, generation, true);
+        }
         // Missing telemetry is uncertain. Retain an acquired task briefly,
         // but never acquire a new task based on stale connection evidence.
         if (this.task !== undefined && Date.now() - this.lastLiveAtMs > VPN_STATUS_GRACE_MS) {
           this.record('background_status_timeout');
           await this.stop(context);
+        }
+        if (this.monitoring && generation === this.lifecycleGeneration && this.task !== undefined) {
+          await this.resolvePendingIdentity(context, generation);
         }
         return;
       }
@@ -169,6 +217,7 @@ export class VpnBackgroundTaskManager {
         await this.start(context, generation);
       }
       if (this.monitoring && generation === this.lifecycleGeneration && this.task !== undefined) {
+        if (!await this.resolvePendingIdentity(context, generation)) return;
         await this.updateNotification(context, status);
       }
     } catch (error) {
@@ -183,7 +232,8 @@ export class VpnBackgroundTaskManager {
     }
   }
 
-  private async start(context: common.UIAbilityContext, generation: number): Promise<void> {
+  private async start(context: common.UIAbilityContext, generation: number,
+    allowPendingConnect: boolean = false): Promise<void> {
     const revision: number = this.cancellationRevision;
     const info: wantAgent.WantAgentInfo = {
       wants: [{ bundleName: BUNDLE_NAME, abilityName: ENTRY_ABILITY_NAME }],
@@ -192,20 +242,71 @@ export class VpnBackgroundTaskManager {
       actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
     };
     const agent: WantAgent = await wantAgent.getWantAgent(info);
+    const preState: string = this.readStatus(context.filesDir).state;
+    const preAllowed: boolean = preState === 'connected' ||
+      (allowPendingConnect && preState !== 'disconnected' && this.hasPendingConnectIntent(context.filesDir));
     if (!this.monitoring || generation !== this.lifecycleGeneration ||
-      revision !== this.cancellationRevision || this.readStatus(context.filesDir).state !== 'connected') {
+      revision !== this.cancellationRevision || !preAllowed) {
       return;
     }
     // The numeric overload returns void and cannot supply the system-owned
     // notification ID needed for DATA_TRANSFER live-view updates.
-    const task: backgroundTaskManager.ContinuousTaskNotification =
-      await backgroundTaskManager.startBackgroundRunning(context, ['dataTransfer'], agent);
-    if (revision !== this.cancellationRevision) {
+    this.startPending = true;
+    this.earlyCancellations = [];
+    let task: backgroundTaskManager.ContinuousTaskNotification;
+    try {
+      task = await this.startDataTransferTask(context, agent);
+      if (task.continuousTaskId === undefined) {
+        try {
+          const tasks: backgroundTaskManager.ContinuousTaskInfo[] =
+            await backgroundTaskManager.getAllContinuousTasks(context, true);
+          const match: backgroundTaskManager.ContinuousTaskInfo | undefined = tasks.find(
+            (item: backgroundTaskManager.ContinuousTaskInfo) => item.abilityName === ENTRY_ABILITY_NAME &&
+              item.notificationId === task.notificationId && item.backgroundModes.includes('dataTransfer'));
+          if (match !== undefined) { task.continuousTaskId = match.continuousTaskId; }
+        } catch (error) {
+          this.record('background_task_id_query_failed', (error as BusinessError).code ?? -1);
+        }
+      }
+    } catch (error) {
+      this.earlyCancellations = [];
+      throw error as Error;
+    } finally {
+      this.startPending = false;
+    }
+    if (task.continuousTaskId === undefined) {
+      // No identity means no safe cancellation matching or publication. Keep
+      // ownership, do not create another task, and retry identity separately.
+      this.task = task;
+      const pendingState: string = this.readStatus(context.filesDir).state;
+      if (!this.monitoring || generation !== this.lifecycleGeneration || pendingState === 'disconnected' ||
+        (allowPendingConnect && pendingState !== 'connected' && !this.hasPendingConnectIntent(context.filesDir))) {
+        await this.stop(context);
+        return;
+      }
+      this.identityAttempts = 0;
+      this.identityRetryAtMs = Date.now() + START_RETRY_BASE_MS;
+      this.record('background_task_identity_pending');
       return;
     }
+    const earlyCancellation: backgroundTaskManager.ContinuousTaskCancelInfo | undefined =
+      this.earlyCancellations.find((info: backgroundTaskManager.ContinuousTaskCancelInfo) =>
+        info.id === task.continuousTaskId);
+    this.earlyCancellations = [];
     this.task = task;
-    if (!this.monitoring || generation !== this.lifecycleGeneration ||
-      this.readStatus(context.filesDir).state === 'disconnected') {
+    if (earlyCancellation !== undefined) {
+      // The system already removed this exact task; honor its reason without
+      // publishing or stopping an unrelated task created in the meantime.
+      this.cancelCallback(earlyCancellation);
+      return;
+    }
+    if (revision !== this.cancellationRevision) {
+      await this.stop(context);
+      return;
+    }
+    const postState: string = this.readStatus(context.filesDir).state;
+    if (!this.monitoring || generation !== this.lifecycleGeneration || postState === 'disconnected' ||
+      (allowPendingConnect && postState !== 'connected' && !this.hasPendingConnectIntent(context.filesDir))) {
       await this.stop(context);
       return;
     }
@@ -215,14 +316,70 @@ export class VpnBackgroundTaskManager {
       task.continuousTaskId ?? -1);
   }
 
+  private async resolvePendingIdentity(context: common.UIAbilityContext, generation: number): Promise<boolean> {
+    const task: backgroundTaskManager.ContinuousTaskNotification | undefined = this.task;
+    if (task === undefined) return false;
+    if (task.continuousTaskId !== undefined) return true;
+    if (Date.now() < this.identityRetryAtMs || this.identityAttempts >= 5) return false;
+    this.identityAttempts++;
+    this.identityRetryAtMs = Date.now() + START_RETRY_BASE_MS;
+    try {
+      const tasks: backgroundTaskManager.ContinuousTaskInfo[] =
+        await backgroundTaskManager.getAllContinuousTasks(context, true);
+      if (this.task !== task) return false;
+      if (!this.monitoring || generation !== this.lifecycleGeneration) {
+        await this.stop(context);
+        return false;
+      }
+      const match: backgroundTaskManager.ContinuousTaskInfo | undefined = tasks.find(
+        (item: backgroundTaskManager.ContinuousTaskInfo) => item.abilityName === ENTRY_ABILITY_NAME &&
+          item.notificationId === task.notificationId && item.backgroundModes.includes('dataTransfer'));
+      if (match === undefined) {
+        this.task = undefined;
+        this.earlyCancellations = [];
+        // The task disappeared before its ID became known. Never resurrect a
+        // possibly user-cancelled task merely because telemetry is still live.
+        this.suppressedUntilDisconnect = true;
+        return false;
+      }
+      task.continuousTaskId = match.continuousTaskId;
+      const cancelled: backgroundTaskManager.ContinuousTaskCancelInfo | undefined =
+        this.earlyCancellations.find((info: backgroundTaskManager.ContinuousTaskCancelInfo) => info.id === task.continuousTaskId);
+      this.earlyCancellations = [];
+      if (cancelled !== undefined) { this.cancelCallback(cancelled); return false; }
+      if (this.readStatus(context.filesDir).state === 'disconnected') { await this.stop(context); return false; }
+      return true;
+    } catch (error) {
+      if (this.task === task && (!this.monitoring || generation !== this.lifecycleGeneration)) {
+        await this.stop(context);
+      }
+      this.record('background_task_id_query_failed', (error as BusinessError).code ?? -1);
+      return false;
+    }
+  }
+
   private async stop(context: common.UIAbilityContext): Promise<void> {
     if (this.task === undefined) {
+      this.cleanupPending = false;
       return;
     }
     this.stopping = true;
+    this.cleanupPending = true;
     try {
-      await backgroundTaskManager.stopBackgroundRunning(context);
+      let id: number | undefined = this.task.continuousTaskId;
+      if (id === undefined) {
+        const tasks: backgroundTaskManager.ContinuousTaskInfo[] =
+          await backgroundTaskManager.getAllContinuousTasks(context, true);
+        id = tasks.find((item: backgroundTaskManager.ContinuousTaskInfo) =>
+          item.abilityName === ENTRY_ABILITY_NAME && item.notificationId === this.task?.notificationId
+        )?.continuousTaskId;
+      }
+      if (id !== undefined) await backgroundTaskManager.stopBackgroundRunning(context, id);
       this.task = undefined;
+      this.cleanupPending = false;
+      this.earlyCancellations = [];
+      this.identityAttempts = 0;
+      this.identityRetryAtMs = 0;
       this.record('background_stopped');
     } catch (error) {
       this.record('background_stop_failed', (error as BusinessError).code ?? -1);
@@ -233,7 +390,7 @@ export class VpnBackgroundTaskManager {
 
   private async updateNotification(context: common.UIAbilityContext, status: VpnRuntimeStatus): Promise<void> {
     const task: backgroundTaskManager.ContinuousTaskNotification | undefined = this.task;
-    if (task === undefined || Date.now() < this.nextNotificationAtMs) {
+    if (task === undefined || task.continuousTaskId === undefined || Date.now() < this.nextNotificationAtMs) {
       return;
     }
     this.nextNotificationAtMs = Date.now() + NOTIFICATION_UPDATE_INTERVAL_MS;
@@ -263,27 +420,69 @@ export class VpnBackgroundTaskManager {
 
   private readStatus(filesDir: string): VpnRuntimeStatus {
     const result: VpnRuntimeStatus = { state: 'unknown', txBytes: 0, rxBytes: 0 };
+    this.lastStatusReadErrorCode = 0;
     try {
       const status: string = fileIo.readTextSync(StoragePaths.vpnStatusPath(filesDir));
       const heartbeatMs: number = this.statusNumber(status, 'heartbeatMs');
       const ageMs: number = Date.now() - heartbeatMs;
-      if (heartbeatMs <= 0 || ageMs < 0 || ageMs > VPN_STATUS_FRESH_MS) {
+      if (heartbeatMs <= 0 || ageMs < 0) {
         return result;
       }
       const normalized: string = status.toLowerCase();
       if (normalized.includes('extension destroyed') || normalized.includes('vpn disconnected') ||
         normalized.includes('state=stopped') || normalized.startsWith('stopped') ||
         (normalized.startsWith('failed') && !normalized.includes('status unavailable'))) {
-        result.state = 'disconnected';
-      } else if (normalized.includes('state=running') && normalized.includes('tun=true')) {
+        // Terminal records are written once. They can be stale by the time
+        // the UI resumes, but must belong to this connection, not an old one.
+        const sessionBoundaryMs: number = Math.max(this.lastLiveHeartbeatMs,
+          this.connectionRequestedAtMs(filesDir));
+        if (heartbeatMs >= sessionBoundaryMs) { result.state = 'disconnected'; }
+      } else if (ageMs <= VPN_STATUS_FRESH_MS &&
+        normalized.includes('state=running') && normalized.includes('tun=true')) {
+        this.lastLiveHeartbeatMs = Math.max(this.lastLiveHeartbeatMs, heartbeatMs);
         result.state = 'connected';
         result.txBytes = this.statusNumber(status, 'txBytes');
         result.rxBytes = this.statusNumber(status, 'rxBytes');
       }
-    } catch (_error) {
+    } catch (error) {
       // Atomic file replacement or temporary I/O failure is uncertain state.
+      this.lastStatusReadErrorCode = (error as BusinessError).code ?? -1;
     }
     return result;
+  }
+
+  private startDataTransferTask(context: common.UIAbilityContext,
+    agent: WantAgent): Promise<backgroundTaskManager.ContinuousTaskNotification> {
+    if (typeof backgroundTaskManager.ContinuousTaskRequest === 'function' &&
+      backgroundTaskManager.BackgroundTaskMode !== undefined &&
+      backgroundTaskManager.BackgroundTaskSubmode !== undefined) {
+      const request: backgroundTaskManager.ContinuousTaskRequest = new backgroundTaskManager.ContinuousTaskRequest();
+      request.backgroundTaskModes = [backgroundTaskManager.BackgroundTaskMode.MODE_DATA_TRANSFER];
+      request.backgroundTaskSubmodes = [backgroundTaskManager.BackgroundTaskSubmode.SUBMODE_LIVE_VIEW_NOTIFICATION];
+      request.wantAgent = agent;
+      request.combinedTaskNotification = false;
+      return backgroundTaskManager.startBackgroundRunning(context, request);
+    }
+    return backgroundTaskManager.startBackgroundRunning(context, ['dataTransfer'], agent);
+  }
+
+  private hasPendingConnectIntent(filesDir: string): boolean {
+    const requestedAtMs: number = this.connectionRequestedAtMs(filesDir);
+    const ageMs: number = Date.now() - requestedAtMs;
+    return requestedAtMs > 0 && ageMs >= 0 && ageMs <= VPN_STATUS_GRACE_MS;
+  }
+
+  private connectionRequestedAtMs(filesDir: string): number {
+    try {
+      const intent: VpnConnectionIntent = JSON.parse(
+        fileIo.readTextSync(`${filesDir}/vpn-connect-intent.json`)) as VpnConnectionIntent;
+      return intent.desired === true && Number.isSafeInteger(intent.requestedAtMs) &&
+        intent.requestedAtMs > 0 && intent.requestedAtMs <= Date.now() ? intent.requestedAtMs : 0;
+    } catch (_error) {
+      // Older installations and a temporary IPC replacement still retain the
+      // last confirmed live heartbeat as the lower session boundary.
+      return 0;
+    }
   }
 
   private statusNumber(status: string, field: string): number {
@@ -309,9 +508,25 @@ export class VpnBackgroundTaskManager {
   }
 
   private record(event: string, code: number = 0): void {
-    hilog.info(DOMAIN, TAG, '%{public}s code=%{public}d', event, code);
+    const failure: boolean = event.includes('failed') || event.includes('timeout');
+    const signature: string = event + ':' + code;
+    if (failure && signature === this.lastFailureSignature && Date.now() - this.lastFailureAtMs < 30000) {
+      return;
+    }
+    if (failure) {
+      this.lastFailureSignature = signature;
+      this.lastFailureAtMs = Date.now();
+      hilog.error(DOMAIN, TAG, '%{public}s code=%{public}d', event, code);
+    } else {
+      this.lastFailureSignature = '';
+      hilog.info(DOMAIN, TAG, '%{public}s code=%{public}d', event, code);
+    }
     if (this.context !== undefined) {
-      DiagnosticEventStore.record(this.context.filesDir, 'ui', event, 'background', code);
+      DiagnosticEventStore.recordDetailed(this.context.filesDir, 'ui', event, 'background', code, {
+        lifecycleGeneration: this.lifecycleGeneration, cancellationRevision: this.cancellationRevision,
+        retryCount: this.retryCount, retryDelayMs: Math.max(0, this.nextStartAtMs - Date.now()),
+        taskActive: this.task !== undefined, userSuppressed: this.suppressedUntilDisconnect
+      });
     }
   }
 }

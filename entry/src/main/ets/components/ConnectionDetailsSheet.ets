@@ -1,3 +1,5 @@
+import { UiTokens } from './UiTokens';
+import { LightAppearance } from './LightAppearance';
 @Component
 export struct ConnectionDetailsSheet {
   @Prop tailscaleAddress: string = '';
@@ -24,7 +26,7 @@ export struct ConnectionDetailsSheet {
   @Builder
   private SectionTitle(title: ResourceStr): void {
     Text(title)
-      .fontSize(15)
+      .fontSize(UiTokens.SECTION_TITLE_SIZE)
       .fontWeight(FontWeight.Medium)
       .fontColor($r('sys.color.font_primary'))
       .width('100%')
@@ -36,10 +38,10 @@ export struct ConnectionDetailsSheet {
     action: () => void = () => {}): void {
     Row({ space: 12 }) {
       Text(label)
-        .fontSize(13)
+        .fontSize(UiTokens.BODY_SIZE)
         .fontColor($r('sys.color.font_secondary'))
       Text(value)
-        .fontSize(13)
+        .fontSize(UiTokens.BODY_SIZE)
         .fontColor($r('sys.color.font_primary'))
         .layoutWeight(1)
         .maxLines(1)
@@ -47,13 +49,13 @@ export struct ConnectionDetailsSheet {
         .textAlign(TextAlign.End)
       if (actionable) {
         SymbolGlyph($r('sys.symbol.square_on_square_fill'))
-          .fontSize(16)
+          .fontSize(UiTokens.ICON_CHEVRON)
           .fontColor([$r('sys.color.icon_secondary')])
       }
     }
     .width('100%')
     .constraintSize({ minHeight: 48 })
-    .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+    .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING, top: 8, bottom: 8 })
     .onClick(() => {
       if (actionable) {
         action();
@@ -63,7 +65,7 @@ export struct ConnectionDetailsSheet {
 
   build() {
     Scroll() {
-      Column({ space: 12 }) {
+      Column({ space: UiTokens.GROUP_GAP }) {
         this.SectionTitle($r('app.string.network_sheet_network_title'))
         Column({ space: 0 }) {
           if (this.tailscaleAddress.length > 0) {
@@ -71,18 +73,18 @@ export struct ConnectionDetailsSheet {
               true, this.onCopyAddress)
             Divider()
               .color($r('sys.color.comp_divider'))
-              .margin({ left: 14, right: 14 })
+              .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
           }
           this.DetailRow($r('app.string.exit_node_title'), this.exitNodeLabel())
           Divider()
             .color($r('sys.color.comp_divider'))
-            .margin({ left: 14, right: 14 })
+            .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
           this.DetailRow($r('app.string.network_sheet_lan_access'), this.allowLanAccess ?
             $r('app.string.network_sheet_on') : $r('app.string.network_sheet_off'))
         }
         .width('100%')
         .backgroundColor($r('sys.color.comp_background_primary'))
-        .borderRadius(16)
+        .borderRadius(UiTokens.CARD_RADIUS)
         .clip(true)
 
         this.SectionTitle($r('app.string.network_sheet_traffic_title'))
@@ -90,18 +92,18 @@ export struct ConnectionDetailsSheet {
           this.DetailRow($r('app.string.network_sheet_duration'), this.duration)
           Divider()
             .color($r('sys.color.comp_divider'))
-            .margin({ left: 14, right: 14 })
+            .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
           this.DetailRow($r('app.string.network_sheet_current_rate'),
             `\u2193 ${this.downloadRate}   \u2191 ${this.uploadRate}`)
           Divider()
             .color($r('sys.color.comp_divider'))
-            .margin({ left: 14, right: 14 })
+            .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
           this.DetailRow($r('app.string.network_sheet_session_traffic'),
             `\u2193 ${this.downloadTotal}   \u2191 ${this.uploadTotal}`)
         }
         .width('100%')
         .backgroundColor($r('sys.color.comp_background_primary'))
-        .borderRadius(16)
+        .borderRadius(UiTokens.CARD_RADIUS)
         .clip(true)
 
         Blank()
@@ -110,7 +112,7 @@ export struct ConnectionDetailsSheet {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: 16, right: 16, top: 8, bottom: 24 })
+      .padding({ left: UiTokens.PAGE_PADDING, right: UiTokens.PAGE_PADDING, top: 8, bottom: 24 })
     }
     .width('100%')
     .height('100%')
@@ -121,6 +123,6 @@ export struct ConnectionDetailsSheet {
       scrollBackward: NestedScrollMode.SELF_FIRST
     })
     .align(Alignment.TopStart)
-    .backgroundColor($r('sys.color.background_secondary'))
+    .backgroundColor(LightAppearance.supports() ? Color.Transparent : $r('sys.color.background_secondary'))
   }
 }

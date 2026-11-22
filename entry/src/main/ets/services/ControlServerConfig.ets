@@ -1,4 +1,5 @@
 import { fileIo } from '@kit.CoreFileKit';
+import { AtomicFileStore } from './AtomicFileStore';
 
 export const DEFAULT_CONTROL_SERVER_URL: string = 'https://controlplane.tailscale.com';
 
@@ -75,31 +76,10 @@ export class ControlServerConfig {
       updatedAtMs: Date.now()
     };
     const path: string = ControlServerConfig.path(filesDir);
-    const temporaryPath: string = `${path}.${settings.updatedAtMs}.tmp`;
-    let file: fileIo.File | undefined = undefined;
-    try {
-      file = fileIo.openSync(temporaryPath,
-        fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, JSON.stringify(settings));
-      fileIo.closeSync(file);
-      file = undefined;
-      fileIo.renameSync(temporaryPath, path);
-      return settings;
-    } catch (_error) {
-      if (file !== undefined) {
-        try {
-          fileIo.closeSync(file);
-        } catch (_closeError) {
-        }
-      }
-      try {
-        if (fileIo.accessSync(temporaryPath)) {
-          fileIo.unlinkSync(temporaryPath);
-        }
-      } catch (_cleanupError) {
-      }
-      return undefined;
-    }
+    return AtomicFileStore.writeAtomic(path, JSON.stringify(settings), {
+      owner: 'control',
+      fsync: true
+    }) ? settings : undefined;
   }
 
   static reset(filesDir: string): boolean {

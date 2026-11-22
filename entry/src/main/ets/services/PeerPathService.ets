@@ -1,18 +1,16 @@
 import { common } from '@kit.AbilityKit';
-import { fileIo } from '@kit.CoreFileKit';
-import { ConnectionPathType, PeerPathResult } from './StreamingModels';
+import {
+  ConnectionPathType,
+  PEER_CONNECTIVITY_REQUEST_FILE_NAME,
+  PEER_CONNECTIVITY_RESPONSE_FILE_NAME,
+  PeerPathResult
+} from '@tailscale/common';
+import { PeerProbeCoordinator, PeerProbeRunOptions, PeerRpcRequestPayload, VpnExtensionRpcChannel, VpnRpcRequestOptions, VpnRpcResult } from './VpnExtensionRpcChannel';
 
-const REQUEST_FILE: string = 'peer-connectivity-request.json';
-const RESPONSE_FILE: string = 'peer-connectivity-response.json';
 const CACHE_TTL_MS: number = 25000;
 // Native discovery has a shared ten-second budget including status lookup.
 const TIMEOUT_MS: number = 12000;
 const TRANSIENT_CACHE_TTL_MS: number = 3000;
-
-interface PeerPathResponse {
-  requestId: number;
-  result: string;
-}
 
 interface NativePeerPathResult {
   state: string;
@@ -23,95 +21,62 @@ interface NativePeerPathResult {
 }
 
 export class PeerPathService {
-  private readonly cache: Map<string, PeerPathResult> = new Map();
-  private readonly requestIds: Map<string, number> = new Map();
+  private readonly cache: Map<string, PeerPathResult> = new Map<string, PeerPathResult>();
+  private readonly coordinator: PeerProbeCoordinator<PeerPathResult> = new PeerProbeCoordinator<PeerPathResult>(this.cache);
   private readonly context: common.UIAbilityContext;
-  private queue: Promise<void> = Promise.resolve();
-  private lastExtensionRequestId: number = 0;
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
   }
 
   clearCache(peerKey?: string): void {
-    if (peerKey === undefined) {
-      this.cache.clear();
-      return;
-    }
-    this.cache.delete(peerKey);
+    this.coordinator.clearCache(peerKey);
   }
 
   cancel(peerKey: string): void {
-    this.requestIds.set(peerKey, (this.requestIds.get(peerKey) ?? 0) + 1);
+    this.coordinator.cancel(peerKey);
   }
 
   async probe(peerKey: string, vpnConnected: boolean, force: boolean = false): Promise<PeerPathResult> {
-    return this.enqueue(() => this.probeInternal(peerKey, vpnConnected, force));
-  }
-
-  private async probeInternal(peerKey: string, vpnConnected: boolean, force: boolean): Promise<PeerPathResult> {
-    const cached: PeerPathResult | undefined = this.cache.get(peerKey);
-    if (!vpnConnected) {
-      this.cache.delete(peerKey);
-      return { type: 'unknown', checkedAt: Date.now(), errorMessage: 'mesh_disconnected' };
-    }
-    if (!force && cached !== undefined && Date.now() - cached.checkedAt <
-      (cached.type === 'direct' ? CACHE_TTL_MS : TRANSIENT_CACHE_TTL_MS)) {
-      return cached;
-    }
-    const requestGeneration: number = (this.requestIds.get(peerKey) ?? 0) + 1;
-    this.requestIds.set(peerKey, requestGeneration);
-    const resultText: string = await this.requestThroughVpnExtension(
-      peerKey, this.nextExtensionRequestId());
-    if (this.requestIds.get(peerKey) !== requestGeneration) {
-      return { type: 'unknown', checkedAt: Date.now(), errorMessage: 'cancelled' };
-    }
-    const parsed: PeerPathResult = this.parse(resultText);
-    this.cache.set(peerKey, parsed);
-    return parsed;
-  }
-
-  private enqueue(task: () => Promise<PeerPathResult>): Promise<PeerPathResult> {
-    let release: () => void = () => {};
-    const previous: Promise<void> = this.queue;
-    this.queue = new Promise<void>((resolve: () => void) => { release = resolve; });
-    return previous.then(task).finally(() => release());
-  }
-
-  private nextExtensionRequestId(): number {
-    this.lastExtensionRequestId = Math.max(Date.now(), this.lastExtensionRequestId + 1);
-    return this.lastExtensionRequestId;
+    const runOptions: PeerProbeRunOptions<PeerPathResult> = {
+      checkedAt: (cached: PeerPathResult): number => cached.checkedAt,
+      cacheTtl: (cached: PeerPathResult): number =>
+        cached.type === 'direct' ? CACHE_TTL_MS : TRANSIENT_CACHE_TTL_MS,
+      cancelledResult: (): PeerPathResult => {
+        const result: PeerPathResult = { type: 'unknown', checkedAt: Date.now(), errorMessage: 'cancelled' };
+        return result;
+      },
+      disconnectedResult: (): PeerPathResult => {
+        const result: PeerPathResult = { type: 'unknown', checkedAt: Date.now(), errorMessage: 'mesh_disconnected' };
+        return result;
+      },
+      performRpc: (targetPeerKey: string, requestId: number): Promise<string> =>
+        this.requestThroughVpnExtension(targetPeerKey, requestId),
+      parseResult: (resultText: string): PeerPathResult => this.parse(resultText)
+    };
+    return this.coordinator.runProbe(peerKey, vpnConnected, force, runOptions);
   }
 
   private async requestThroughVpnExtension(peerKey: string, requestId: number): Promise<string> {
-    const responsePath: string = `${this.context.filesDir}/${RESPONSE_FILE}`;
-    const requestPath: string = `${this.context.filesDir}/${REQUEST_FILE}`;
-    try {
-      this.writeText(responsePath, '');
-      if (!this.writeText(requestPath, JSON.stringify({ requestId: requestId, peerKey: peerKey }))) {
-        return '{"state":"failed","reason":"extension_error"}';
-      }
-      const startedAt: number = Date.now();
-      while (Date.now() - startedAt < TIMEOUT_MS) {
-        await new Promise<void>((resolve: () => void) => setTimeout(resolve, 150));
-        if (!fileIo.accessSync(responsePath)) {
-          continue;
-        }
-        const responseText: string = fileIo.readTextSync(responsePath).trim();
-        if (responseText.length === 0) {
-          continue;
-        }
-        const response: PeerPathResponse = JSON.parse(responseText) as PeerPathResponse;
-        if (response.requestId !== requestId) {
-          continue;
-        }
-        this.writeText(responsePath, '');
-        return response.result;
-      }
-      return '{"state":"failed","reason":"timeout"}';
-    } catch (_error) {
-      return '{"state":"failed","reason":"extension_error"}';
+    const payload: PeerRpcRequestPayload = { requestId: requestId, peerKey: peerKey };
+    const rpcOptions: VpnRpcRequestOptions = {
+      filesDir: this.context.filesDir,
+      requestFile: PEER_CONNECTIVITY_REQUEST_FILE_NAME,
+      responseFile: PEER_CONNECTIVITY_RESPONSE_FILE_NAME,
+      requestId: requestId,
+      requestJson: JSON.stringify(payload),
+      timeoutMs: TIMEOUT_MS,
+      pollIntervalMs: 150,
+      useMonotonicClock: true
+    };
+    const rpc: VpnRpcResult = await VpnExtensionRpcChannel.request(rpcOptions);
+    if (rpc.status === 'ok') {
+      return rpc.result;
     }
+    if (rpc.status === 'timeout') {
+      return '{"state":"failed","reason":"timeout"}';
+    }
+    return '{"state":"failed","reason":"extension_error"}';
   }
 
   private parse(text: string): PeerPathResult {
@@ -143,20 +108,5 @@ export class PeerPathService {
       return value;
     }
     return 'unknown';
-  }
-
-  private writeText(path: string, content: string): boolean {
-    let file: fileIo.File | undefined = undefined;
-    try {
-      file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, content);
-      return true;
-    } catch (_error) {
-      return false;
-    } finally {
-      if (file !== undefined) {
-        try { fileIo.closeSync(file); } catch (_error) {}
-      }
-    }
   }
 }

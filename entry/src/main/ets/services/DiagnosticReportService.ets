@@ -1,3 +1,6 @@
+import { PathDiagnosticService } from './PathDiagnosticService';
+import { CrashDiagnosticService } from './CrashDiagnosticService';
+import { RuntimeDiagnosticService } from './RuntimeDiagnosticService';
 import { common } from '@kit.AbilityKit';
 import { uniformTypeDescriptor } from '@kit.ArkData';
 import { deviceInfo, zlib } from '@kit.BasicServicesKit';
@@ -12,6 +15,7 @@ const VPN_CONFIG_SUMMARY_FILE_NAME: string = 'vpn-config-summary.txt';
 
 export interface DiagnosticReportInput {
   appVersion: string;
+  appVersionCode?: number;
   tailscaleVersion: string;
   nativeStatus: string;
   engineStatus: string;
@@ -63,6 +67,22 @@ export interface DiagnosticReportResult {
   path: string;
   fileName: string;
   size: number;
+  feedbackContext?: DiagnosticFeedbackContext;
+}
+
+// A small allowlist from the exact redacted snapshot used to generate the ZIP.
+// This is transient handoff metadata, not a new persisted report format.
+export interface DiagnosticFeedbackContext {
+  appVersion: string;
+  appVersionCode: number;
+  tailscaleVersion: string;
+  model: string;
+  system: string;
+  sdkApiVersion: number;
+  generatedAt: string;
+  signedIn: boolean;
+  exitNodeSelected: boolean;
+  acceptSubnetRoutes: boolean;
 }
 
 interface DiagnosticCheck {
@@ -83,6 +103,7 @@ interface DiagnosticDevice {
 
 interface DiagnosticApplication {
   appVersion: string;
+  appVersionCode: number;
   tailscaleVersion: string;
 }
 
@@ -114,6 +135,8 @@ interface DiagnosticVpnConfig {
   hasTailnetIPv6: boolean;
   hasDefaultIPv4: boolean;
   hasDefaultIPv6: boolean;
+  dnsCount: number;
+  searchDomainCount: number;
   ipv4Accepted: boolean;
   ipv6Accepted: boolean;
   mtu: number;
@@ -211,6 +234,10 @@ interface DiagnosticReport {
 }
 
 export class DiagnosticReportService {
+  static cleanupCache(cacheDir: string): void {
+    DiagnosticReportService.cleanupExpiredReports(cacheDir);
+  }
+
   static async generate(context: common.UIAbilityContext,
     input: DiagnosticReportInput): Promise<DiagnosticReportResult> {
     DiagnosticReportService.cleanupExpiredReports(context.cacheDir);
@@ -221,6 +248,8 @@ export class DiagnosticReportService {
     const workDir: string = `${context.cacheDir}/diagnostic-report-${stamp}`;
     const summaryPath: string = `${workDir}/summary.txt`;
     const jsonPath: string = `${workDir}/report.json`;
+    const pathTrace: string = `${workDir}/path-diagnostic.json`;
+    const crashTrace: string = `${workDir}/crash-diagnostic.json`;
     try {
       fileIo.mkdirSync(workDir, true);
       const report: DiagnosticReport = DiagnosticReportService.buildReport(context.filesDir, generatedAt, input);
@@ -232,17 +261,32 @@ export class DiagnosticReportService {
       }
       DiagnosticReportService.writeTextFile(summaryPath, summary);
       DiagnosticReportService.writeTextFile(jsonPath, reportJson);
-      await zlib.compressFiles([summaryPath, jsonPath], zipPath, {
+      DiagnosticReportService.writeTextFile(pathTrace, PathDiagnosticService.exportSnapshot(context.filesDir));
+      DiagnosticReportService.writeTextFile(crashTrace, CrashDiagnosticService.exportSnapshot(context.filesDir));
+      const runtimeFiles: string[] = RuntimeDiagnosticService.exportFiles(context.filesDir, workDir);
+      await zlib.compressFiles([summaryPath, jsonPath, pathTrace, crashTrace, ...runtimeFiles], zipPath, {
         level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION
       });
-      DiagnosticReportService.removeWorkDirectory(workDir, summaryPath, jsonPath);
+      DiagnosticReportService.removeWorkDirectory(workDir, summaryPath, jsonPath, pathTrace, crashTrace);
       return {
         path: zipPath,
         fileName: fileName,
-        size: fileIo.statSync(zipPath).size
+        size: fileIo.statSync(zipPath).size,
+        feedbackContext: {
+          appVersion: report.application.appVersion,
+          appVersionCode: report.application.appVersionCode,
+          tailscaleVersion: report.application.tailscaleVersion,
+          model: report.device.model,
+          system: `${report.device.osFullName} / ${report.device.displayVersion}`,
+          sdkApiVersion: report.device.sdkApiVersion,
+          generatedAt: report.generatedAt,
+          signedIn: report.network.signedIn,
+          exitNodeSelected: report.network.exitNodeSelected,
+          acceptSubnetRoutes: report.network.acceptSubnetRoutes
+        }
       };
     } catch (error) {
-      DiagnosticReportService.removeWorkDirectory(workDir, summaryPath, jsonPath);
+      DiagnosticReportService.removeWorkDirectory(workDir, summaryPath, jsonPath, pathTrace, crashTrace);
       try {
         if (fileIo.accessSync(zipPath)) {
           fileIo.unlinkSync(zipPath);
@@ -285,6 +329,7 @@ export class DiagnosticReportService {
       },
       application: {
         appVersion: DiagnosticReportService.safeVersion(input.appVersion),
+        appVersionCode: DiagnosticReportService.nonNegative(input.appVersionCode ?? 0),
         tailscaleVersion: DiagnosticReportService.safeVersion(input.tailscaleVersion)
       },
       network: {
@@ -415,6 +460,8 @@ export class DiagnosticReportService {
       hasTailnetIPv6: false,
       hasDefaultIPv4: false,
       hasDefaultIPv6: false,
+      dnsCount: 0,
+      searchDomainCount: 0,
       ipv4Accepted: false,
       ipv6Accepted: false,
       mtu: 0
@@ -438,6 +485,8 @@ export class DiagnosticReportService {
         hasTailnetIPv6: DiagnosticReportService.statusBoolean(summary, 'hasTailnetIPv6'),
         hasDefaultIPv4: DiagnosticReportService.statusBoolean(summary, 'hasDefaultIPv4'),
         hasDefaultIPv6: DiagnosticReportService.statusBoolean(summary, 'hasDefaultIPv6'),
+        dnsCount: DiagnosticReportService.statusNumber(summary, 'dnsCount'),
+        searchDomainCount: DiagnosticReportService.statusNumber(summary, 'searchDomainCount'),
         ipv4Accepted: DiagnosticReportService.statusBoolean(summary, 'ipv4Accepted'),
         ipv6Accepted: DiagnosticReportService.statusBoolean(summary, 'ipv6Accepted'),
         mtu: DiagnosticReportService.statusNumber(summary, 'mtu')
@@ -477,6 +526,12 @@ export class DiagnosticReportService {
   }
 
   private static buildSummary(report: DiagnosticReport): string {
+    const lifecycleEvents: DiagnosticEvent[] = report.events.filter((event: DiagnosticEvent) =>
+      event.event.startsWith('vpn_') || event.event.startsWith('background_') || event.event.startsWith('backend_'));
+    const recentEvents: DiagnosticEvent[] = (lifecycleEvents.length > 0 ? lifecycleEvents : report.events).slice(-50);
+    while (recentEvents.length > 0 && recentEvents[0].phase.startsWith('context.')) {
+      recentEvents.shift();
+    }
     const lines: string[] = [
       'Tailscale OHOS Diagnostic Report',
       `Generated: ${report.generatedAt}`,
@@ -492,6 +547,7 @@ export class DiagnosticReportService {
       '',
       'Application',
       `App version: ${report.application.appVersion}`,
+      `App version code: ${report.application.appVersionCode || 'unknown'}`,
       `Tailscale core: ${report.application.tailscaleVersion}`,
       '',
       'Connection summary',
@@ -513,6 +569,8 @@ export class DiagnosticReportService {
       `Tailnet IPv6 route submitted: ${report.vpnConfig.hasTailnetIPv6}`,
       `Default IPv4 route submitted: ${report.vpnConfig.hasDefaultIPv4}`,
       `Default IPv6 route submitted: ${report.vpnConfig.hasDefaultIPv6}`,
+      `DNS servers submitted: ${report.vpnConfig.dnsCount}`,
+      `DNS search domains submitted: ${report.vpnConfig.searchDomainCount}`,
       `IPv4 accepted: ${report.vpnConfig.ipv4Accepted}`,
       `IPv6 accepted: ${report.vpnConfig.ipv6Accepted}`,
       `MTU: ${report.vpnConfig.mtu}`,
@@ -527,6 +585,17 @@ export class DiagnosticReportService {
       `Read errors: ${report.tunCounters.readErrors}`,
       `Write errors: ${report.tunCounters.writeErrors}`,
       `Structured events: ${report.events.length}`,
+      '',
+      'Recent lifecycle events (UTC; context.* entries contain numeric values, not error codes)',
+      'VPN, background and backend events take priority here; all retained events remain in report.json.',
+      'Runtime state: 0=unknown, 1=running, 2=stopped, 3=starting, 4=authentication required',
+      'vpn_backend_state_changed uses the runtime-state value, not an error code.',
+      'System lifecycle teardown is observed lifecycle, not proof of an OS process kill.',
+      'Network stage: 1=default network, 2=properties, 3=capabilities, 4=sample validation,',
+      '5=native rebind, 6=monitor registration, 7=monitor teardown',
+      ...recentEvents.map((event: DiagnosticEvent) =>
+        new Date(event.timestampMs).toISOString() + ' [' + event.source + '] ' + event.event + ' ' +
+        event.phase + (event.phase.startsWith('context.') ? ' value=' : ' code=') + event.code),
       '',
       'Feature diagnostics selection',
       `Quick Transfer and HosPlayer: ${report.features.selection.quickTransferHosPlayer}`,
@@ -573,6 +642,13 @@ export class DiagnosticReportService {
       `Home layout: ${report.features.appearance.homeLayoutMode}`,
       `Visible navigation tabs: ${report.features.appearance.visibleNavigationTabCount}`,
       `Navigation bottom margin: ${report.features.appearance.navigationBottomMargin}`,
+      '',
+      'Path diagnostics: see path-diagnostic.json (opt-in; unavailable means not captured).',
+      'Runtime recorder (v2): automatic, local rolling 16 MiB total (five-minute UI/VPN heartbeat; manual local export only; network upload removed).',
+      'See runtime-ui-*.ndjson and runtime-vpn-*.ndjson. Relaunch after an exit to collect system termination events.',
+      'A missing destruction callback or heartbeat gap alone cannot prove a system kill.',
+      'Crash diagnostics: see crash-diagnostic.json (temporary opt-in; strict code frames only).',
+      'UDP write success does not establish kernel egress or remote receipt.',
       '',
       'Privacy',
       'This archive excludes raw HiLog, raw backend snapshots, authentication data, account identity,',
@@ -635,7 +711,9 @@ export class DiagnosticReportService {
     try {
       file = fileIo.openSync(path,
         fileIo.OpenMode.CREATE | fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-      fileIo.writeSync(file.fd, content);
+      if (fileIo.writeSync(file.fd, content) !== DiagnosticPrivacy.utf8ByteLength(content)) {
+        throw new Error('Diagnostic report short write');
+      }
     } finally {
       if (file !== undefined) {
         fileIo.closeSync(file);
@@ -644,24 +722,55 @@ export class DiagnosticReportService {
   }
 
   private static cleanupExpiredReports(cacheDir: string): void {
-    try {
-      fileIo.listFileSync(cacheDir).forEach((name: string) => {
-        if (!name.startsWith(REPORT_PREFIX) || !name.endsWith('.zip')) {
-          return;
-        }
-        const path: string = `${cacheDir}/${name}`;
-        const ageMs: number = Date.now() - fileIo.statSync(path).mtime;
-        if (ageMs > REPORT_RETENTION_MS) {
+    let names: string[] = [];
+    try { names = fileIo.listFileSync(cacheDir); } catch (_error) { return; }
+    for (const name of names) {
+      const archive: boolean = name.startsWith(REPORT_PREFIX) && name.endsWith('.zip');
+      const workDirectory: boolean = /^diagnostic-report-\d{8}-\d{6}-\d{3}$/.test(name);
+      if (!archive && !workDirectory) continue;
+      const path: string = `${cacheDir}/${name}`;
+      try {
+        const stat: fileIo.Stat = fileIo.lstatSync(path);
+        if (stat.isSymbolicLink()) continue;
+        // SDK Stat.mtime is seconds; preserve unknown or future timestamps.
+        const modifiedMs: number = stat.mtime * 1000;
+        const ageMs: number = Date.now() - modifiedMs;
+        if (!Number.isFinite(modifiedMs) || modifiedMs <= 0 || ageMs <= REPORT_RETENTION_MS) continue;
+        if (archive && stat.isFile()) {
           fileIo.unlinkSync(path);
+        } else if (workDirectory && stat.isDirectory()) {
+          DiagnosticReportService.cleanupOrphanWorkDirectory(path);
         }
-      });
-    } catch (_error) {
-      // Cache retention is best-effort and does not block a new report.
+      } catch (_error) {
+        // A stale or inaccessible item must not prevent cleanup of later items.
+      }
     }
   }
 
-  private static removeWorkDirectory(workDir: string, summaryPath: string, jsonPath: string): void {
+  private static cleanupOrphanWorkDirectory(workDir: string): void {
+    for (const name of ['summary.txt', 'report.json', 'path-diagnostic.json', 'crash-diagnostic.json',
+      ...RuntimeDiagnosticService.fileNames()]) {
+      const path: string = `${workDir}/${name}`;
+      try {
+        const stat: fileIo.Stat = fileIo.lstatSync(path);
+        if (!stat.isSymbolicLink() && stat.isFile()) fileIo.unlinkSync(path);
+      } catch (_error) {
+        // Retry known files on a later cleanup; never follow links or unknown entries.
+      }
+    }
+    // rmdirSync is recursive on HarmonyOS. Keep the directory shell rather than
+    // risk removing unknown or concurrently created contents.
+  }
+
+  private static removeWorkDirectory(workDir: string, summaryPath: string, jsonPath: string,
+    pathTrace?: string, crashTrace?: string): void {
     try {
+      for (const name of RuntimeDiagnosticService.fileNames()) {
+        const path: string = `${workDir}/${name}`;
+        if (fileIo.accessSync(path)) fileIo.unlinkSync(path);
+      }
+      if (pathTrace !== undefined && fileIo.accessSync(pathTrace)) { fileIo.unlinkSync(pathTrace); }
+      if (crashTrace !== undefined && fileIo.accessSync(crashTrace)) { fileIo.unlinkSync(crashTrace); }
       if (fileIo.accessSync(summaryPath)) {
         fileIo.unlinkSync(summaryPath);
       }

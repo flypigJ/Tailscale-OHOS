@@ -1,5 +1,123 @@
 {
   "string": [
+    { "name": "peer_copy_dns", "value": "Copy MagicDNS name" },
+    { "name": "peer_dns_copied", "value": "MagicDNS name copied" },
+    {
+      "name": "setting_tailnet_dns",
+      "value": "Use MagicDNS"
+    },
+    {
+      "name": "setting_tailnet_dns_description",
+      "value": "Resolve tailnet device names and apply your network DNS rules. Change while disconnected; applies on the next connection."
+    },
+    {
+      "name": "device_detail_service_timeout",
+      "value": "Timed out"
+    },
+    {
+      "name": "device_detail_service_error",
+      "value": "Check failed"
+    },
+    {
+      "name": "taildrive_status_authorizing_operation",
+      "value": "Checking file access…"
+    },
+    {
+      "name": "taildrive_selected_search_scope",
+      "value": "Selected %d items · %d outside results"
+    },
+    {
+      "name": "taildrive_select_search_results",
+      "value": "Select all current search results"
+    },
+    {
+      "name": "taildrive_deselect_search_results",
+      "value": "Deselect current search results"
+    },
+    {
+      "name": "taildrive_folder_context_changed",
+      "value": "The folder or authorization has changed. Copy the name, then cancel and create it again in the intended folder."
+    },
+    {
+      "name": "taildrive_rename_context_changed",
+      "value": "The folder or authorization has changed. Copy the name, then cancel and select the file again to rename it."
+    },
+    {
+      "name": "taildrive_move_context_changed",
+      "value": "The folder or authorization has changed. Cancel, then select the file again to move it."
+    },
+    {
+      "name": "taildrive_details_context_changed",
+      "value": "The folder or authorization has changed. Close details and select the file again."
+    },
+    {
+      "name": "taildrive_status_preparing_upload",
+      "value": "Preparing upload…"
+    },
+    {
+      "name": "taildrive_retained_list_notice",
+      "value": "Showing the last loaded list. Refresh to check for updates."
+    },
+    {
+      "value": "The login service is not ready. Wait a moment and try again.",
+      "name": "auth_key_backend_not_ready"
+    },
+    {
+      "value": "Use a device Auth key supplied by your administrator. No account or password is required. Confirm the control server below before submitting.",
+      "name": "auth_key_description"
+    },
+    {
+      "value": "Enter a device Auth key.",
+      "name": "auth_key_empty"
+    },
+    {
+      "value": "Unable to complete authentication. Check the network and control server, then check login status before retrying.",
+      "name": "auth_key_failed"
+    },
+    {
+      "value": "Check the key format. Tailscale requires a tskey-auth- key; Headscale requires its own control server.",
+      "name": "auth_key_invalid"
+    },
+    {
+      "value": "Authenticating…",
+      "name": "auth_key_loading"
+    },
+    {
+      "value": "Sign in with Auth key",
+      "name": "auth_key_login_action"
+    },
+    {
+      "value": "This is an API token or OAuth client secret. Ask your administrator for a device Auth key.",
+      "name": "auth_key_management_key"
+    },
+    {
+      "value": "Device registered. Ask your administrator to approve it before connecting.",
+      "name": "auth_key_needs_approval"
+    },
+    {
+      "value": "Paste device Auth key",
+      "name": "auth_key_placeholder"
+    },
+    {
+      "value": "Input is cleared on submission. The key is not saved to settings or diagnostics.",
+      "name": "auth_key_privacy"
+    },
+    {
+      "value": "Authentication failed. The key may be expired, revoked or already used, or the server may have rejected registration. Check with your administrator.",
+      "name": "auth_key_rejected"
+    },
+    {
+      "value": "Sign in",
+      "name": "auth_key_submit"
+    },
+    {
+      "value": "Signed in. You can now connect the VPN.",
+      "name": "auth_key_success"
+    },
+    {
+      "value": "Authentication timed out. Check the connection status before retrying; a single-use key may already have been used.",
+      "name": "auth_key_timeout"
+    },
     {
       "name": "taildrive_title",
       "value": "Taildrive files"
@@ -37,6 +155,14 @@
       "value": "Download"
     },
     {
+      "name": "taildrive_cached_file",
+      "value": "Cached on this device"
+    },
+    {
+      "name": "taildrive_downloaded_file",
+      "value": "Downloaded and saved in this session"
+    },
+    {
       "name": "taildrive_details_action",
       "value": "Details"
     },
@@ -51,6 +177,14 @@
     {
       "name": "taildrive_search_action",
       "value": "Search"
+    },
+    {
+      "name": "taildrive_grid_view_action",
+      "value": "Switch to grid view"
+    },
+    {
+      "name": "taildrive_list_view_action",
+      "value": "Switch to list view"
     },
     {
       "name": "taildrive_multi_select_action",
@@ -265,6 +399,38 @@
       "value": "Move here"
     },
     {
+      "name": "taildrive_copy_to_title",
+      "value": "Choose copy destination"
+    },
+    {
+      "name": "taildrive_copy_here_action",
+      "value": "Copy here"
+    },
+    {
+      "name": "taildrive_copy_path_action",
+      "value": "Copy path"
+    },
+    {
+      "name": "taildrive_move_no_subfolders",
+      "value": "No subfolders here"
+    },
+    {
+      "name": "taildrive_move_select_share_hint",
+      "value": "Open a shared folder to place items here"
+    },
+    {
+      "name": "taildrive_details_quick_actions",
+      "value": "Actions"
+    },
+    {
+      "name": "taildrive_details_info_section",
+      "value": "Information"
+    },
+    {
+      "name": "taildrive_details_local_status",
+      "value": "Local status"
+    },
+    {
       "name": "taildrive_overwrite_title",
       "value": "Replace existing item?"
     },
@@ -471,6 +637,22 @@
     {
       "name": "taildrive_status_share_failed",
       "value": "Could not open the share panel"
+    },
+    {
+      "name": "taildrive_status_copying",
+      "value": "Copying…"
+    },
+    {
+      "name": "taildrive_status_copy_completed",
+      "value": "Copy completed"
+    },
+    {
+      "name": "taildrive_status_share_downloading",
+      "value": "Caching files for sharing…"
+    },
+    {
+      "name": "taildrive_status_share_download_failed",
+      "value": "Could not cache the file for sharing"
     },
     {
       "name": "taildrive_status_select_one_for_details",
@@ -2038,7 +2220,7 @@
     },
     {
       "name": "device_status_unknown",
-      "value": "Not confirmed"
+      "value": "Checking"
     },
     {
       "name": "device_detail_service_unavailable",
@@ -2134,7 +2316,7 @@
     },
     {
       "name": "device_detail_remote_desktop_title",
-      "value": "Remote desktop"
+      "value": "Remote streaming"
     },
     {
       "name": "device_detail_media_title",
@@ -2434,7 +2616,7 @@
     },
     {
       "name": "native_settings_material_desc",
-      "value": "Higher quality gives finer detail; Adaptive balances quality and power by device"
+      "value": "Adaptive lets the system balance material quality and power use for your device."
     },
     {
       "name": "native_settings_material_adaptive",
@@ -2454,7 +2636,7 @@
     },
     {
       "name": "native_settings_brightness",
-      "value": "Material brightness"
+      "value": "Background brightness"
     },
     {
       "name": "native_settings_intelligent_material",
@@ -2462,7 +2644,7 @@
     },
     {
       "name": "native_settings_intelligent_material_desc",
-      "value": "Adjust visual effects by device temperature to balance smoothness and experience"
+      "value": "Adaptive material is managed by the system for your device."
     },
     {
       "name": "native_settings_hdr",
@@ -2506,7 +2688,7 @@
     },
     {
       "name": "native_settings_preview_hint",
-      "value": "Tap the preview to play the property animation"
+      "value": "The preview loops automatically and follows the controls below."
     },
     {
       "name": "native_settings_close",
@@ -2583,6 +2765,413 @@
     {
       "name": "notification_vpn_background_title",
       "value": "VPN connected"
-    }
+    },
+    {
+      "name": "feature_guide_title",
+      "value": "Feature setup guide"
+    },
+    {
+      "name": "feature_guide_intro",
+      "value": "Tap a feature to view its setup steps and checks. Most options use a switch; policy examples are only needed for advanced remote sharing. MeshArc does not change your tailnet policy for you. Never replace an existing policy with an example; ask your administrator if unsure."
+    },
+    {
+      "name": "feature_guide_policy_hint",
+      "value": "Read-only policy example: replace the identity and merge into existing arrays. Long-press → Select all → Copy. Only the docs share on your own untagged devices is allowed."
+    },
+    {
+      "name": "feature_guide_commands_hint",
+      "value": "Run on the remote computer, not on this phone. Replace the sample folder/subnet first. Long-press and copy only the command for your platform, not the headings or other platforms."
+    },
+    {
+      "name": "feature_guide_connect_title",
+      "value": "Connect & access devices"
+    },
+    {
+      "name": "feature_guide_connect_body",
+      "value": "1. Install Tailscale on your computer, NAS or server and join the same tailnet.\n2. Sign in with MeshArc, connect and allow the system VPN request.\n3. Select an online device on Home and copy its Tailscale IP (usually 100.x.x.x) into the service client.\nCheck: both devices are online and the remote service is running. No config editing is needed.\nIf unavailable: disconnect other system VPNs and ask an admin to approve the device in Machines if required. The Use MagicDNS switch is on by default. If MagicDNS is enabled on your tailnet, copy the device name from its details; otherwise, use its IP address. Reconnect manually after a restart."
+    },
+    {
+      "name": "feature_guide_taildrop_title",
+      "value": "Taildrop · send & receive files"
+    },
+    {
+      "name": "feature_guide_taildrop_body",
+      "value": "Enable in the Tailscale admin console → Settings → General → Send Files (Taildrop).\n1. An Owner or Admin enables Send Files; no policy editing is required.\n2. Connect both devices with the same user account and run a Taildrop-capable receiver. Tagged devices and devices shared by another user are not personal Taildrop targets.\n3. In MeshArc Transfer (MeshSend), select a Taildrop-ready device and choose files or photos. Save received items to Files or Photos when prompted.\nCheck: the target is Taildrop-ready and a small file arrives.\nIf unavailable: check the switch, device ownership, online status and receiver version. LocalSend availability does not imply Taildrop availability.\nPlatform note: first-time macOS use also requires Tailscale in System Settings → General → Login Items & Extensions → Sharing. Follow the official Taildrop guide for Linux/NAS file retrieval."
+    },
+    {
+      "name": "feature_guide_taildrive_title",
+      "value": "Taildrive · remote folders"
+    },
+    {
+      "name": "feature_guide_taildrive_body",
+      "value": "Taildrive is separate from Taildrop: it needs policy authorization and a folder shared by a computer. MeshArc accesses remote shares; it does not publish phone folders. The official feature remains alpha.\n1. Ask an Owner, Admin or Network admin to open Access controls. Prefer the visual editor: add drive:share and drive:access under Node attributes for your user, then a tailscale.com/cap/drive application grant.\n2. The example below is read-only. Replace you@example.com with your actual policy identity. It permits only that user to read shares on their own untagged devices. If the visual editor cannot express the application grant, use JSON editor.\n3. Preserve your existing policy. Append the sample objects to existing nodeAttrs and grants arrays, creating an array only if absent. Do not replace the whole policy, duplicate top-level keys or change source/destination to *. Validate and save. Ask your administrator if you lack edit access.\n4. Share a folder on a Windows, macOS or Linux computer running Tailscale 1.64.0+. Replace the sample path with an existing folder. Run the command on that computer, not on your phone or in the admin console.\n5. Connect MeshArc, refresh Files and open the device → share.\nCheck: docs and its files appear. Write actions are intentionally denied by the read-only example; ask an admin to change that grant from ro to rw only if writing is needed.\nIf unavailable: check the published share, both node attributes, application grant and OS folder permissions. Tagged NAS devices and cross-user sharing need a separate policy.\nComputer tip: create the folder first in your file manager. If tailscale is not found, check the client installation and CLI path; macOS can also expose File Sharing settings as documented, choose a shared folder and name the share docs."
+    },
+    {
+      "name": "feature_guide_localsend_title",
+      "value": "LocalSend · compatible transfers"
+    },
+    {
+      "name": "feature_guide_localsend_body",
+      "value": "1. Open LocalSend or a compatible receiver such as JieChuan, keep its receiving service running and allow network access. No Taildrop switch or Taildrive policy is required.\n2. For remote transfers, connect both devices to the same tailnet and allow the receiver service in its policy. On a LAN, permit discovery and the receiving port.\n3. Check LocalSend status in MeshArc Transfer, select an available target and choose LocalSend if both protocols are offered.\n4. Accept on the receiving device. If its port was changed, enter the actual value in the target port settings (commonly 53317 by default).\nCheck: LocalSend is available and a file arrives.\nIf unavailable: check the running receiver, firewall, network permission and port. Its status and switches are independent of Taildrop."
+    },
+    {
+      "name": "feature_guide_exit_title",
+      "value": "Exit nodes · use a remote connection"
+    },
+    {
+      "name": "feature_guide_exit_body",
+      "value": "1. Connect the intended exit computer to Tailscale. Prefer Run exit node in Windows/macOS clients. On Linux, enable IP forwarding as documented before running the command below.\n2. An admin approves Use as exit node under Machines → Edit route settings and verifies your policy permits using it. Approval alone is not sufficient.\n3. In MeshArc Settings → Network & connection, select the exit node. Enable local network access if you also need your current LAN. Disconnect and reconnect if the UI requests it.\nCheck: the selected exit works as intended; select no exit node to restore normal routing.\nIf unavailable: check the node, approval, policy, IP forwarding and firewall. MeshArc uses remote exits; it does not advertise your phone as one."
+    },
+    {
+      "name": "feature_guide_subnet_title",
+      "value": "Subnet routes · reach LAN devices"
+    },
+    {
+      "name": "feature_guide_subnet_body",
+      "value": "1. Install Tailscale on a computer/NAS that can reach the destination LAN and enable IP forwarding following its platform guide.\n2. Replace the example 192.168.1.0/24 with your actual destination subnet. Advertise from that router, preserving the full existing route list.\n3. An admin approves the subnet in Machines → router → Edit route settings and allows your user to reach the required destination IPs and ports.\n4. Enable Accept subnet routes in MeshArc Settings → Network & connection, connect and use the LAN device’s original IP.\nCheck: an authorized LAN service is reachable.\nIf unavailable: check overlapping subnets, approval, policy, forwarding and the target firewall. LAN devices do not each need Tailscale, but approval does not grant unrestricted LAN access."
+    },
+    {
+      "name": "feature_guide_media_title",
+      "value": "Media · Jellyfin / Emby / Plex"
+    },
+    {
+      "name": "feature_guide_media_body",
+      "value": "1. Install and start Jellyfin, Emby or Plex on a computer/NAS and verify its library and account locally.\n2. Connect the server and phone to the same tailnet. Check listening addresses, actual ports and firewall; a localhost-only service is not remotely accessible. Taildrop/Taildrive permissions are unrelated.\n3. Install a compatible HosPlayer, select a discovered media service in MeshArc device details and open the player. Sign in to your media account there.\nCheck: a library opens and a test video plays.\nIf unavailable: check the Tailscale IP, port, service type and access policy. MeshArc does not install a media server or enter media passwords for you."
+    },
+    {
+      "name": "feature_guide_streaming_title",
+      "value": "Sunshine · streaming preparation"
+    },
+    {
+      "name": "feature_guide_streaming_body",
+      "value": "1. Install and configure Sunshine on the computer and verify its games and encoder locally.\n2. Connect both ends to the tailnet and permit Sunshine’s required ports. Use a compatible Moonlight client on the phone, add the computer’s Tailscale IP and complete PIN pairing.\nCheck: a real streaming session succeeds; an online device or successful Sunshine probe is not proof of streaming.\nOne-tap streaming requires a MoonlightOH build supporting the MeshArc launch contract. With older builds, copy the host address and add it manually. Existing hosts are reused by UUID with pairing preserved. Direct connections retain the user bitrate limit; relay sessions use lower limits with adaptive bitrate. The prompt also allows keeping the original configuration."
+    },
+    {
+      "name": "feature_guide_security_title",
+      "value": "App lock / folder lock"
+    },
+    {
+      "name": "feature_guide_security_body",
+      "value": "1. Configure a screen lock or biometrics in system settings.\n2. In MeshArc Settings → Security, enable app lock or Taildrive folder lock and complete system authentication.\n3. Authenticate when entering protected content again; follow the UI authentication requirement when disabling protection.\nCheck: protected content triggers system authentication. No config editing is needed.\nThis protects access through MeshArc on this device. It is not file encryption and does not change remote permissions; server and tailnet policy still govern reading and writing."
+    },
+    {
+      "name": "feature_guide_appearance_title",
+      "value": "Appearance, animation & cache"
+    },
+    {
+      "name": "feature_guide_appearance_body",
+      "value": "Open MeshArc Settings → Appearance & navigation / Storage & cache.\n1. Adjust background, immersive material and animation directly in the UI. No config is needed.\n2. Inspect storage usage and clear temporary cache only when related transfers or previews are inactive.\nCheck: settings take effect in the UI; some material effects require device support.\nAppearance settings do not enable network features or change permissions. Clearing local temporary cache does not delete remote Taildrive files."
+    },
+    {
+      "name": "feature_guide_reference_hint",
+      "value": "Official setup reference. Copy the URL to open it in your browser. Admin console: https://login.tailscale.com/admin"
+    },
+    {
+      "name": "feature_guide_advanced",
+      "value": "Policy examples & platform commands"
+    },
+    {
+      "name": "feature_guide_transfer_help",
+      "value": "Transfer instructions"
+    },
+    {
+      "name": "feature_guide_enable_taildrop",
+      "value": "How to enable Taildrop"
+    },
+    {
+      "name": "feature_guide_target_requirements",
+      "value": "Taildrop device requirements"
+    },
+    {
+      "name": "feature_guide_transfer_error",
+      "value": "Device availability could not be checked. Refresh or check the connection; this does not mean Taildrop is disabled."
+    },
+    {
+      "name": "feature_guide_taildrop_disabled",
+      "value": "Taildrop is disabled in the admin console. LocalSend can still be used when available."
+    },
+    {
+      "name": "feature_guide_taildrop_no_targets",
+      "value": "No eligible personal Taildrop devices were found. Check device ownership and receiver requirements."
+    },
+    {
+      "name": "feature_guide_taildrive_help",
+      "value": "How to enable Taildrive"
+    },
+    {
+      "name": "feature_guide_share_help",
+      "value": "How to share a folder"
+    },
+    {
+      "name": "feature_guide_permission_help",
+      "value": "Permissions & setup requirements"
+    },
+    {
+      "name": "feature_guide_no_shares",
+      "value": "No accessible shares were found here. Check the computer’s published folders and access permissions."
+    },
+    {
+      "name": "feature_guide_search_empty",
+      "value": "No matching items"
+    },
+    {
+      "name": "feature_guide_clear_search",
+      "value": "Clear search"
+    },
+    {
+      "name": "feature_guide_connect_help",
+      "value": "Connection instructions"
+    },
+    {
+      "name": "feature_guide_exit_help",
+      "value": "Exit node instructions"
+    },
+    {
+      "name": "feature_guide_exit_empty_help",
+      "value": "How to add an exit node"
+    },
+    {
+      "name": "feature_guide_subnet_help",
+      "value": "Subnet route instructions"
+    },
+    {
+      "name": "feature_guide_media_help",
+      "value": "Media server & player setup"
+    },
+    {
+      "name": "feature_guide_streaming_help",
+      "value": "Streaming setup & manual connection"
+    },
+    {
+      "name": "feature_guide_help_section",
+      "value": "Help"
+    },
+    {
+      "name": "path_diag_title",
+      "value": "Direct-path diagnostics (Issue #18)"
+    },
+    {
+      "name": "path_diag_description",
+      "value": "Off by default. Capture for 3 minutes, retain up to 1536 redacted events; no IPs, keys or payloads. Active probes refresh STUN and probe up to 3 online peers without changing routes. Stop and export the report after reproducing."
+    },
+    {
+      "name": "path_diag_start",
+      "value": "Start 3-minute capture"
+    },
+    {
+      "name": "path_diag_probe",
+      "value": "Run active probes (capture required)"
+    },
+    {
+      "name": "path_diag_stop",
+      "value": "Stop and retain capture"
+    },
+    {
+      "name": "path_diag_clear",
+      "value": "Stop and clear path capture"
+    },
+    {
+      "name": "system_share_title",
+      "value": "Share %d file(s) with MeshArc"
+    },
+    {
+      "name": "system_share_choose_device",
+      "value": "Choose a receiving device. Connect MeshArc if no device is available."
+    },
+    {
+      "name": "system_share_cancel",
+      "value": "Cancel this share"
+    },
+    {
+      "name": "system_share_invalid",
+      "value": "Unable to read shared files. Share up to 100 files again from the source app."
+    },
+    {
+      "name": "standalone_diagnostics_title",
+      "value": "Diagnostics and fault reports"
+    },
+    {
+      "name": "standalone_diagnostics_description",
+      "value": "Export a local redacted report without opening Settings. Crash recording is off by default. Enable it to retain up to 5 system crash summaries and code stacks for 24 hours. Reproduce the issue, reopen the app, then export here. Nothing is uploaded automatically. Raw system logs are excluded; a stack may be unavailable if the system provides no event."
+    },
+    {
+      "name": "standalone_diagnostics_enabled",
+      "value": "Crash recording temporarily enabled (up to 24 hours)"
+    },
+    {
+      "name": "standalone_diagnostics_disabled",
+      "value": "Crash recording is off"
+    },
+    {
+      "name": "standalone_diagnostics_enable",
+      "value": "Enable temporary crash recording"
+    },
+    {
+      "name": "standalone_diagnostics_clear",
+      "value": "Disable and clear crash records"
+    },
+    {
+      "name": "standalone_diagnostics_clear_failed",
+      "value": "Recording stopped for this session, but saving the disabled state or clearing stored records failed. Please retry before restarting the app."
+    },
+    {
+      "name": "personalization_color_mode_desc",
+      "value": "Choose the app color mode. Follow system keeps it in sync with your device."
+    },
+    {
+      "name": "personalization_color_light",
+      "value": "Light"
+    },
+    {
+      "name": "personalization_color_dark",
+      "value": "Dark"
+    },
+    {
+      "name": "personalization_home_layout",
+      "value": "Home layout"
+    },
+    {
+      "name": "personalization_home_layout_desc",
+      "value": "Choose the connected home layout. Compact puts the connection summary first; Classic shows more detail."
+    },
+    {
+      "name": "personalization_home_compact",
+      "value": "Compact"
+    },
+    {
+      "name": "personalization_home_classic",
+      "value": "Classic"
+    },
+    {
+      "name": "personalization_tab_margin",
+      "value": "Tab bar bottom distance"
+    },
+    {
+      "name": "personalization_tab_margin_desc",
+      "value": "Distance above the system navigation area, from 0 to 100 vp."
+    },
+    {
+      "name": "personalization_save_failed",
+      "value": "Unable to save this setting. Try again."
+    },
+    {
+      "name": "personalization_apply_failed",
+      "value": "Unable to apply the color mode. Try again."
+    },
+    {
+      "name": "personalization_background_failed",
+      "value": "Unable to save the new image. Your previous background is kept. Choose another image."
+    },
+    {
+      "name": "personalization_background_unavailable",
+      "value": "The saved background cannot be read. Choose another image."
+    },
+    {
+      "name": "personalization_preview_caption",
+      "value": "Background preview"
+    },
+    {
+      "name": "native_settings_brightness_desc",
+      "value": "Relative background brightness, from 0 to 100%. Only the image and immersive color change; text and screen brightness stay the same."
+    },
+    {
+      "name": "native_settings_brightness_inactive_desc",
+      "value": "Choose a background image or enable immersive color to adjust its relative brightness from 0 to 100%."
+    },
+    {
+      "name": "native_settings_animation_scale_desc",
+      "value": "These sliders use a relative 0–100% scale. Higher values make animations longer, movement larger, or spring motion more restrained. Manual changes create a custom setting."
+    },
+    {
+      "name": "control_server_manage",
+      "value": "Edit server"
+    },
+    {
+      "name": "control_server_switching",
+      "value": "Switching server…"
+    },
+    {
+      "name": "control_server_presets_hint",
+      "value": "Saved servers keep their sign-in and network preferences. Disconnect before switching."
+    },
+    {"name": "account_profile_add", "value": "Add account"},
+    {"name": "account_profile_number", "value": "Account %d"},
+    {"name": "account_profile_hint", "value": "Accounts keep separate sign-in, devices and files. Disconnect before switching."},
+    {"name": "account_profile_failed", "value": "Account switch failed. You can select your previous account and try again."},
+    {"name": "account_profile_stop_login", "value": "Stop waiting for sign-in"},
+    {"name": "feedback_email_with_diagnostics", "value": "Email feedback with diagnostics"},
+    {"name": "feedback_email_subject", "value": "MeshArc feedback %s (%d)"},
+    {"name": "feedback_email_body", "value": "Please fill in the three short sections below. Environment details and the diagnostic attachment are already included.\n\n1. What happened?\n[Describe the problem, affected page or feature, and any error shown.]\n\n2. What did you expect?\n[Describe what should have happened.]\n\n3. How can we reproduce it?\n[For example: open … → tap … → the problem appears. If unsure, write ‘not sure’.]\n\nOptional: frequency (always / sometimes / once), approximate time, or recent changes (update / network switch / settings). Leave blank if unknown.\n\n—— Automatically filled from this diagnostic report ——\nMeshArc: {appVersion} ({appVersionCode})\nTailscale: {tailscaleVersion}\nDevice model: {model}\nSystem: {system}\nSDK API: {sdkApiVersion}\nSigned in: {signedIn}\nExit node selected: {exitNodeSelected}\nAccept subnet routes: {acceptSubnetRoutes}\nReport generated at (UTC, not the time of the problem): {generatedAt}\n\nRedacted diagnostic ZIP attached. You do not need to copy logs or re-enter the environment details. Please review this draft and its attachment before sending."},
+    {"name": "feedback_email_yes", "value": "Yes"},
+    {"name": "feedback_email_no", "value": "No"},
+    {"name": "feedback_email_unknown", "value": "Unknown"},
+    {"name": "feedback_email_attachment_failed", "value": "Could not open an email draft with diagnostics. Try again, or export the report below and attach it manually."},
+    {"name": "feedback_email_prepared", "value": "Diagnostic attachment prepared. Review the email before sending."},
+    {"name": "settings_dns_title", "value": "DNS"},
+    {"name": "setting_dns_override", "value": "Custom DNS"},
+    {"name": "setting_dns_override_description", "value": "Default upstreams. Use MagicDNS preserves device-name resolution and split DNS rules. Changes apply after reconnecting."},
+    {"name": "setting_dns_primary", "value": "DNS server"},
+    {"name": "setting_dns_primary_placeholder", "value": "IPv4 or IPv6 address"},
+    {"name": "setting_dns_secondary", "value": "Additional DNS server (optional)"},
+    {"name": "setting_dns_secondary_placeholder", "value": "IPv4 or IPv6 address"},
+    {"name": "setting_dns_search_domains", "value": "Search domains (optional)"},
+    {"name": "setting_dns_search_domains_placeholder", "value": "Comma separated, e.g. corp.example.com"},
+    {"name": "setting_dns_save", "value": "Save DNS settings"},
+    {"name": "setting_dns_saved", "value": "Saved. Reconnect the VPN to apply"},
+    {"name": "setting_dns_invalid_primary", "value": "Enter a usable DNS server address"},
+    {"name": "setting_dns_invalid_secondary", "value": "Enter a usable additional DNS address"},
+    {"name": "setting_dns_invalid_search_domains", "value": "Enter up to 8 valid search domains"},
+    {"name": "setting_dns_save_failed", "value": "Could not save DNS settings"},
+    {"name": "settings_storage_read_failed", "value": "Could not read storage"},
+    {"name": "background_running_title", "value": "Background running"},
+    {"name": "background_running_summary", "value": "Experimental controls"},
+    {"name": "background_running_location", "value": "Simulated location"},
+    {"name": "background_running_location_detail", "value": "Attempts background running with low-frequency location requests"},
+    {"name": "home_connection_optimization", "value": "Connection optimization"},
+    {"name": "background_running_pip", "value": "Simulated picture-in-picture"},
+    {"name": "background_running_pip_detail", "value": "Shows VPN traffic in a small window and attempts to keep the app running in the background"},
+    {"name": "background_running_audio", "value": "Simulated audio"},
+    {"name": "background_running_audio_detail", "value": "Plays silent PCM audio with a background task"},
+    {"name": "background_running_download", "value": "Simulated download"},
+    {"name": "background_running_download_detail", "value": "Receives synthetic data over a local loopback connection"},
+    {"name": "background_running_tips", "value": "Experimental controls may increase power consumption. Each switch lasts for this app session and defaults to off after restart.\n\nLocation requires permission and the system location switch. Coordinates are discarded.\n\nPicture-in-picture availability depends on device, system settings and window mode. Audio focus or system cancellation may stop silent playback.\n\nDownload progress counts received loopback bytes. Data is immediately discarded.\n\nSystem consistency checks and resource policies still apply. These methods may be suspended or terminated."},
+    {"name": "background_running_error", "value": "The experiment stopped or could not start. Code %s"},
+    {"name": "exit_node_status_none", "value": "Not using exit node"},
+    {"name": "exit_node_selected", "value": "Selected: %s"},
+    {"name": "exit_node_list_unavailable", "value": "Exit node list unavailable"},
+    {"name": "diagnostics_unlock_countdown_toast", "value": "Tap %d more times to unlock engineering diagnostics"},
+    {"name": "connection_duration_just_now", "value": "Just connected"},
+    {"name": "connection_duration_hours_minutes", "value": "%d hr %d min"},
+    {"name": "connection_duration_minutes_seconds", "value": "%d min %d s"},
+    {"name": "connection_duration_seconds", "value": "%d s"},
+    {"name": "peer_service_connect_and_online_toast", "value": "Connect MeshArc first and make sure the target device is online"},
+    {"name": "diagnostic_fake_jellyfin_name", "value": "Jellyfin (Diagnostic mock)"},
+    {"name": "stream_connect_required_toast", "value": "Connect MeshArc before starting remote streaming"},
+    {"name": "stream_target_offline_toast", "value": "Target device is currently offline"},
+    {"name": "stream_sunshine_probe_error_toast", "value": "Could not check Sunshine. Try again shortly"},
+    {"name": "stream_path_probe_timeout_toast", "value": "Connection path check timed out. Try again shortly"},
+    {"name": "stream_sunshine_timeout_toast", "value": "Sunshine check timed out. Check the host firewall or network"},
+    {"name": "stream_moonlight_open_failed_toast", "value": "Could not open MoonlightOH. Try again shortly"},
+    {"name": "stream_sunshine_unavailable_toast", "value": "No available Sunshine service found. Make sure Sunshine is running on the computer"},
+    {"name": "stream_sunshine_failed_toast", "value": "Sunshine check failed temporarily. Try again shortly"},
+    {"name": "stream_target_unreachable_toast", "value": "Target device is currently unreachable"},
+    {"name": "stream_derp_confirm_title", "value": "Connected via DERP relay"},
+    {"name": "stream_derp_confirm_message", "value": "Relay connections can increase latency or cause stuttering. MeshArc will suggest a lower bitrate in MoonlightOH"},
+    {"name": "stream_derp_use_compatible_profile", "value": "Use relay-safe profile"},
+    {"name": "stream_derp_use_original_profile", "value": "Keep original settings"},
+    {"name": "stream_moonlight_required_title", "value": "Compatible MoonlightOH required"},
+    {"name": "stream_moonlight_required_message", "value": "Install or update MoonlightOH with MeshArc integration, or copy the host address to connect manually"},
+    {"name": "stream_dialog_cancel_action", "value": "Cancel"},
+    {"name": "stream_copy_host_address_action", "value": "Copy host address"},
+    {"name": "hosplayer_open_failed_toast", "value": "Could not open HosPlayer. Try again shortly"},
+    {"name": "hosplayer_unsafe_endpoint_toast", "value": "Server address does not meet safe launch parameter rules"},
+    {"name": "diagnostic_media_self_test_running", "value": "Running offline self-test…"},
+    {"name": "diagnostic_media_self_test_passed", "value": "PASS · Media discovery 4/4 · HosPlayer parameter contract passed"},
+    {"name": "diagnostic_media_self_test_failed_export", "value": "FAILED · Export a diagnostic report and check media integration logs"},
+    {"name": "diagnostic_media_self_test_unavailable", "value": "FAILED · Could not run offline media service self-test"},
+    {"name": "hosplayer_import_link_copied_toast", "value": "HosPlayer import link copied"},
+    {"name": "hosplayer_import_link_failed_toast", "value": "Could not generate HosPlayer import link"},
+    {"name": "update_changelog_timeline_code", "value": "Build %d"},
+    {"name": "update_changelog_detail_code", "value": "Version code: %d"}
   ]
 }

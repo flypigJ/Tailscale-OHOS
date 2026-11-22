@@ -48,7 +48,7 @@ export class MotionTokens {
     if (settings.preset === 0) {
       return curves.cubicBezierCurve(0.18, 0, 0.24 + damping * 0.12, 1);
     }
-    if (settings.preset === 2) {
+    if (settings.preset === 2 || settings.preset === -1) {
       return curves.springCurve(amplitude * 0.18, 1, 210 + amplitude * 90, 14 + damping * 18);
     }
     return curves.cubicBezierCurve(0.24 + damping * 0.08, 0, 0.18 + amplitude * 0.1, 1);

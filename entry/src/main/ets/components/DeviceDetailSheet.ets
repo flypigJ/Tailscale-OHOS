@@ -1,4 +1,7 @@
+import { UiTokens } from './UiTokens';
+import { LightAppearance } from './LightAppearance';
 import { PeerPathResult } from '../services/StreamingModels';
+import { FeatureSetupDialog } from './FeatureSetupGuide';
 
 interface StatusCapsuleData {
   label: ResourceStr;
@@ -9,14 +12,17 @@ interface ServiceStatusRowData {
   title: ResourceStr;
   label: ResourceStr;
   state: string;
+  helpSection?: string;
 }
 
 @Component
 export struct DeviceDetailSheet {
+  @Env(WritableEnvKey.FONT_SCALE) private detailFontScale: number;
   @Prop online: boolean = false;
   @Prop meshConnected: boolean = false;
   @Prop path: PeerPathResult = { type: 'unknown', checkedAt: 0 };
   @Prop tailscaleAddress: string = '';
+  @Prop magicDnsName: string = '';
   @Prop exitNodeCapable: boolean = false;
   @Prop servicesChecking: boolean = false;
   @Prop showSunshine: boolean = false;
@@ -24,6 +30,13 @@ export struct DeviceDetailSheet {
   @Prop sunshineAvailable: boolean = false;
   @Prop sunshineLaunching: boolean = false;
   @Prop mediaServiceCount: number = 0;
+  @Prop mediaProbeState: string = 'unknown';
+  @Prop setupHelpEnabled: boolean = false;
+  @Prop glowLevel: number = 3;
+  @State private setupGuideVisible: boolean = false;
+  @State private setupGuideSection: string = '';
+  @State private setupGuidePresentation: number = 0;
+  private setupGuideController?: CustomDialogController;
   @Prop mediaServiceNames: string = '';
   @Prop mediaLaunching: boolean = false;
   @Prop serviceRefreshVisible: boolean = false;
@@ -40,72 +53,68 @@ export struct DeviceDetailSheet {
   onOpenFileTransfer: () => void = () => {};
   onOpenRemoteFiles: () => void = () => {};
   onCopyIp: () => void = () => {};
+  onCopyDns: () => void = () => {};
+
+  private canShowServiceHelp(): boolean {
+    return this.setupHelpEnabled && this.online && this.meshConnected && !this.servicesRefreshing() &&
+      !this.sunshineLaunching && !this.mediaLaunching;
+  }
+
+  private useLargeTextLayout(): boolean {
+    return this.detailFontScale >= 1.5;
+  }
+
+  @Builder
+  private ServiceSetupAction(title: Resource, section: string) {
+    Button({ type: ButtonType.Circle, stateEffect: true,
+      buttonStyle: ButtonStyleMode.TEXTUAL, controlSize: ControlSize.SMALL }) {
+      SymbolGlyph($r('sys.symbol.info_circle'))
+        .fontSize(18).fontColor([$r('app.color.emphasize')])
+    }
+      .width(44).height(28)
+      .responseRegion({ x: 0, y: -8, width: 44, height: 44 })
+      .padding({ left: 12, right: 0 })
+      .accessibilityText(title)
+      .id('device-setup-help-' + section)
+      .onClick(() => {
+        if (this.canShowServiceHelp() && !this.setupGuideVisible) {
+          this.setupGuideSection = section;
+          this.setupGuidePresentation++;
+          this.setupGuideVisible = true;
+          this.setupGuideController = new CustomDialogController({
+            builder: FeatureSetupDialog({ initialSection: this.setupGuideSection,
+              presentationId: this.setupGuidePresentation }),
+            alignment: DialogAlignment.Center,
+            height: '70%',
+            autoCancel: true,
+            systemMaterial: LightAppearance.dialog(this.glowLevel),
+            onDidDisappear: () => { this.setupGuideVisible = false; }
+          });
+          this.setupGuideController.open();
+        }
+      })
+  }
+
+  aboutToDisappear(): void {
+    this.setupGuideController?.close();
+    this.setupGuideController = undefined;
+    this.setupGuideVisible = false;
+  }
 
   private sunshineLabel(): ResourceStr {
-    if (!this.online) {
-      return $r('app.string.device_detail_device_offline');
-    }
-    if (!this.meshConnected) {
-      return $r('app.string.connection_disconnected');
-    }
-    if (this.servicesRefreshing()) {
-      return $r('app.string.transfer_protocol_refreshing');
-    }
-    if (this.sunshineState === 'available') {
-      return $r('app.string.device_detail_service_available');
-    }
-    if (this.sunshineState === 'unknown' || this.sunshineState === 'checking') {
-      return $r('app.string.device_status_unknown');
-    }
-    return $r('app.string.device_detail_service_unavailable');
+    return this.probeStatusLabel(this.sunshineStatusState());
   }
 
   private sunshineStatusState(): string {
-    if (!this.online) {
-      return 'offline';
-    }
-    if (!this.meshConnected) {
-      return 'disconnected';
-    }
-    if (this.servicesRefreshing()) {
-      return 'checking';
-    }
-    return this.sunshineState === 'available' ? 'available' : 'unavailable';
+    return this.probeStatusState(this.sunshineState);
   }
 
   private localSendLabel(): ResourceStr {
-    if (!this.online) {
-      return $r('app.string.device_detail_device_offline');
-    }
-    if (!this.meshConnected) {
-      return $r('app.string.connection_disconnected');
-    }
-    if (this.servicesRefreshing()) {
-      return $r('app.string.transfer_protocol_refreshing');
-    }
-    if (this.localSendAvailable || this.localSendState === 'available') {
-      return $r('app.string.device_detail_service_available');
-    }
-    if (this.localSendState === 'unknown' || this.localSendState === 'checking') {
-      return $r('app.string.device_status_unknown');
-    }
-    return $r('app.string.device_detail_service_unavailable');
+    return this.probeStatusLabel(this.localSendStatusState());
   }
 
   private localSendStatusState(): string {
-    if (!this.online) {
-      return 'offline';
-    }
-    if (!this.meshConnected) {
-      return 'disconnected';
-    }
-    if (this.servicesRefreshing()) {
-      return 'checking';
-    }
-    if (this.localSendAvailable || this.localSendState === 'available') {
-      return 'available';
-    }
-    return 'unavailable';
+    return this.probeStatusState(this.localSendState, this.localSendAvailable);
   }
 
   private taildropLabel(): ResourceStr {
@@ -136,31 +145,37 @@ export struct DeviceDetailSheet {
   }
 
   private mediaLabel(): ResourceStr {
-    if (!this.online) {
-      return $r('app.string.device_detail_device_offline');
-    }
-    if (!this.meshConnected) {
-      return $r('app.string.connection_disconnected');
-    }
-    if (this.servicesRefreshing()) {
-      return $r('app.string.transfer_protocol_refreshing');
-    }
-    return this.mediaServiceCount > 0 ?
-      $r('app.string.device_detail_media_discovered', this.mediaServiceNames) :
-      $r('app.string.device_detail_service_unavailable');
+    const state: string = this.mediaStatusState();
+    return state === 'available' ?
+      $r('app.string.device_detail_media_discovered', this.mediaServiceNames) : this.probeStatusLabel(state);
   }
 
   private mediaStatusState(): string {
-    if (!this.online) {
-      return 'offline';
+    const state: string = this.mediaProbeState === 'available' && this.mediaServiceCount === 0 ?
+      'unavailable' : this.mediaProbeState;
+    return this.probeStatusState(state, this.mediaServiceCount > 0);
+  }
+
+  private probeStatusState(state: string, available: boolean = false): string {
+    if (!this.online) return 'offline';
+    if (!this.meshConnected) return 'disconnected';
+    if (this.servicesRefreshing() || state === 'checking') return 'checking';
+    if (available || state === 'available') return 'available';
+    if (state === 'unavailable' || state === 'timeout' || state === 'error') return state;
+    return 'unknown';
+  }
+
+  private probeStatusLabel(state: string): ResourceStr {
+    switch (state) {
+      case 'offline': return $r('app.string.device_detail_device_offline');
+      case 'disconnected': return $r('app.string.connection_disconnected');
+      case 'checking': return $r('app.string.transfer_protocol_refreshing');
+      case 'available': return $r('app.string.device_detail_service_available');
+      case 'unavailable': return $r('app.string.device_detail_service_unavailable');
+      case 'timeout': return $r('app.string.device_detail_service_timeout');
+      case 'error': return $r('app.string.device_detail_service_error');
+      default: return $r('app.string.device_status_unknown');
     }
-    if (!this.meshConnected) {
-      return 'disconnected';
-    }
-    if (this.servicesRefreshing()) {
-      return 'checking';
-    }
-    return this.mediaServiceCount > 0 ? 'available' : 'unavailable';
   }
 
   private taildriveLabel(): ResourceStr {
@@ -244,7 +259,7 @@ export struct DeviceDetailSheet {
   @Builder
   private SectionTitle(title: ResourceStr) {
     Text(title)
-      .fontSize(15)
+      .fontSize(UiTokens.SECTION_TITLE_SIZE)
       .fontWeight(FontWeight.Medium)
       .fontColor($r('sys.color.font_primary'))
       .width('100%')
@@ -255,47 +270,74 @@ export struct DeviceDetailSheet {
   private StatusCapsule($$: StatusCapsuleData) {
     Stack({ alignContent: Alignment.End }) {
       Text($$.label)
-        .fontSize(11)
+        .fontSize(UiTokens.BADGE_SIZE)
         .fontWeight(FontWeight.Medium)
         .fontColor($$.state === 'available' ? $r('app.color.status_success') :
-          $$.state === 'checking' ? $r('app.color.status_warning') :
+          ($$.state === 'checking' || $$.state === 'timeout' || $$.state === 'error') ? $r('app.color.status_warning') :
             $r('sys.color.font_secondary'))
-        .padding({ left: 9, right: 9, top: 4, bottom: 4 })
-        .backgroundColor($$.state === 'available' ? '#1837B77A' :
-          $$.state === 'checking' ? '#18F59E0B' : '#12000000')
-        .borderRadius(12)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .constraintSize({ maxWidth: 116 })
+        .padding({ left: UiTokens.BADGE_PADDING_HORIZONTAL, right: UiTokens.BADGE_PADDING_HORIZONTAL,
+          top: UiTokens.BADGE_PADDING_VERTICAL, bottom: UiTokens.BADGE_PADDING_VERTICAL })
+        .backgroundColor($$.state === 'available' ? $r('app.color.badge_background_available') :
+          ($$.state === 'checking' || $$.state === 'timeout' || $$.state === 'error') ?
+            $r('app.color.badge_background_warning') : $r('app.color.badge_background_pending'))
+        .borderRadius(UiTokens.BADGE_RADIUS)
+        .wordBreak(WordBreak.BREAK_ALL)
+        .constraintSize({ maxWidth: this.useLargeTextLayout() ? '100%' : 160 })
     }
-    .width(116)
-    .height(28)
+    // Reserve a trailing column without stretching the colored text capsule.
+    .width(this.useLargeTextLayout() ? '100%' : 52)
+    .constraintSize({ minHeight: 28 })
     .align(Alignment.End)
   }
 
   @Builder
   private ServiceStatusRow($$: ServiceStatusRowData) {
-    Row({ space: 12 }) {
-      Text($$.title)
-        .fontSize(14)
-        .fontColor($r('sys.color.font_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-      this.StatusCapsule({ label: $$.label, state: $$.state })
+    if (this.useLargeTextLayout()) {
+      Column({ space: 6 }) {
+        Row({ space: 6 }) {
+          Text($$.title)
+            .fontSize(UiTokens.BODY_SIZE)
+            .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1)
+          if (this.canShowServiceHelp() && $$.helpSection) {
+            this.ServiceSetupAction($$.helpSection === 'streaming' ?
+              $r('app.string.feature_guide_streaming_help') : $r('app.string.feature_guide_media_help'),
+              $$.helpSection ?? '')
+          }
+        }
+        .width('100%')
+        this.StatusCapsule({ label: $$.label, state: $$.state })
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 44 })
+      .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING, top: 8, bottom: 8 })
+    } else {
+      Row({ space: 0 }) {
+        Text($$.title)
+          .fontSize(UiTokens.BODY_SIZE)
+          .fontColor($r('sys.color.font_primary'))
+          .layoutWeight(1)
+          .wordBreak(WordBreak.BREAK_ALL)
+        if (this.canShowServiceHelp() && $$.helpSection) {
+          this.ServiceSetupAction($$.helpSection === 'streaming' ?
+            $r('app.string.feature_guide_streaming_help') : $r('app.string.feature_guide_media_help'),
+            $$.helpSection ?? '')
+        }
+        this.StatusCapsule({ label: $$.label, state: $$.state })
+      }
+      .width('100%')
+      .constraintSize({ minHeight: 44 })
+      .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING, top: 8, bottom: 8 })
     }
-    .width('100%')
-    .height(42)
-    .padding({ left: 12, right: 12 })
   }
 
   @Builder
   private CompactAction(icon: Resource, title: ResourceStr, loading: boolean, action: () => void) {
     Button({
-      type: ButtonType.Normal,
+      type: ButtonType.ROUNDED_RECTANGLE,
       stateEffect: true,
-      buttonStyle: ButtonStyleMode.TEXTUAL,
-      controlSize: ControlSize.SMALL
+      buttonStyle: ButtonStyleMode.NORMAL,
+      controlSize: ControlSize.NORMAL
     }) {
       Row({ space: 5 }) {
         if (loading) {
@@ -309,22 +351,21 @@ export struct DeviceDetailSheet {
             .fontColor([$r('app.color.emphasize')])
         }
         Text(title)
-          .fontSize(11)
+          .fontSize(UiTokens.BODY_SIZE)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+          .textAlign(TextAlign.Center)
       }
       .alignItems(VerticalAlign.Center)
       .justifyContent(FlexAlign.Center)
       .width('100%')
     }
-    .layoutWeight(1)
-    .height(54)
+    .layoutWeight(this.useLargeTextLayout() ? 0 : 1)
+    .width(this.useLargeTextLayout() ? '100%' : undefined)
+    .constraintSize({ minHeight: 54 })
+    .border({ width: 0.5, color: $r('sys.color.comp_divider'), radius: 10 })
     .padding({ left: 6, right: 6, top: 4, bottom: 4 })
-    .backgroundColor($r('app.color.surface_subtle'))
-    .border({ width: 1, color: $r('app.color.divider_subtle') })
-    .borderRadius(7)
     .enabled(!loading)
     .opacity(loading ? 0.58 : 1)
     .onClick(() => {
@@ -335,28 +376,42 @@ export struct DeviceDetailSheet {
   }
 
   @Builder
-  private InfoRow(label: ResourceStr, value: ResourceStr, actionable: boolean,
-    action: () => void = () => {}) {
-    Row({ space: 12 }) {
+  private NetworkInfoContent(label: ResourceStr, value: ResourceStr, copy: boolean, actionable: boolean) {
+    Flex({ direction: this.useLargeTextLayout() ? FlexDirection.Column : FlexDirection.Row,
+      alignItems: ItemAlign.Center }) {
       Text(label)
-        .fontSize(13)
+        .fontSize(UiTokens.BODY_SIZE)
         .fontColor($r('sys.color.font_secondary'))
-      Text(value)
-        .fontSize(13)
-        .fontColor($r('sys.color.font_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.End)
-      if (actionable) {
-        SymbolGlyph($r('sys.symbol.chevron_right'))
-          .fontSize(16)
-          .fontColor([$r('sys.color.icon_secondary')])
+        .width(this.useLargeTextLayout() ? '100%' : undefined)
+        .margin({ right: this.useLargeTextLayout() ? 0 : 12, bottom: this.useLargeTextLayout() ? 4 : 0 })
+      Row({ space: 12 }) {
+        Text(value)
+          .fontSize(UiTokens.BODY_SIZE)
+          .fontColor($r('sys.color.font_primary'))
+          .layoutWeight(1)
+          .wordBreak(WordBreak.BREAK_ALL)
+          .textAlign(TextAlign.End)
+        if (copy || actionable) {
+          SymbolGlyph(copy ? $r('sys.symbol.square_on_square_fill') : $r('sys.symbol.chevron_right'))
+            .fontSize(UiTokens.ICON_CHEVRON)
+            .fontColor([$r('sys.color.icon_secondary')])
+        }
       }
+      .layoutWeight(this.useLargeTextLayout() ? 0 : 1)
+      .width(this.useLargeTextLayout() ? '100%' : undefined)
     }
     .width('100%')
     .constraintSize({ minHeight: 44 })
-    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+    .padding({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING, top: 8, bottom: 8 })
+  }
+
+  @Builder
+  private InfoRow(label: ResourceStr, value: ResourceStr, actionable: boolean,
+    action: () => void = () => {}) {
+    Column() {
+      this.NetworkInfoContent(label, value, false, actionable)
+    }
+    .width('100%')
     .onClick(() => {
       if (actionable) {
         action();
@@ -365,34 +420,25 @@ export struct DeviceDetailSheet {
   }
 
   @Builder
-  private CopyInfoRow(label: ResourceStr, value: ResourceStr, action: () => void) {
-    Row({ space: 12 }) {
-      Text(label)
-        .fontSize(13)
-        .fontColor($r('sys.color.font_secondary'))
-      Text(value)
-        .fontSize(13)
-        .fontColor($r('sys.color.font_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.End)
-      SymbolGlyph($r('sys.symbol.square_on_square_fill'))
-        .fontSize(16)
-        .fontColor([$r('sys.color.icon_secondary')])
+  private CopyInfoRow(label: ResourceStr, value: string, action: () => void,
+    rowId: string = 'device-detail-copy-ip', copyLabel: Resource = $r('app.string.peer_copy_ip')) {
+    Column() {
+      this.NetworkInfoContent(label, value, true, false)
     }
     .width('100%')
-    .constraintSize({ minHeight: 44 })
-    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+    .id(rowId)
+    .accessibilityGroup(true)
+    .accessibilityText(copyLabel)
+    .accessibilityDescription(value)
     .onClick(action)
   }
 
   build() {
     Scroll() {
-      Column({ space: 8 }) {
+      Column({ space: UiTokens.GROUP_GAP }) {
         Row() {
           Text($r('app.string.device_detail_services_title'))
-            .fontSize(15)
+            .fontSize(UiTokens.SECTION_TITLE_SIZE)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_primary'))
             .layoutWeight(1)
@@ -409,8 +455,8 @@ export struct DeviceDetailSheet {
                 .fontColor([$r('sys.color.icon_secondary')])
             }
           }
-          .width(32)
-          .height(32)
+          .width(44)
+          .height(44)
           .enabled(this.meshConnected && this.online && !this.servicesRefreshing())
           .opacity(this.meshConnected && this.online ? 1 : 0.45)
           .accessibilityText($r('app.string.device_detail_refresh_services'))
@@ -421,31 +467,33 @@ export struct DeviceDetailSheet {
 
         Column({ space: 0 }) {
           if (this.showSunshine) {
-            this.ServiceStatusRow({ title: 'Sunshine', label: this.sunshineLabel(), state: this.sunshineStatusState() })
+            this.ServiceStatusRow({ title: 'Sunshine', label: this.sunshineLabel(), state: this.sunshineStatusState(),
+              helpSection: this.sunshineState === 'available' || this.sunshineState === 'unavailable' ? 'streaming' : '' })
             Divider()
               .color($r('sys.color.comp_divider'))
-              .margin({ left: 14, right: 14 })
+              .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
           }
           this.ServiceStatusRow({ title: $r('app.string.media_services_label'), label: this.mediaLabel(),
-            state: this.mediaStatusState() })
+            state: this.mediaStatusState(),
+            helpSection: this.mediaProbeState === 'available' || this.mediaProbeState === 'unavailable' ? 'media' : '' })
           Divider()
             .color($r('sys.color.comp_divider'))
-            .margin({ left: 14, right: 14 })
+            .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
           this.ServiceStatusRow({ title: 'Taildrop', label: this.taildropLabel(), state: this.taildropStatusState() })
           Divider()
             .color($r('sys.color.comp_divider'))
-            .margin({ left: 14, right: 14 })
+            .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
           this.ServiceStatusRow({ title: 'LocalSend', label: this.localSendLabel(), state: this.localSendStatusState() })
           Divider()
             .color($r('sys.color.comp_divider'))
-            .margin({ left: 14, right: 14 })
+            .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
           this.ServiceStatusRow({ title: 'Taildrive', label: this.taildriveLabel(), state: this.taildriveStatusState() })
 
           if (this.hasServiceActions()) {
             Divider()
               .color($r('sys.color.comp_divider'))
             Column({ space: 6 }) {
-              Row({ space: 6 }) {
+              if (this.useLargeTextLayout()) {
                 if (this.sunshineAvailable) {
                   this.CompactAction($r('sys.symbol.rectangle_on_rectangle'),
                     $r('app.string.device_detail_remote_desktop_title'), this.sunshineLaunching,
@@ -456,10 +504,6 @@ export struct DeviceDetailSheet {
                     $r('app.string.device_detail_media_title'), this.mediaLaunching,
                     this.onOpenMedia)
                 }
-              }
-              .width('100%')
-
-              Row({ space: 6 }) {
                 if (this.hasFileTransferAction()) {
                   this.CompactAction($r('sys.symbol.doc'),
                     $r('app.string.device_detail_transfer_title'), false,
@@ -470,8 +514,35 @@ export struct DeviceDetailSheet {
                     $r('app.string.device_detail_remote_files_title'), false,
                     this.onOpenRemoteFiles)
                 }
+              } else {
+                Row({ space: 6 }) {
+                  if (this.sunshineAvailable) {
+                    this.CompactAction($r('sys.symbol.rectangle_on_rectangle'),
+                      $r('app.string.device_detail_remote_desktop_title'), this.sunshineLaunching,
+                      this.onOpenStream)
+                  }
+                  if (this.mediaServiceCount > 0) {
+                    this.CompactAction($r('sys.symbol.video'),
+                      $r('app.string.device_detail_media_title'), this.mediaLaunching,
+                      this.onOpenMedia)
+                  }
+                }
+                .width('100%')
+
+                Row({ space: 6 }) {
+                  if (this.hasFileTransferAction()) {
+                    this.CompactAction($r('sys.symbol.doc'),
+                      $r('app.string.device_detail_transfer_title'), false,
+                      this.onOpenFileTransfer)
+                  }
+                  if (this.online && this.remoteFilesEnabled) {
+                    this.CompactAction($r('sys.symbol.folder'),
+                      $r('app.string.device_detail_remote_files_title'), false,
+                      this.onOpenRemoteFiles)
+                  }
+                }
+                .width('100%')
               }
-              .width('100%')
             }
             .width('100%')
             .padding(6)
@@ -479,7 +550,7 @@ export struct DeviceDetailSheet {
         }
         .width('100%')
         .backgroundColor($r('sys.color.comp_background_primary'))
-        .borderRadius(16)
+        .borderRadius(UiTokens.CARD_RADIUS)
         .clip(true)
 
         this.SectionTitle($r('app.string.device_detail_network_title'))
@@ -488,21 +559,28 @@ export struct DeviceDetailSheet {
           if (this.tailscaleAddress.length > 0) {
             Divider()
               .color($r('sys.color.comp_divider'))
-              .margin({ left: 14, right: 14 })
+              .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
             this.CopyInfoRow($r('app.string.network_sheet_local_address'), this.tailscaleAddress,
               this.onCopyIp)
+          }
+          if (this.magicDnsName.length > 0) {
+            Divider()
+              .color($r('sys.color.comp_divider'))
+              .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
+            this.CopyInfoRow('MagicDNS', this.magicDnsName, this.onCopyDns,
+              'device-detail-copy-dns', $r('app.string.peer_copy_dns'))
           }
           if (this.exitNodeCapable) {
             Divider()
               .color($r('sys.color.comp_divider'))
-              .margin({ left: 14, right: 14 })
+              .margin({ left: UiTokens.CARD_PADDING, right: UiTokens.CARD_PADDING })
             this.InfoRow($r('app.string.exit_node_title'),
               $r('app.string.device_detail_exit_node_available'), false)
           }
         }
         .width('100%')
         .backgroundColor($r('sys.color.comp_background_primary'))
-        .borderRadius(16)
+        .borderRadius(UiTokens.CARD_RADIUS)
         .clip(true)
 
         Blank()
@@ -511,7 +589,7 @@ export struct DeviceDetailSheet {
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
-      .padding({ left: 14, right: 14, top: 4, bottom: 16 })
+      .padding({ left: UiTokens.PAGE_PADDING, right: UiTokens.PAGE_PADDING, top: 4, bottom: 16 })
     }
     .width('100%')
     .height('100%')
@@ -524,6 +602,6 @@ export struct DeviceDetailSheet {
       scrollBackward: NestedScrollMode.SELF_FIRST
     })
     .align(Alignment.TopStart)
-    .backgroundColor($r('sys.color.background_secondary'))
+    .backgroundColor(LightAppearance.supports() ? Color.Transparent : $r('sys.color.background_secondary'))
   }
 }
