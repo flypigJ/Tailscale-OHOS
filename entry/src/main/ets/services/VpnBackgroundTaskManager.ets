@@ -1,7 +1,8 @@
-import { common, wantAgent, WantAgent } from '@kit.AbilityKit';
+import { bundleManager, common, Want, wantAgent, WantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
+import { rpc } from '@kit.IPCKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { StoragePaths } from './StoragePaths';
@@ -11,10 +12,16 @@ const DOMAIN: number = 0x0000;
 const TAG: string = 'VpnBackgroundTask';
 const BUNDLE_NAME: string = 'io.github.tailscaleohos';
 const ENTRY_ABILITY_NAME: string = 'EntryAbility';
+const VPN_EXTENSION_ABILITY_NAME: string = 'TailscaleVpnExtensionAbility';
 const VPN_STATUS_FRESH_MS: number = 15000;
 const VPN_STATUS_GRACE_MS: number = 60000;
 const CONNECTION_CHECK_INTERVAL_MS: number = 1000;
 const NOTIFICATION_UPDATE_INTERVAL_MS: number = 30000;
+// The Extension refreshes its heartbeat every second. Binding only against a
+// heartbeat this recent keeps a bind from launching an Extension that just died
+// (connectServiceExtensionAbility starts its target when it is not running).
+const EXTENSION_BIND_MAX_HEARTBEAT_AGE_MS: number = 3000;
+const EXTENSION_BIND_RETRY_MS: number = 10000;
 const START_RETRY_BASE_MS: number = 30000;
 const START_RETRY_MAX_MS: number = 300000;
 
@@ -27,9 +34,18 @@ interface VpnRuntimeStatus {
   state: string;
   txBytes: number;
   rxBytes: number;
+  heartbeatMs: number;
 }
 
 export class VpnBackgroundTaskManager {
+  // Binding the protected UI process to the VPN Extension lifts it out of the
+  // unbound low-memory-kill tier (oom_score_adj 500 -> 300/100 on device).
+  private extensionConnectionId: number = -1;
+  private extensionBindGeneration: number = 0;
+  private nextExtensionBindAtMs: number = 0;
+  // A lost or refused bind may mean the Extension process is gone; only a heartbeat
+  // written after this moment proves a live Extension that is safe to bind again.
+  private extensionBindNeedsHeartbeatAfterMs: number = 0;
   private context?: common.UIAbilityContext;
   private monitoring: boolean = false;
   private operationInFlight: boolean = false;
@@ -149,6 +165,7 @@ export class VpnBackgroundTaskManager {
       this.suspendListenerRegistered = false;
     }
     if (this.context !== undefined) {
+      this.unbindVpnExtension(this.context);
       this.reconcile(this.context);
     }
   }
@@ -188,6 +205,7 @@ export class VpnBackgroundTaskManager {
       if (status.state === 'disconnected') {
         this.suppressedUntilDisconnect = false;
         this.nextStartAtMs = 0;
+        this.nextExtensionBindAtMs = 0;
         this.retryCount = 0;
         this.lastLiveAtMs = 0;
         await this.stop(context);
@@ -207,12 +225,17 @@ export class VpnBackgroundTaskManager {
           this.record('background_status_timeout');
           await this.stop(context);
         }
+        if (this.task === undefined && this.extensionConnectionId >= 0 &&
+          Date.now() - this.lastLiveAtMs > VPN_STATUS_GRACE_MS) {
+          this.unbindVpnExtension(context);
+        }
         if (this.monitoring && generation === this.lifecycleGeneration && this.task !== undefined) {
           await this.resolvePendingIdentity(context, generation);
         }
         return;
       }
       this.lastLiveAtMs = Date.now();
+      this.bindVpnExtension(context, status);
       if (this.task === undefined && !this.suppressedUntilDisconnect && Date.now() >= this.nextStartAtMs) {
         await this.start(context, generation);
       }
@@ -359,6 +382,7 @@ export class VpnBackgroundTaskManager {
   }
 
   private async stop(context: common.UIAbilityContext): Promise<void> {
+    this.unbindVpnExtension(context);
     if (this.task === undefined) {
       this.cleanupPending = false;
       return;
@@ -418,8 +442,102 @@ export class VpnBackgroundTaskManager {
     }
   }
 
+  private bindVpnExtension(context: common.UIAbilityContext, status: VpnRuntimeStatus): void {
+    const now: number = Date.now();
+    if (!this.monitoring || this.extensionConnectionId >= 0 || now < this.nextExtensionBindAtMs ||
+      status.heartbeatMs <= 0 ||
+      status.heartbeatMs <= this.extensionBindNeedsHeartbeatAfterMs ||
+      now - status.heartbeatMs > EXTENSION_BIND_MAX_HEARTBEAT_AGE_MS ||
+      typeof context.connectServiceExtensionAbility !== 'function') {
+      return;
+    }
+    const bindGeneration: number = ++this.extensionBindGeneration;
+    const options: common.ConnectOptions = {
+      onConnect: (_element: bundleManager.ElementName, _remote: rpc.IRemoteObject): void => {
+        if (bindGeneration !== this.extensionBindGeneration) {
+          return;
+        }
+        this.record('vpn_extension_bind_connected');
+      },
+      onDisconnect: (_element: bundleManager.ElementName): void => {
+        if (bindGeneration !== this.extensionBindGeneration) {
+          return;
+        }
+        // The Extension process ended (stopped, or killed by the system).
+        this.releaseExtensionBinding(false);
+        this.record('vpn_extension_bind_disconnected');
+      },
+      onFailed: (code: number): void => {
+        if (bindGeneration !== this.extensionBindGeneration) {
+          return;
+        }
+        this.releaseExtensionBinding(true);
+        this.record('vpn_extension_bind_failed', code);
+      }
+    };
+    const parameters: Record<string, Object> = { 'mesharcBindOnly': true };
+    const want: Want = {
+      bundleName: BUNDLE_NAME,
+      abilityName: VPN_EXTENSION_ABILITY_NAME,
+      parameters: parameters
+    };
+    try {
+      const id: number = context.connectServiceExtensionAbility(want, options);
+      if (bindGeneration !== this.extensionBindGeneration) {
+        if (id >= 0 && typeof context.disconnectServiceExtensionAbility === 'function') {
+          try {
+            context.disconnectServiceExtensionAbility(id).catch((): void => {});
+          } catch (_disconnectError) {
+            // Best-effort cleanup of a handle superseded synchronously.
+          }
+        }
+        return;
+      }
+      if (id < 0) {
+        this.releaseExtensionBinding(true);
+        this.record('vpn_extension_bind_error', id);
+        return;
+      }
+      this.extensionConnectionId = id;
+      this.record('vpn_extension_bind_requested');
+    } catch (error) {
+      if (bindGeneration === this.extensionBindGeneration) {
+        this.releaseExtensionBinding(true);
+      }
+      this.record('vpn_extension_bind_error', (error as BusinessError).code ?? -1);
+    }
+  }
+
+  private releaseExtensionBinding(retryLater: boolean): void {
+    this.extensionBindGeneration++;
+    this.extensionConnectionId = -1;
+    this.extensionBindNeedsHeartbeatAfterMs = Date.now();
+    if (retryLater) {
+      this.nextExtensionBindAtMs = Date.now() + EXTENSION_BIND_RETRY_MS;
+    }
+  }
+
+  private unbindVpnExtension(context: common.UIAbilityContext): void {
+    const id: number = this.extensionConnectionId;
+    if (id < 0) {
+      return;
+    }
+    this.releaseExtensionBinding(false);
+    this.nextExtensionBindAtMs = 0;
+    if (typeof context.disconnectServiceExtensionAbility !== 'function') {
+      return;
+    }
+    try {
+      context.disconnectServiceExtensionAbility(id).catch((): void => {
+        // Best-effort: the system drops the connection when either process exits.
+      });
+    } catch (_error) {
+      // Same as above for a synchronous rejection.
+    }
+  }
+
   private readStatus(filesDir: string): VpnRuntimeStatus {
-    const result: VpnRuntimeStatus = { state: 'unknown', txBytes: 0, rxBytes: 0 };
+    const result: VpnRuntimeStatus = { state: 'unknown', txBytes: 0, rxBytes: 0, heartbeatMs: 0 };
     this.lastStatusReadErrorCode = 0;
     try {
       const status: string = fileIo.readTextSync(StoragePaths.vpnStatusPath(filesDir));
@@ -443,6 +561,7 @@ export class VpnBackgroundTaskManager {
         result.state = 'connected';
         result.txBytes = this.statusNumber(status, 'txBytes');
         result.rxBytes = this.statusNumber(status, 'rxBytes');
+        result.heartbeatMs = heartbeatMs;
       }
     } catch (error) {
       // Atomic file replacement or temporary I/O failure is uncertain state.

@@ -6,6 +6,7 @@ import { DnsSettings, DnsSettingsStore } from '../services/DnsSettings';
 import { vpnExtension, VpnExtensionAbility } from '@kit.NetworkKit';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { rpc } from '@kit.IPCKit';
 import { fileIo } from '@kit.CoreFileKit';
 import nativeBridge from 'libtailscale_ohos.so';
 import { RuntimeDiagnosticService } from '../services/RuntimeDiagnosticService';
@@ -190,6 +191,26 @@ interface DebugDnsRebuildReply {
 }
 
 export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
+  // Created on the first bind and kept alive for the life of the Extension.
+  private bindStub: rpc.RemoteObject | undefined = undefined;
+
+  /**
+   * The UI process binds this Extension (VpnBackgroundTaskManager.bindVpnExtension)
+   * so that the system records an app process as connected to it: an unbound
+   * Extension sits in the lowest low-memory-kill tier (oom_score_adj 500, 300 once
+   * bound). The returned object carries no calls, but returning a valid
+   * RemoteObject is required so the framework does not terminate the Extension.
+   */
+  onConnect(_want: Want): rpc.RemoteObject {
+    if (this.bindStub === undefined) {
+      this.bindStub = new rpc.RemoteObject('io.github.tailscaleohos.vpn.bind');
+    }
+    if (!this.destroying) {
+      this.recordDiagnosticEvent('vpn_extension_bound', 'lifecycle');
+    }
+    return this.bindStub;
+  }
+
   private serverProfileId: string = '';
   private serverStateRoot: string = '';
   private serverProfileToken: string = '';
@@ -281,6 +302,11 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
   private readonly runtimeDiagnostic: RuntimeDiagnosticService = new RuntimeDiagnosticService();
 
   onCreate(want: Want): void {
+    if (want.parameters?.mesharcBindOnly === true) {
+      this.destroying = true;
+      vpnExtension.stopVpnExtensionAbility(want).catch(() => {});
+      return;
+    }
     this.runtimeDiagnostic.start(this.context.filesDir, 'vpn');
     const token = want.parameters?.mesharcIntentMs;
     this.startupIntentMs = typeof token === 'number' ? token : 0;
@@ -2517,6 +2543,7 @@ export default class TailscaleVpnExtensionAbility extends VpnExtensionAbility {
     // Persist lifecycle entry before any teardown can throw or await.
     this.recordDiagnosticEvent('vpn_destroy_started', this.explicitStopRequested ? 'user_request' : 'system_lifecycle');
     this.destroying = true;
+    this.bindStub = undefined;
     this.rpcChannelsInitialized = false;
     this.peerSnapshotRequestId++;
     this.dnsObserver.stop();

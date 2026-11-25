@@ -820,3 +820,44 @@ test('restoreBackendVpnConfig fallback awaits requestUiBackendHandoff before bac
   assert.deepEqual(order, ['handoff', 'backendStart'], 'UI backend handoff must finish before fallback backendStart and run only once');
   assert.equal(e.backendHandoffCompleted, true);
 });
+
+test('bind-only cold start never initializes runtime diagnostics or TUN setup', () => {
+  const f = fixture();
+  const methods = ['startupIntentAllowed', 'onCreate'].map(n => method(extensionSource, n)).join('\n');
+  vm.runInNewContext(clean('class Extension {\n' + methods + '\n}') + '\nglobalThis.Extension = Extension;', f.sandbox);
+  const e = new f.sandbox.Extension();
+  e.context = { filesDir: '/files' };
+  e.runtimeDiagnostic = { start() { throw Error('bind-only cold start must not start diagnostics'); } };
+  e.onCreate({ parameters: { mesharcBindOnly: true } });
+  assert.equal(e.destroying, true);
+  assert.equal(f.extensionStops, 1);
+});
+
+test('onConnect caches a lightweight RemoteObject and skips diagnostics while destroying', () => {
+  const f = fixture();
+  let created = 0;
+  f.sandbox.rpc = {
+    RemoteObject: class {
+      constructor(descriptor) {
+        this.descriptor = descriptor;
+        created++;
+      }
+    }
+  };
+  const onConnectMethod = method(extensionSource, 'onConnect');
+  vm.runInNewContext(clean('class Extension {\n' + onConnectMethod + '\n}') + '\nglobalThis.Extension = Extension;', f.sandbox);
+  const e = new f.sandbox.Extension();
+  e.destroying = false;
+  e.recordDiagnosticEvent = (...args) => f.events.push(args);
+
+  const first = e.onConnect({});
+  const second = e.onConnect({});
+  assert.equal(first, second);
+  assert.equal(created, 1);
+  assert.equal(first.descriptor, 'io.github.tailscaleohos.vpn.bind');
+  assert.deepEqual(f.events, [['vpn_extension_bound', 'lifecycle'], ['vpn_extension_bound', 'lifecycle']]);
+
+  e.destroying = true;
+  e.onConnect({});
+  assert.equal(f.events.length, 2);
+});
